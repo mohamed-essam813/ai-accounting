@@ -1,5 +1,8 @@
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { getCurrentUser } from "./users";
+import type { Database } from "@/lib/database.types";
+
+type BankTransactionsRow = Database["public"]["Tables"]["bank_transactions"]["Row"];
 
 export async function listBankTransactions(limit = 50) {
   const user = await getCurrentUser();
@@ -8,8 +11,17 @@ export async function listBankTransactions(limit = 50) {
   }
 
   const supabase = await createServerSupabaseClient();
-  const { data, error } = await supabase
-    .from("bank_transactions")
+  // Type assertion to fix Supabase type inference
+  const table = supabase.from("bank_transactions") as unknown as {
+    select: (columns: string) => {
+      eq: (column: string, value: string) => {
+        order: (column: string, options?: { ascending?: boolean }) => {
+          limit: (count: number) => Promise<{ data: BankTransactionsRow[] | null; error: unknown }>;
+        };
+      };
+    };
+  };
+  const { data, error } = await table
     .select("*")
     .eq("tenant_id", user.tenant.id)
     .order("date", { ascending: false })
@@ -22,6 +34,7 @@ export async function listBankTransactions(limit = 50) {
   return (data ?? []).map((txn) => ({
     ...txn,
     amount: Number(txn.amount),
+    status: txn.status as "unmatched" | "matched" | "excluded",
   }));
 }
 
@@ -33,8 +46,25 @@ export async function suggestReconciliations(amount: number, description: string
 
   const supabase = await createServerSupabaseClient();
 
-  const { data, error } = await supabase
-    .from("journal_entries")
+  // Type assertion to fix Supabase type inference
+  type JournalEntryWithLines = {
+    id: string;
+    description: string;
+    posted_at: string;
+    journal_lines: Array<{ debit: string | null; credit: string | null }> | null;
+  };
+  const table = supabase.from("journal_entries") as unknown as {
+    select: (columns: string) => {
+      eq: (column: string, value: string) => {
+        eq: (column: string, value: string) => {
+          order: (column: string, options?: { ascending?: boolean }) => {
+            limit: (count: number) => Promise<{ data: JournalEntryWithLines[] | null; error: unknown }>;
+          };
+        };
+      };
+    };
+  };
+  const { data, error } = await table
     .select("id, description, posted_at, journal_lines ( debit, credit )")
     .eq("tenant_id", user.tenant.id)
     .eq("status", "posted")

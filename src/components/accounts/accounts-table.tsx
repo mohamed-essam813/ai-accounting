@@ -75,7 +75,7 @@ export function AccountsTable({ accounts, canManage }: Props) {
           <DialogHeader>
             <DialogTitle>Delete Account</DialogTitle>
             <DialogDescription>
-              Are you sure you want to delete "{accountToDelete?.name}" ({accountToDelete?.code})?
+              Are you sure you want to delete &quot;{accountToDelete?.name}&quot; ({accountToDelete?.code})?
               {accountToDelete && (
                 <span className="mt-2 block text-destructive">
                   This action cannot be undone. The account will be permanently removed.

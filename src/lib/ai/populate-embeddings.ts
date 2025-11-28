@@ -1,5 +1,9 @@
 import { storeEmbedding } from "./embeddings";
 import { createServiceSupabaseClient } from "@/lib/supabase/service";
+import type { Database } from "@/lib/database.types";
+
+type ChartOfAccountsRow = Database["public"]["Tables"]["chart_of_accounts"]["Row"];
+type IntentMappingRow = Database["public"]["Tables"]["intent_account_mappings"]["Row"];
 
 /**
  * Populate embedding for an account when it's created or updated
@@ -101,10 +105,13 @@ export async function populateMappingEmbedding(params: {
  */
 export async function populateAllAccountEmbeddings(tenantId: string) {
   const supabase = createServiceSupabaseClient();
-  const { data: accounts, error } = await supabase
-    .from("chart_of_accounts")
-    .select("id, name, code, type")
-    .eq("tenant_id", tenantId);
+  // Type assertion to fix Supabase type inference
+  const table = supabase.from("chart_of_accounts") as unknown as {
+    select: (columns: string) => {
+      eq: (column: string, value: string) => Promise<{ data: Pick<ChartOfAccountsRow, "id" | "name" | "code" | "type">[] | null; error: unknown }>;
+    };
+  };
+  const { data: accounts, error } = await table.select("id, name, code, type").eq("tenant_id", tenantId);
 
   if (error) {
     console.error("Failed to load accounts for embedding", error);
@@ -136,8 +143,13 @@ export async function populateAllAccountEmbeddings(tenantId: string) {
  */
 export async function populateAllMappingEmbeddings(tenantId: string) {
   const supabase = createServiceSupabaseClient();
-  const { data: mappings, error } = await supabase
-    .from("intent_account_mappings")
+  // Type assertion to fix Supabase type inference
+  const mappingsTable = supabase.from("intent_account_mappings") as unknown as {
+    select: (columns: string) => {
+      eq: (column: string, value: string) => Promise<{ data: Pick<IntentMappingRow, "intent" | "debit_account_id" | "credit_account_id" | "tax_debit_account_id" | "tax_credit_account_id">[] | null; error: unknown }>;
+    };
+  };
+  const { data: mappings, error } = await mappingsTable
     .select("intent, debit_account_id, credit_account_id, tax_debit_account_id, tax_credit_account_id")
     .eq("tenant_id", tenantId);
 
@@ -159,10 +171,13 @@ export async function populateAllMappingEmbeddings(tenantId: string) {
     if (m.tax_credit_account_id) accountIds.add(m.tax_credit_account_id);
   });
 
-  const { data: accounts } = await supabase
-    .from("chart_of_accounts")
-    .select("id, name")
-    .in("id", Array.from(accountIds));
+  // Type assertion to fix Supabase type inference
+  const accountsTable = supabase.from("chart_of_accounts") as unknown as {
+    select: (columns: string) => {
+      in: (column: string, values: string[]) => Promise<{ data: Pick<ChartOfAccountsRow, "id" | "name">[] | null; error: unknown }>;
+    };
+  };
+  const { data: accounts } = await accountsTable.select("id, name").in("id", Array.from(accountIds));
 
   const accountMap = new Map(accounts?.map((a) => [a.id, a.name]) ?? []);
 

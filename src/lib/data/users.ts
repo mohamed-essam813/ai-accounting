@@ -12,8 +12,16 @@ export const getCurrentUser = cache(async () => {
     return null;
   }
 
-  const { data, error } = await supabase
-    .from("app_users")
+  // Type assertion to fix Supabase type inference
+  type AppUsersRow = Database["public"]["Tables"]["app_users"]["Row"];
+  const appUsersTable = supabase.from("app_users") as unknown as {
+    select: (columns: string) => {
+      eq: (column: string, value: string) => {
+        maybeSingle: () => Promise<{ data: AppUsersRow | null; error: unknown }>;
+      };
+    };
+  };
+  const { data, error } = await appUsersTable
     .select("*")
     .eq("auth_user_id", session.user.id)
     .maybeSingle();
@@ -27,8 +35,16 @@ export const getCurrentUser = cache(async () => {
     return null;
   }
 
-  const { data: tenant } = await supabase
-    .from("tenants")
+  // Type assertion to fix Supabase type inference
+  type TenantsRow = Database["public"]["Tables"]["tenants"]["Row"];
+  const tenantsTable = supabase.from("tenants") as unknown as {
+    select: (columns: string) => {
+      eq: (column: string, value: string) => {
+        maybeSingle: () => Promise<{ data: TenantsRow | null; error: unknown }>;
+      };
+    };
+  };
+  const { data: tenant } = await tenantsTable
     .select("*")
     .eq("id", data.tenant_id)
     .maybeSingle();

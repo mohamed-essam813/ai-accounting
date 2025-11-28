@@ -196,8 +196,8 @@ const DraftIntentOptions = PromptIntentEnum.options;
 const DraftEditFormSchema = z
   .object({
     intent: z.enum(DraftIntentOptions),
-    confidence: z.coerce.number().min(0, "Confidence must be between 0 and 1").max(1),
-    amount: z.coerce.number().positive("Amount must be greater than zero"),
+    confidence: z.number().min(0, "Confidence must be between 0 and 1").max(1),
+    amount: z.number().positive("Amount must be greater than zero"),
     currency: z.string().min(1, "Currency code is required"),
     date: z
       .string()

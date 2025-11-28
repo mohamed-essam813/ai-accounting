@@ -11,7 +11,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
-import { roleLabels } from "@/lib/auth";
+import { roleLabels, type UserRole } from "@/lib/auth";
 import type { Database } from "@/lib/database.types";
 import { createBrowserSupabaseClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
@@ -63,7 +63,7 @@ export function Topbar({ user }: TopbarProps) {
             <div className="text-right">
               <p className="text-sm font-medium">{user?.email ?? "Anonymous"}</p>
               <p className="text-xs text-muted-foreground">
-                {user ? roleLabels[user.role] : "Guest"}
+                {user ? roleLabels[user.role as UserRole] : "Guest"}
               </p>
             </div>
             <Avatar className="h-9 w-9">
@@ -75,7 +75,7 @@ export function Topbar({ user }: TopbarProps) {
           <DropdownMenuLabel className="max-w-full">
             <p className="text-sm font-semibold break-words">{user?.email ?? "Anonymous"}</p>
             <p className="text-xs text-muted-foreground">
-              {user ? roleLabels[user.role] : "Guest"}
+               {user ? roleLabels[user.role as UserRole] : "Guest"}
             </p>
           </DropdownMenuLabel>
           <DropdownMenuSeparator />

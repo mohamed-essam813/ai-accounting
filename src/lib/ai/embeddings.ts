@@ -2,6 +2,7 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { embed } from "ai";
 import { createServiceSupabaseClient } from "@/lib/supabase/service";
 import { env } from "../env";
+import type { Database, Json } from "../database.types";
 
 const EMBEDDING_MODEL = "text-embedding-3-small"; // 1536 dimensions, cost-effective
 
@@ -45,14 +46,20 @@ export async function storeEmbedding(params: {
 
   // Insert new embedding
   // Note: Supabase handles vector type conversion automatically when using the correct format
-  const { error } = await supabase.from("embeddings").insert({
+  type EmbeddingsInsert = Database["public"]["Tables"]["embeddings"]["Insert"];
+  const insertData: EmbeddingsInsert = {
     tenant_id: params.tenantId,
     entity_type: params.entityType,
     entity_id: params.entityId,
     content: params.content,
     embedding: `[${embedding.join(",")}]`, // pgvector format: [0.1,0.2,...]
-    metadata: params.metadata ?? null,
-  });
+    metadata: (params.metadata ?? null) as Json | null,
+  };
+  // Type assertion to fix Supabase type inference
+  const table = supabase.from("embeddings") as unknown as {
+    insert: (values: EmbeddingsInsert[]) => Promise<{ error: unknown }>;
+  };
+  const { error } = await table.insert([insertData]);
 
   if (error) {
     console.error("Failed to store embedding:", error);
@@ -82,12 +89,21 @@ export async function retrieveRelevantContext(
   const supabase = createServiceSupabaseClient();
 
   // Use RPC function for vector similarity search
-  const { data, error } = await supabase.rpc("match_embeddings", {
+  // Type assertion to fix Supabase type inference
+  type MatchEmbeddingsArgs = Database["public"]["Functions"]["match_embeddings"]["Args"];
+  const rpcFn = supabase.rpc as unknown as (
+    name: "match_embeddings",
+    args: MatchEmbeddingsArgs,
+  ) => Promise<{
+    data: Database["public"]["Functions"]["match_embeddings"]["Returns"] | null;
+    error: unknown;
+  }>;
+  const { data, error } = await rpcFn("match_embeddings", {
     query_embedding: embeddingString,
     match_tenant_id: tenantId,
     match_threshold: threshold,
     match_count: limit,
-    entity_types: options.entityTypes?.length ? options.entityTypes : null,
+    entity_types: options.entityTypes?.length ? options.entityTypes : undefined,
   });
 
   if (error) {

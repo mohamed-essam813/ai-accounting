@@ -1,6 +1,9 @@
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { getCurrentUser } from "./users";
 import { DraftPayload } from "@/lib/ai/schema";
+import type { Database } from "@/lib/database.types";
+
+type DraftsRow = Database["public"]["Tables"]["drafts"]["Row"];
 
 export async function getRecentDrafts(limit = 5) {
   const user = await getCurrentUser();
@@ -9,8 +12,17 @@ export async function getRecentDrafts(limit = 5) {
   }
 
   const supabase = await createServerSupabaseClient();
-  const { data, error } = await supabase
-    .from("drafts")
+  // Type assertion to fix Supabase type inference
+  const table = supabase.from("drafts") as unknown as {
+    select: (columns: string) => {
+      eq: (column: string, value: string) => {
+        order: (column: string, options?: { ascending?: boolean }) => {
+          limit: (count: number) => Promise<{ data: DraftsRow[] | null; error: unknown }>;
+        };
+      };
+    };
+  };
+  const { data, error } = await table
     .select("*")
     .eq("tenant_id", user.tenant.id)
     .order("created_at", { ascending: false })

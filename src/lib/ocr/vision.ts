@@ -13,7 +13,7 @@ function getVisionClient() {
         cachedClient = new ImageAnnotatorClient({
           credentials,
         });
-      } catch (error) {
+      } catch {
         throw new Error(
           "GOOGLE_CLOUD_CREDENTIALS_JSON is invalid JSON. Please check your environment variable.",
         );

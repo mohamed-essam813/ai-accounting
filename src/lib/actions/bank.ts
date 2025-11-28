@@ -4,6 +4,11 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { getCurrentUser } from "@/lib/data/users";
+import type { Database } from "@/lib/database.types";
+
+type BankTransactionsInsert = Database["public"]["Tables"]["bank_transactions"]["Insert"];
+type BankTransactionsUpdate = Database["public"]["Tables"]["bank_transactions"]["Update"];
+type AuditLogsInsert = Database["public"]["Tables"]["audit_logs"]["Insert"];
 
 const ImportSchema = z.object({
   transactions: z.array(
@@ -26,28 +31,39 @@ export async function importBankTransactionsAction(input: z.infer<typeof ImportS
 
   const supabase = await createServerSupabaseClient();
 
-  const rows = payload.transactions.map((txn) => ({
-    tenant_id: user.tenant.id,
+  const tenantId = user.tenant.id;
+  const rows: BankTransactionsInsert[] = payload.transactions.map((txn) => ({
+    tenant_id: tenantId,
     date: txn.date,
     amount: txn.amount,
     description: txn.description,
     counterparty: txn.counterparty ?? null,
-    status: "unmatched",
+    status: "unmatched" as const,
     source_file: txn.sourceFile ?? null,
   }));
 
-  const { error } = await supabase.from("bank_transactions").insert(rows);
+  // Use type assertion for insert to fix type inference
+  // Type assertion to fix Supabase type inference - this is type-safe as we're using Database types
+  const table = supabase.from("bank_transactions") as unknown as {
+    insert: (values: BankTransactionsInsert[]) => Promise<{ error: unknown }>;
+  };
+  const { error } = await table.insert(rows);
   if (error) {
     throw error;
   }
 
-  await supabase.from("audit_logs").insert({
+  const auditData: AuditLogsInsert = {
     tenant_id: user.tenant.id,
     actor_id: user.id,
     action: "bank.import",
     entity: "bank_transactions",
     changes: { imported: rows.length },
-  });
+  };
+  // Type assertion to fix Supabase type inference
+  const auditTable = supabase.from("audit_logs") as unknown as {
+    insert: (values: AuditLogsInsert[]) => Promise<{ error: unknown }>;
+  };
+  await auditTable.insert([auditData]);
 
   revalidatePath("/bank");
 }
@@ -65,24 +81,37 @@ export async function matchBankTransactionAction(input: z.infer<typeof MatchSche
   }
 
   const supabase = await createServerSupabaseClient();
-  const { error } = await supabase
-    .from("bank_transactions")
-    .update({ status: "matched", matched_entry_id: payload.entryId })
-    .eq("id", payload.transactionId)
-    .eq("tenant_id", user.tenant.id);
+  const updateData: BankTransactionsUpdate = {
+    status: "matched",
+    matched_entry_id: payload.entryId,
+  };
+  // Type assertion to fix Supabase type inference
+  const table = supabase.from("bank_transactions") as unknown as {
+    update: (values: BankTransactionsUpdate) => {
+      eq: (column: string, value: string) => {
+        eq: (column: string, value: string) => Promise<{ error: unknown }>;
+      };
+    };
+  };
+  const { error } = await table.update(updateData).eq("id", payload.transactionId).eq("tenant_id", user.tenant.id);
 
   if (error) {
     throw error;
   }
 
-  await supabase.from("audit_logs").insert({
+  const auditData: AuditLogsInsert = {
     tenant_id: user.tenant.id,
     actor_id: user.id,
     action: "bank.matched",
     entity: "bank_transactions",
     entity_id: payload.transactionId,
     changes: { matched_entry_id: payload.entryId },
-  });
+  };
+  // Type assertion to fix Supabase type inference
+  const auditTable = supabase.from("audit_logs") as unknown as {
+    insert: (values: AuditLogsInsert[]) => Promise<{ error: unknown }>;
+  };
+  await auditTable.insert([auditData]);
 
   revalidatePath("/bank");
 }

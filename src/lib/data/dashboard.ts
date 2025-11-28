@@ -1,5 +1,9 @@
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { getCurrentUser } from "./users";
+import type { Database } from "@/lib/database.types";
+
+type ProfitAndLossView = Database["public"]["Views"]["v_profit_and_loss"]["Row"];
+type TrialBalanceView = Database["public"]["Views"]["v_trial_balance"]["Row"];
 
 export async function getDashboardMetrics() {
   const user = await getCurrentUser();
@@ -18,22 +22,56 @@ export async function getDashboardMetrics() {
   const supabase = await createServerSupabaseClient();
   const tenantId = user.tenant.id;
 
+  // Type assertions to fix Supabase type inference
+  const draftsTable = supabase.from("drafts") as unknown as {
+    select: (columns: string, options?: { count?: string; head?: boolean }) => {
+      eq: (column: string, value: string) => Promise<{ count: number | null; error: unknown }>;
+    };
+  };
+  const draftsSelectTable = supabase.from("drafts") as unknown as {
+    select: (columns: string) => {
+      eq: (column: string, value: string) => {
+        eq: (column: string, value: string) => Promise<{ data: Array<{ id: string }> | null; error: unknown }>;
+      };
+    };
+  };
+  const journalEntriesTable = supabase.from("journal_entries") as unknown as {
+    select: (columns: string, options?: { count?: string; head?: boolean }) => {
+      eq: (column: string, value: string) => {
+        eq: (column: string, value: string) => Promise<{ count: number | null; error: unknown }>;
+      };
+    };
+  };
+  const pnlView = supabase.from("v_profit_and_loss") as unknown as {
+    select: (columns: string) => {
+      eq: (column: string, value: string) => {
+        maybeSingle: () => Promise<{ data: ProfitAndLossView | null; error: unknown }>;
+      };
+    };
+  };
+  const trialBalanceView = supabase.from("v_trial_balance") as unknown as {
+    select: (columns: string) => {
+      eq: (column: string, value: string) => {
+        eq: (column: string, value: string) => {
+          maybeSingle: () => Promise<{ data: TrialBalanceView | null; error: unknown }>;
+        };
+      };
+    };
+  };
+
   const [{ count: draftsCount }, { data: approvals }, { count: postedCount }, { data: pnl }, { data: cashBalance }] =
     await Promise.all([
-      supabase.from("drafts").select("id", { count: "exact", head: true }).eq("tenant_id", tenantId),
-      supabase
-        .from("drafts")
+      draftsTable.select("id", { count: "exact", head: true }).eq("tenant_id", tenantId),
+      draftsSelectTable
         .select("id")
         .eq("tenant_id", tenantId)
         .eq("status", "draft"),
-      supabase
-        .from("journal_entries")
+      journalEntriesTable
         .select("id", { count: "exact", head: true })
         .eq("tenant_id", tenantId)
         .eq("status", "posted"),
-      supabase.from("v_profit_and_loss").select("*").eq("tenant_id", tenantId).maybeSingle(),
-      supabase
-        .from("v_trial_balance")
+      pnlView.select("*").eq("tenant_id", tenantId).maybeSingle(),
+      trialBalanceView
         .select("total_debit, total_credit")
         .eq("tenant_id", tenantId)
         .eq("code", "1000")

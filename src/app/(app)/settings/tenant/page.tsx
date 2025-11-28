@@ -7,7 +7,7 @@ import { SubscriptionManager } from "@/components/settings/subscription-manager"
 import { getTenantProfile } from "@/lib/data/tenant";
 import { listTenantUsers, listPendingInvites } from "@/lib/data/tenant";
 import { getCurrentUser } from "@/lib/data/users";
-import { canManageAccounts } from "@/lib/auth";
+import { canManageAccounts, type UserRole } from "@/lib/auth";
 import {
   getTenantSubscription,
   getSubscriptionUsage,
@@ -27,7 +27,7 @@ export default async function TenantSettingsPage() {
     getSubscriptionUsage(),
   ]);
 
-  const canManage = currentUser ? canManageAccounts(currentUser.role) : false;
+  const canManage = currentUser ? canManageAccounts(currentUser.role as UserRole) : false;
 
   return (
     <div className="space-y-8">

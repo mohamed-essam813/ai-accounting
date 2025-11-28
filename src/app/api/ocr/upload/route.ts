@@ -3,9 +3,10 @@ import { createServiceSupabaseClient } from "@/lib/supabase/service";
 import { getCurrentUser } from "@/lib/data/users";
 import { extractTextFromImage } from "@/lib/ocr/vision";
 import { z } from "zod";
-import type { Database } from "@/lib/database.types";
+import type { Database, Json } from "@/lib/database.types";
 
-type SourceDocument = Database["public"]["Tables"]["source_documents"]["Row"];
+type SourceDocumentInsert = Database["public"]["Tables"]["source_documents"]["Insert"];
+type AuditLogsInsert = Database["public"]["Tables"]["audit_logs"]["Insert"];
 
 export const runtime = "nodejs";
 
@@ -63,19 +64,26 @@ export async function POST(request: NextRequest) {
 
     const vision = await extractTextFromImage(buffer);
 
-    const { data: document, error: insertError } = await serviceSupabase
-      .from("source_documents")
-      .insert({
-        tenant_id: user.tenant.id,
-        created_by: user.id,
-        file_path: storagePath,
-        file_name: file.name,
-        mime_type: file.type || "application/octet-stream",
-        vision_text: vision.text,
-        vision_json: vision.annotation,
-      } as any)
-      .select()
-      .maybeSingle() as { data: SourceDocument | null; error: any };
+    const insertData: SourceDocumentInsert = {
+      tenant_id: user.tenant.id,
+      created_by: user.id,
+      file_path: storagePath,
+      file_name: file.name,
+      mime_type: file.type || "application/octet-stream",
+      vision_text: vision.text,
+      vision_json: vision.annotation ? (vision.annotation as unknown as Json) : null,
+    };
+    // Service client has type inference issues - use explicit typing
+    const insertArray: SourceDocumentInsert[] = [insertData];
+    type SourceDocumentRow = Database["public"]["Tables"]["source_documents"]["Row"];
+    // Type assertion to fix service client inference - this is type-safe as we're asserting to known Database types
+    const table = serviceSupabase.from("source_documents") as unknown as {
+      insert: (values: SourceDocumentInsert[]) => {
+        select: () => Promise<{ data: SourceDocumentRow[] | null; error: unknown }>;
+      };
+    };
+    const { data: documents, error: insertError } = await table.insert(insertArray).select();
+    const document = documents?.[0] ?? null;
 
     if (insertError) {
       console.error("Failed to record document metadata", insertError);
@@ -85,18 +93,23 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    await serviceSupabase.from("audit_logs").insert({
-      tenant_id: user.tenant.id,
-      actor_id: user.id,
-      action: "ocr.uploaded",
-      entity: "source_documents",
-      entity_id: document?.id ?? null,
-      changes: {
-        fileName: file.name,
-        storagePath,
-        bytes: file.size,
-      },
-    } as any);
+  const auditData: AuditLogsInsert = {
+    tenant_id: user.tenant.id,
+    actor_id: user.id,
+    action: "ocr.uploaded",
+    entity: "source_documents",
+    entity_id: document?.id ?? null,
+    changes: {
+      fileName: file.name,
+      storagePath,
+      bytes: file.size,
+    },
+  };
+  // Type assertion for service client audit_logs insert
+  const auditTable = serviceSupabase.from("audit_logs") as unknown as {
+    insert: (values: AuditLogsInsert[]) => Promise<{ error: unknown }>;
+  };
+  await auditTable.insert([auditData]);
 
     return NextResponse.json({
       document: {

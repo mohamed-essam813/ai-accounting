@@ -2,6 +2,8 @@ import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { getCurrentUser } from "./users";
 import type { Database } from "@/lib/database.types";
 
+type ChartOfAccountsRow = Database["public"]["Tables"]["chart_of_accounts"]["Row"];
+
 export async function listAccounts() {
   const user = await getCurrentUser();
   if (!user?.tenant) {
@@ -58,8 +60,15 @@ export async function ensureDefaultAccounts(tenantId: string) {
   ];
 
   // Check which accounts already exist
-  const { data: existing } = await supabase
-    .from("chart_of_accounts")
+  // Type assertion to fix Supabase type inference
+  const table = supabase.from("chart_of_accounts") as unknown as {
+    select: (columns: string) => {
+      eq: (column: string, value: string) => {
+        in: (column: string, values: string[]) => Promise<{ data: Pick<ChartOfAccountsRow, "code">[] | null; error: unknown }>;
+      };
+    };
+  };
+  const { data: existing } = await table
     .select("code")
     .eq("tenant_id", tenantId)
     .in("code", defaultAccounts.map((a) => a.code));
@@ -72,11 +81,16 @@ export async function ensureDefaultAccounts(tenantId: string) {
   }
 
   // Insert missing accounts
-  const { error } = await supabase.from("chart_of_accounts").insert(
+  // Type assertion to fix Supabase type inference
+  type ChartOfAccountsInsert = Database["public"]["Tables"]["chart_of_accounts"]["Insert"];
+  const insertTable = supabase.from("chart_of_accounts") as unknown as {
+    insert: (values: ChartOfAccountsInsert[]) => Promise<{ error: unknown }>;
+  };
+  const { error } = await insertTable.insert(
     accountsToCreate.map((account) => ({
       tenant_id: tenantId,
       ...account,
-    })),
+    } as ChartOfAccountsInsert)),
   );
 
   if (error) {

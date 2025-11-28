@@ -4,7 +4,7 @@ import { AccountsTable } from "@/components/accounts/accounts-table";
 import { AccountForm } from "@/components/accounts/account-form";
 import { IntentMappingTable } from "@/components/accounts/intent-mapping-table";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { canManageAccounts } from "@/lib/auth";
+import { canManageAccounts, type UserRole } from "@/lib/auth";
 
 export const revalidate = 60;
 
@@ -14,7 +14,7 @@ export default async function AccountsPage() {
     getCurrentUser(),
     listIntentAccountMappings(),
   ]);
-  const canManage = user ? canManageAccounts(user.role) : false;
+  const canManage = user ? canManageAccounts(user.role as UserRole) : false;
 
   return (
     <div className="space-y-8">
