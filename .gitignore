@@ -39,3 +39,14 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+
+# Google Cloud Vision service account keys (any JSON key files)
+*.json
+!package.json
+!package-lock.json
+!tsconfig.json
+!components.json
+!eslint.config.mjs
+!postcss.config.mjs
+!next.config.ts

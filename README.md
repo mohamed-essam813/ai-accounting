@@ -1,36 +1,124 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# AI Accounting Platform
 
-## Getting Started
+A SaaS accounting platform that converts natural language prompts into structured accounting entries using AI, with human review, approval workflows, and comprehensive financial reporting.
 
-First, run the development server:
+## 🚀 Quick Start
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+1. **Read the [Setup Guide](./SETUP_GUIDE.md)** for detailed installation instructions
+2. **Copy environment template**: `cp env.example .env.local`
+3. **Fill in your keys** (Supabase, OpenAI, optional Google Cloud)
+4. **Run migrations** (see Setup Guide)
+5. **Start dev server**: `npm run dev`
+
+## 📚 Documentation
+
+- **[SETUP_GUIDE.md](./SETUP_GUIDE.md)** - Complete setup instructions, troubleshooting, security guidelines, and RAG feature documentation
+- **[DEPLOYMENT.md](./DEPLOYMENT.md)** - Free tier deployment guide for Vercel, Supabase, and OpenAI
+
+## 🛠 Tech Stack
+
+- **Frontend**: Next.js 16 (App Router), TypeScript, Tailwind CSS, shadcn/ui
+- **Backend**: Next.js API Routes + Server Actions
+- **Database**: Supabase (PostgreSQL + Row-Level Security)
+- **AI**: OpenAI GPT-5.1 via Vercel AI SDK with RAG (Retrieval-Augmented Generation)
+- **Storage**: Supabase Storage
+- **OCR**: Google Cloud Vision API (optional)
+
+## ✨ Features
+
+- ✅ Natural language prompt → AI draft generation
+- ✅ Draft review, editing, and approval workflow
+- ✅ Double-entry journal posting with balance validation
+- ✅ Configurable intent-to-account mappings
+- ✅ Bank CSV import and reconciliation
+- ✅ Financial reports (P&L, Balance Sheet, Trial Balance)
+- ✅ Multi-tenant architecture with RLS
+- ✅ User roles and permissions
+- ✅ Subscription management
+- ✅ OCR document processing
+- ✅ AI usage tracking and caching
+- ✅ RAG (Retrieval-Augmented Generation) for context-aware AI parsing
+
+## 📁 Project Structure
+
+```
+src/
+├── app/              # Next.js App Router pages
+│   ├── (app)/        # Protected app routes
+│   ├── api/          # API endpoints
+│   └── auth/         # Authentication pages
+├── components/       # React components
+│   ├── ui/           # shadcn/ui components
+│   └── ...           # Feature components
+└── lib/              # Core libraries
+    ├── actions/      # Server actions
+    ├── data/         # Data access layer
+    ├── ai/           # AI integration
+    └── supabase/     # Supabase clients
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## 🔧 Development
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+# Install dependencies
+npm install
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+# Run development server
+npm run dev
 
-## Learn More
+# Lint code
+npm run lint
 
-To learn more about Next.js, take a look at the following resources:
+# Build for production
+npm run build
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## 🔐 Environment Variables
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+See `env.example` for required variables. **Never commit `.env.local` to version control.**
 
-## Deploy on Vercel
+Required:
+- `NEXT_PUBLIC_SUPABASE_URL` & `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+- `SUPABASE_SERVICE_ROLE_KEY` & `SUPABASE_JWT_SECRET`
+- `OPENAI_API_KEY`
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+Optional:
+- `GOOGLE_APPLICATION_CREDENTIALS` (for OCR features)
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## 🗄 Database
+
+Migrations are in `supabase/migrations/`. Run them via:
+- Supabase CLI: `supabase db push`
+- Or Supabase Dashboard SQL Editor
+
+See [SETUP_GUIDE.md](./SETUP_GUIDE.md) for details.
+
+## 🧪 Testing
+
+Currently manual testing only. Automated tests planned for future release.
+
+## ⚠️ Missing for Production
+
+- Payment processing (Stripe/Paddle integration)
+- Email notifications system
+- Automated tests (unit + E2E)
+- Error monitoring (Sentry)
+
+## 💰 Costs
+
+**Free Tier (Development/Small Business):**
+- Vercel: Free (100GB bandwidth/month)
+- Supabase: Free tier (500MB database, 1GB storage)
+- OpenAI: $5 free credits, then ~$10-20/month
+- Google Vision: 1,000 requests/month free, then ~$1.50/1,000
+- **Total**: ~$10-25/month after free credits
+
+See [DEPLOYMENT.md](./DEPLOYMENT.md) for free tier deployment guide.
+
+## 📝 License
+
+Private project - All rights reserved
+
+---
+
+**Need help?** Check [SETUP_GUIDE.md](./SETUP_GUIDE.md) for setup instructions and troubleshooting.
