@@ -40,10 +40,17 @@ export async function saveDraftAction(input: z.infer<typeof SaveDraftSchema>) {
 
   const supabase = await createServerSupabaseClient();
 
+  // Auto-generate invoice number for invoices if not provided
+  const entities = { ...payload.entities };
+  if (payload.intent === "create_invoice" && !entities.invoice_number) {
+    const { generateInvoiceNumber } = await import("@/lib/utils/invoice-number");
+    entities.invoice_number = await generateInvoiceNumber(user.tenant.id);
+  }
+
   const insertData: DraftsInsert = {
     tenant_id: user.tenant.id,
     intent: payload.intent,
-    data_json: payload.entities,
+    data_json: entities,
     status: "draft",
     created_by: user.id,
     confidence: payload.confidence,
@@ -119,9 +126,31 @@ export async function updateDraftAction(input: z.infer<typeof UpdateDraftSchema>
 
   const nextStatus = existing.status === "approved" ? "draft" : existing.status;
 
+  // Prevent invoice number changes for invoices - preserve existing invoice number
+  const entities = { ...payload.entities };
+  if (payload.intent === "create_invoice") {
+    // Get existing draft to preserve invoice number
+    const { data: existingDraft } = await supabase
+      .from("drafts")
+      .select("data_json")
+      .eq("id", payload.draftId)
+      .maybeSingle();
+    
+    if (existingDraft) {
+      const existingData = existingDraft.data_json as { invoice_number?: string | null };
+      if (existingData?.invoice_number) {
+        entities.invoice_number = existingData.invoice_number;
+      } else {
+        // Generate if missing
+        const { generateInvoiceNumber } = await import("@/lib/utils/invoice-number");
+        entities.invoice_number = await generateInvoiceNumber(user.tenant.id);
+      }
+    }
+  }
+
   const updateData: DraftsUpdate = {
     intent: payload.intent,
-    data_json: payload.entities,
+    data_json: entities,
     confidence: payload.confidence,
     status: nextStatus,
   };
@@ -133,11 +162,11 @@ export async function updateDraftAction(input: z.infer<typeof UpdateDraftSchema>
       };
     };
   };
-  const { error: updateError } = await table.update(updateData).eq("id", payload.draftId).eq("tenant_id", user.tenant.id);
+  const { error } = await table.update(updateData).eq("id", payload.draftId).eq("tenant_id", user.tenant.id);
 
-  if (updateError) {
-    console.error("Failed to update draft", updateError);
-    throw updateError;
+  if (error) {
+    console.error("Failed to update draft", error);
+    throw error;
   }
 
   const auditData: AuditLogsInsert = {
@@ -148,7 +177,6 @@ export async function updateDraftAction(input: z.infer<typeof UpdateDraftSchema>
     entity_id: payload.draftId,
     changes: {
       intent: payload.intent,
-      confidence: payload.confidence,
     },
   };
   // Type assertion to fix Supabase type inference
@@ -158,17 +186,11 @@ export async function updateDraftAction(input: z.infer<typeof UpdateDraftSchema>
   await auditTable.insert([auditData]);
 
   revalidatePath("/drafts");
-  revalidatePath("/dashboard");
+  return { success: true };
 }
 
 const ApprovePayload = z.object({
   draftId: z.string().uuid(),
-  adjustments: z
-    .object({
-      description: z.string().optional(),
-      amount: z.number().optional(),
-    })
-    .optional(),
 });
 
 export async function approveDraftAction(input: z.infer<typeof ApprovePayload>) {
@@ -183,11 +205,8 @@ export async function approveDraftAction(input: z.infer<typeof ApprovePayload>) 
   }
 
   const supabase = await createServerSupabaseClient();
-
   const updateData: DraftsUpdate = {
     status: "approved",
-    approved_by: user.id,
-    approved_at: new Date().toISOString(),
   };
   // Type assertion to fix Supabase type inference
   const table = supabase.from("drafts") as unknown as {
@@ -200,7 +219,6 @@ export async function approveDraftAction(input: z.infer<typeof ApprovePayload>) 
   const { error } = await table.update(updateData).eq("id", payload.draftId).eq("tenant_id", user.tenant.id);
 
   if (error) {
-    console.error("Draft approval failed", error);
     throw error;
   }
 
@@ -210,7 +228,7 @@ export async function approveDraftAction(input: z.infer<typeof ApprovePayload>) 
     action: "draft.approved",
     entity: "drafts",
     entity_id: payload.draftId,
-    changes: payload.adjustments ?? null,
+    changes: null,
   };
   // Type assertion to fix Supabase type inference
   const auditTable = supabase.from("audit_logs") as unknown as {
@@ -219,7 +237,7 @@ export async function approveDraftAction(input: z.infer<typeof ApprovePayload>) 
   await auditTable.insert([auditData]);
 
   revalidatePath("/drafts");
-  revalidatePath("/dashboard");
+  return { success: true };
 }
 
 const PostDraftSchema = z.object({
@@ -238,6 +256,7 @@ export async function postDraftAction(input: z.infer<typeof PostDraftSchema>) {
   }
 
   const supabase = await createServerSupabaseClient();
+
   const { data: draft, error: draftError } = await supabase
     .from("drafts")
     .select<"*", DraftsRow>("*")
@@ -322,8 +341,11 @@ export async function postDraftAction(input: z.infer<typeof PostDraftSchema>) {
   const entry = entries?.[0] ?? null;
 
   if (entryError) {
-    console.error("Failed to create journal entry", entryError);
     throw entryError;
+  }
+
+  if (!entry) {
+    throw new Error("Failed to create journal entry.");
   }
 
   try {
@@ -339,61 +361,57 @@ export async function postDraftAction(input: z.infer<typeof PostDraftSchema>) {
     const linesTable = supabase.from("journal_lines") as unknown as {
       insert: (values: JournalLinesInsert[]) => Promise<{ error: unknown }>;
     };
-    const { error: lineError } = await linesTable.insert(linesData);
+    const { error: linesError } = await linesTable.insert(linesData);
 
-    if (lineError) {
-      throw lineError;
+    if (linesError) {
+      throw linesError;
     }
-  } catch (lineError) {
-    await supabase.from("journal_entries").delete().eq("id", entry?.id ?? "");
-    throw lineError;
+  } catch (error) {
+    // Rollback entry creation if lines fail
+    await supabase.from("journal_entries").delete().eq("id", entry.id);
+    throw error;
   }
 
+  // Update draft to mark as posted
   const updateData: DraftsUpdate = {
     status: "posted",
-    posted_entry_id: entry?.id ?? null,
+    posted_entry_id: entry.id,
   };
   // Type assertion to fix Supabase type inference
   const draftTable = supabase.from("drafts") as unknown as {
     update: (values: DraftsUpdate) => {
-      eq: (column: string, value: string) => Promise<{ error: unknown }>;
+      eq: (column: string, value: string) => {
+        eq: (column: string, value: string) => Promise<{ error: unknown }>;
+      };
     };
   };
-  const { error: draftUpdateError } = await draftTable.update(updateData).eq("id", draft.id);
+  await draftTable.update(updateData).eq("id", payload.draftId).eq("tenant_id", user.tenant.id);
 
-  if (draftUpdateError) {
-    throw draftUpdateError;
-  }
-
-  // Populate embedding for RAG (async, don't wait)
-  if (entry) {
-    const entities = parsedDraft.entities;
-    const tenantId = user.tenant.id;
-    import("@/lib/ai/populate-embeddings")
-      .then(({ populateTransactionEmbedding }) =>
-        populateTransactionEmbedding({
-          tenantId,
-          transactionId: entry.id,
-          description: description ?? "",
-          counterparty: (entities.counterparty as string | undefined) ?? null,
-          amount: (entities.amount as number) ?? 0,
-          currency: (entities.currency as string) ?? "USD",
-          date: entry.date,
-          intent: draft.intent,
-        }),
-      )
-      .catch((err) => console.error("Failed to populate transaction embedding:", err));
-  }
+  // Populate transaction embedding for RAG (async, don't wait)
+  const tenantId = user.tenant.id;
+  import("@/lib/ai/populate-embeddings")
+    .then(({ populateTransactionEmbedding }) =>
+      populateTransactionEmbedding({
+        tenantId,
+        transactionId: entry.id,
+        description,
+        counterparty: parsedDraft.entities.counterparty ?? null,
+        amount: Number(parsedDraft.entities.amount),
+        currency: parsedDraft.entities.currency,
+        date: parsedDraft.entities.date,
+        intent: parsedDraft.intent,
+      }),
+    )
+    .catch((err) => console.error("Failed to populate transaction embedding:", err));
 
   const auditData: AuditLogsInsert = {
     tenant_id: user.tenant.id,
     actor_id: user.id,
-    action: "journal.posted",
-    entity: "journal_entries",
-    entity_id: entry?.id ?? null,
+    action: "draft.posted",
+    entity: "drafts",
+    entity_id: payload.draftId,
     changes: {
-      draftId: draft.id,
-      lines: lines.length,
+      journal_entry_id: entry.id,
     },
   };
   // Type assertion to fix Supabase type inference
@@ -404,7 +422,81 @@ export async function postDraftAction(input: z.infer<typeof PostDraftSchema>) {
 
   revalidatePath("/drafts");
   revalidatePath("/dashboard");
-  revalidatePath("/reports/pnl");
-  return entry?.id ?? null;
+  revalidatePath("/reports");
+  return entry.id;
 }
 
+/**
+ * Get journal entry preview for a draft
+ * Returns the accounts and journal lines that will be created when the draft is posted
+ */
+export async function getDraftJournalPreview(draftId: string) {
+  const user = await getCurrentUser();
+  if (!user?.tenant) {
+    throw new Error("User tenant not resolved.");
+  }
+
+  const supabase = await createServerSupabaseClient();
+  
+  // Get the draft
+  const { data: draft, error: draftError } = await supabase
+    .from("drafts")
+    .select<"*", DraftsRow>("*")
+    .eq("id", draftId)
+    .eq("tenant_id", user.tenant.id)
+    .maybeSingle();
+
+  if (draftError || !draft) {
+    throw new Error("Draft not found.");
+  }
+
+  // Get accounts and mapping
+  const accounts = await listAccounts();
+  type IntentMappingRow = Database["public"]["Tables"]["intent_account_mappings"]["Row"];
+  const { data: mapping } = await supabase
+    .from("intent_account_mappings")
+    .select<"*", IntentMappingRow>("*")
+    .eq("tenant_id", user.tenant.id)
+    .eq("intent", draft.intent)
+    .maybeSingle();
+
+  const parsedDraft = DraftSchema.parse({
+    intent: draft.intent,
+    entities: draft.data_json,
+    confidence: draft.confidence ? Number(draft.confidence) : 0,
+  });
+
+  const intentMapping = mapping
+    ? ({
+        intent: mapping.intent as DraftPayload["intent"],
+        debit_account_id: mapping.debit_account_id,
+        credit_account_id: mapping.credit_account_id,
+        tax_debit_account_id: mapping.tax_debit_account_id,
+        tax_credit_account_id: mapping.tax_credit_account_id,
+      } as IntentAccountMapping)
+    : undefined;
+
+  const { description, lines } = buildDefaultJournalLines(parsedDraft, accounts, intentMapping);
+
+  // Map journal lines to include account details
+  const accountMap = new Map(accounts.map((account) => [account.id, account]));
+  const journalLines = lines.map((line) => {
+    const account = accountMap.get(line.account_id);
+    return {
+      account_id: line.account_id,
+      account_code: account?.code ?? "",
+      account_name: account?.name ?? "",
+      account_type: account?.type ?? "",
+      debit: line.debit,
+      credit: line.credit,
+      memo: line.memo,
+    };
+  });
+
+  return {
+    description,
+    journalLines,
+    entities: parsedDraft.entities,
+    intent: parsedDraft.intent,
+  };
+}

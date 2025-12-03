@@ -27,13 +27,40 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "File upload is required." }, { status: 400 });
     }
 
+    // Check file type
+    const allowedMimeTypes = [
+      "application/pdf",
+      "image/jpeg",
+      "image/jpg",
+      "image/png",
+      "image/gif",
+      "image/webp",
+    ];
+    const fileType = file.type || "";
+    const fileName = file.name.toLowerCase();
+    const isPdf = fileName.endsWith(".pdf") || fileType === "application/pdf";
+    const isImage = fileType.startsWith("image/") || /\.(jpg|jpeg|png|gif|webp)$/i.test(fileName);
+
+    if (!isPdf && !isImage) {
+      return NextResponse.json(
+        {
+          error: "Unsupported file type.",
+          details: `Supported formats: PDF, JPEG, PNG, GIF, WebP. Received: ${fileType || "unknown"}`,
+        },
+        { status: 400 },
+      );
+    }
+
     if (file.size === 0) {
       return NextResponse.json({ error: "Uploaded file is empty." }, { status: 400 });
     }
 
     if (file.size > MAX_FILE_SIZE_BYTES) {
       return NextResponse.json(
-        { error: "File size exceeds the 10 MB limit." },
+        {
+          error: "File size exceeds the 10 MB limit.",
+          details: `File size: ${(file.size / 1024 / 1024).toFixed(2)} MB. Maximum allowed: 10 MB.`,
+        },
         { status: 400 },
       );
     }
@@ -62,7 +89,37 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const vision = await extractTextFromImage(buffer);
+    let vision;
+    try {
+      vision = await extractTextFromImage(buffer);
+    } catch (error) {
+      console.error("OCR extraction failed", error);
+      if (error instanceof Error) {
+        if (error.message.includes("credentials") || error.message.includes("Google Cloud")) {
+          return NextResponse.json(
+            {
+              error: "OCR service not configured.",
+              details: "Google Cloud Vision API credentials are missing or invalid. Please contact your administrator.",
+            },
+            { status: 500 },
+          );
+        }
+        return NextResponse.json(
+          {
+            error: "Failed to extract text from document.",
+            details: error.message,
+          },
+          { status: 500 },
+        );
+      }
+      return NextResponse.json(
+        {
+          error: "Failed to process document.",
+          details: "The document could not be read. Please ensure it's a valid PDF or image file.",
+        },
+        { status: 500 },
+      );
+    }
 
     const insertData: SourceDocumentInsert = {
       tenant_id: user.tenant.id,

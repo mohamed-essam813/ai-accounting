@@ -35,6 +35,8 @@ import { formatCurrency, formatDate } from "@/lib/format";
 import { approveDraftAction, postDraftAction, updateDraftAction } from "@/lib/actions/drafts";
 import { PromptIntentEnum } from "@/lib/ai/schema";
 import { toast } from "sonner";
+import { JournalPreview } from "./journal-preview";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 type DraftTableItem = {
   id: string;
@@ -196,7 +198,6 @@ const DraftIntentOptions = PromptIntentEnum.options;
 const DraftEditFormSchema = z
   .object({
     intent: z.enum(DraftIntentOptions),
-    confidence: z.number().min(0, "Confidence must be between 0 and 1").max(1),
     amount: z.number().positive("Amount must be greater than zero"),
     currency: z.string().min(1, "Currency code is required"),
     date: z
@@ -236,7 +237,6 @@ type DraftEditFormValues = z.infer<typeof DraftEditFormSchema>;
 function getDefaultValues(draft: DraftTableItem): DraftEditFormValues {
   return {
     intent: (draft.intent as DraftEditFormValues["intent"]) ?? "create_invoice",
-    confidence: typeof draft.confidence === "number" ? draft.confidence : 0.8,
     amount: typeof draft.entities.amount === "number" ? draft.entities.amount : 0,
     currency: typeof draft.entities.currency === "string" ? draft.entities.currency : "AED",
     date: typeof draft.entities.date === "string" ? draft.entities.date : new Date().toISOString().slice(0, 10),
@@ -282,7 +282,7 @@ function DraftEditorDialog({ draft, open, onOpenChange }: DraftEditorDialogProps
         await updateDraftAction({
           draftId: draft.id,
           intent: values.intent,
-          confidence: values.confidence,
+          confidence: draft.confidence ?? 0.8, // Keep existing confidence, don't expose to user
           entities: {
             amount: values.amount,
             currency: values.currency,
@@ -328,6 +328,15 @@ function DraftEditorDialog({ draft, open, onOpenChange }: DraftEditorDialogProps
         </DialogHeader>
 
         {draft ? (
+          <Tabs defaultValue="edit" className="space-y-4">
+            <TabsList>
+              <TabsTrigger value="edit">Edit Details</TabsTrigger>
+              <TabsTrigger value="preview">Journal Preview</TabsTrigger>
+            </TabsList>
+            <TabsContent value="preview">
+              <JournalPreview draftId={draft.id} />
+            </TabsContent>
+            <TabsContent value="edit">
           <form className="space-y-4" onSubmit={form.handleSubmit(onSubmit)}>
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
@@ -350,15 +359,7 @@ function DraftEditorDialog({ draft, open, onOpenChange }: DraftEditorDialogProps
                   </SelectContent>
                 </Select>
               </div>
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Confidence (0-1)</label>
-                <Input type="number" step="0.01" min="0" max="1" {...form.register("confidence")} />
-                {form.formState.errors.confidence ? (
-                  <p className="text-xs text-destructive">
-                    {form.formState.errors.confidence.message}
-                  </p>
-                ) : null}
-              </div>
+              {/* Confidence field removed - internal metric not shown to users */}
             </div>
 
             <div className="grid gap-4 sm:grid-cols-2">
@@ -404,7 +405,16 @@ function DraftEditorDialog({ draft, open, onOpenChange }: DraftEditorDialogProps
               </div>
               <div className="space-y-2">
                 <label className="text-sm font-medium">Invoice Number</label>
-                <Input {...form.register("invoice_number")} />
+                <Input 
+                  {...form.register("invoice_number")} 
+                  disabled={intentValue === "create_invoice"}
+                  className={intentValue === "create_invoice" ? "bg-muted cursor-not-allowed" : ""}
+                />
+                {intentValue === "create_invoice" && (
+                  <p className="text-xs text-muted-foreground">
+                    Invoice numbers are auto-generated and cannot be edited
+                  </p>
+                )}
               </div>
             </div>
 
@@ -441,6 +451,8 @@ function DraftEditorDialog({ draft, open, onOpenChange }: DraftEditorDialogProps
               </Button>
             </DialogFooter>
           </form>
+            </TabsContent>
+          </Tabs>
         ) : null}
       </DialogContent>
     </Dialog>

@@ -244,6 +244,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "bank_transactions_matched_entry_id_fkey"
+            columns: ["matched_entry_id"]
+            isOneToOne: false
+            referencedRelation: "v_journal_ledger"
+            referencedColumns: ["entry_id"]
+          },
+          {
             foreignKeyName: "bank_transactions_tenant_id_fkey"
             columns: ["tenant_id"]
             isOneToOne: false
@@ -351,6 +358,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "journal_entries"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "drafts_posted_entry_id_fkey"
+            columns: ["posted_entry_id"]
+            isOneToOne: false
+            referencedRelation: "v_journal_ledger"
+            referencedColumns: ["entry_id"]
           },
           {
             foreignKeyName: "drafts_tenant_id_fkey"
@@ -606,6 +620,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "journal_entries"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "journal_lines_entry_id_fkey"
+            columns: ["entry_id"]
+            isOneToOne: false
+            referencedRelation: "v_journal_ledger"
+            referencedColumns: ["entry_id"]
           },
         ]
       }
@@ -885,6 +906,45 @@ export type Database = {
           },
         ]
       }
+      v_cash_flow: {
+        Row: {
+          net_cash_flow: number | null
+          tenant_id: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "journal_entries_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      v_journal_ledger: {
+        Row: {
+          account_code: string | null
+          account_name: string | null
+          created_at: string | null
+          credit: number | null
+          date: string | null
+          debit: number | null
+          description: string | null
+          entry_id: string | null
+          memo: string | null
+          status: string | null
+          tenant_id: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "journal_entries_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       v_profit_and_loss: {
         Row: {
           net_income: number | null
@@ -911,6 +971,23 @@ export type Database = {
           total_credit: number | null
           total_debit: number | null
           type: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "journal_entries_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      v_vat_report: {
+        Row: {
+          tenant_id: string | null
+          vat_input_tax: number | null
+          vat_output_tax: number | null
+          vat_payable: number | null
         }
         Relationships: [
           {

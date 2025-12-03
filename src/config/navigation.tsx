@@ -7,6 +7,7 @@ import {
   Layers,
   Settings,
   Waypoints,
+  BookOpen,
 } from "lucide-react";
 
 type NavItem = {
@@ -40,6 +41,12 @@ export const mainNavigation: NavItem[] = [
     href: "/accounts",
     icon: Layers,
     description: "Maintain accounts and control double-entry mapping.",
+  },
+  {
+    title: "Journals",
+    href: "/journals",
+    icon: BookOpen,
+    description: "Create manual journal entries for accruals, depreciation, and adjustments.",
   },
   {
     title: "Bank Reconciliation",

@@ -50,13 +50,30 @@ export async function ensureDefaultAccounts(tenantId: string) {
   const supabase = await createServerSupabaseClient();
   
   const defaultAccounts = [
+    // Non-Current Assets
+    { code: "1500", name: "Property, Plant & Equipment", type: "asset" as const },
+    { code: "1600", name: "Accumulated Depreciation", type: "asset" as const },
+    // Current Assets
     { code: "1000", name: "Cash", type: "asset" as const },
     { code: "1100", name: "Accounts Receivable", type: "asset" as const },
+    { code: "5100", name: "VAT Input Tax", type: "asset" as const },
+    // Equity
+    { code: "3000", name: "Equity", type: "equity" as const },
+    { code: "3100", name: "Retained Earnings", type: "equity" as const },
+    // Current Liabilities
     { code: "2000", name: "Accounts Payable", type: "liability" as const },
     { code: "2100", name: "VAT Output Tax", type: "liability" as const },
+    // Non-Current Liabilities
+    { code: "2500", name: "Long-term Debt", type: "liability" as const },
+    // Revenue
     { code: "4000", name: "Sales Revenue", type: "revenue" as const },
+    // Expenses
     { code: "5000", name: "Consulting Expense", type: "expense" as const },
-    { code: "5100", name: "VAT Input Tax", type: "asset" as const },
+    { code: "5200", name: "Marketing Expense", type: "expense" as const },
+    { code: "5300", name: "General Expense", type: "expense" as const },
+    { code: "5400", name: "Salaries & Wages", type: "expense" as const },
+    { code: "5500", name: "Cost of Goods Sold", type: "expense" as const },
+    { code: "5600", name: "Depreciation Expense", type: "expense" as const },
   ];
 
   // Check which accounts already exist

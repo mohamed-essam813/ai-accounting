@@ -83,16 +83,40 @@ export function BankUploader() {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        <input
-          type="file"
-          accept=".csv,text/csv"
-          onChange={(event) => {
-            const file = event.target.files?.[0];
-            if (file) {
-              handleFile(file);
-            }
-          }}
-        />
+        <div className="flex items-center justify-between gap-4">
+          <input
+            type="file"
+            accept=".csv,text/csv"
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              if (file) {
+                handleFile(file);
+              }
+            }}
+          />
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => {
+              // Create CSV template
+              const headers = ["Date", "Description", "Debit", "Credit", "Balance"];
+              const sampleRow = ["2024-01-15", "Sample Transaction", "1000.00", "", "1000.00"];
+              const csvContent = [headers, sampleRow].map((row) => row.join(",")).join("\n");
+              const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+              const link = document.createElement("a");
+              const url = URL.createObjectURL(blob);
+              link.setAttribute("href", url);
+              link.setAttribute("download", "bank-reconciliation-template.csv");
+              link.style.visibility = "hidden";
+              document.body.appendChild(link);
+              link.click();
+              document.body.removeChild(link);
+              toast.success("Template downloaded", { description: "Fill in your bank statement data and upload." });
+            }}
+          >
+            Download Template
+          </Button>
+        </div>
         {fileName ? (
           <div className="rounded-md border bg-muted p-3 text-sm">
             <p className="font-medium">{fileName}</p>
