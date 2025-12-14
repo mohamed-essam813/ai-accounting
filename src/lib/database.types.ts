@@ -201,6 +201,7 @@ export type Database = {
       bank_transactions: {
         Row: {
           amount: number
+          bank_account_id: string | null
           counterparty: string | null
           created_at: string
           date: string
@@ -213,6 +214,7 @@ export type Database = {
         }
         Insert: {
           amount: number
+          bank_account_id?: string | null
           counterparty?: string | null
           created_at?: string
           date: string
@@ -225,6 +227,7 @@ export type Database = {
         }
         Update: {
           amount?: number
+          bank_account_id?: string | null
           counterparty?: string | null
           created_at?: string
           date?: string
@@ -236,6 +239,13 @@ export type Database = {
           tenant_id?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "bank_transactions_bank_account_id_fkey"
+            columns: ["bank_account_id"]
+            isOneToOne: false
+            referencedRelation: "chart_of_accounts"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "bank_transactions_matched_entry_id_fkey"
             columns: ["matched_entry_id"]
@@ -252,6 +262,59 @@ export type Database = {
           },
           {
             foreignKeyName: "bank_transactions_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      contacts: {
+        Row: {
+          address: string | null
+          code: string
+          created_at: string
+          email: string | null
+          id: string
+          is_active: boolean
+          name: string
+          phone: string | null
+          tax_id: string | null
+          tenant_id: string
+          type: string
+          updated_at: string
+        }
+        Insert: {
+          address?: string | null
+          code?: string | null
+          created_at?: string
+          email?: string | null
+          id?: string
+          is_active?: boolean
+          name: string
+          phone?: string | null
+          tax_id?: string | null
+          tenant_id: string
+          type: string
+          updated_at?: string
+        }
+        Update: {
+          address?: string | null
+          code?: string | null
+          created_at?: string
+          email?: string | null
+          id?: string
+          is_active?: boolean
+          name?: string
+          phone?: string | null
+          tax_id?: string | null
+          tenant_id?: string
+          type?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "contacts_tenant_id_fkey"
             columns: ["tenant_id"]
             isOneToOne: false
             referencedRelation: "tenants"

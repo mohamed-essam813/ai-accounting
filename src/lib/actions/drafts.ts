@@ -6,7 +6,7 @@ import { DraftSchema } from "@/lib/ai/schema";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { getCurrentUser } from "@/lib/data/users";
 import { listAccounts } from "@/lib/data/accounts";
-import { buildDefaultJournalLines, ensureBalanced, type IntentAccountMapping } from "@/lib/accounting";
+import { buildDefaultJournalLines, ensureBalanced, type IntentAccountMapping, type JournalLine } from "@/lib/accounting";
 import { canApprove, type UserRole } from "@/lib/auth";
 import type { Database } from "@/lib/database.types";
 import type { DraftPayload } from "@/lib/ai/schema";
@@ -308,6 +308,13 @@ export async function postDraftAction(input: z.infer<typeof PostDraftSchema>) {
     | undefined;
   const editedDescription = draftData.edited_description as string | undefined;
 
+  // Parse draft first (needed for date extraction)
+  const parsedDraft = DraftSchema.parse({
+    intent: draft.intent,
+    entities: draft.data_json,
+    confidence: draft.confidence ? Number(draft.confidence) : 0,
+  });
+
   let description: string;
   let lines: JournalLine[];
 
@@ -329,11 +336,6 @@ export async function postDraftAction(input: z.infer<typeof PostDraftSchema>) {
       .eq("tenant_id", user.tenant.id)
       .eq("intent", draft.intent)
       .maybeSingle();
-    const parsedDraft = DraftSchema.parse({
-      intent: draft.intent,
-      entities: draft.data_json,
-      confidence: draft.confidence ? Number(draft.confidence) : 0,
-    });
 
     // Convert database mapping to IntentAccountMapping type, casting intent to the correct enum type
     const intentMapping = mapping

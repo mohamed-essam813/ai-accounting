@@ -2,7 +2,7 @@ import { DraftPayload } from "@/lib/ai/schema";
 import { Database } from "@/lib/database.types";
 import { format } from "date-fns";
 
-type Account = Database["public"]["Tables"]["chart_of_accounts"]["Row"];
+export type Account = Database["public"]["Tables"]["chart_of_accounts"]["Row"];
 
 export type JournalLine = {
   account_id: string;
