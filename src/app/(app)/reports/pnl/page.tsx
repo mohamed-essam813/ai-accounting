@@ -31,14 +31,15 @@ export const revalidate = 120;
 export default async function ReportsPage({
   searchParams,
 }: {
-  searchParams: { startDate?: string; endDate?: string };
+  searchParams: Promise<{ startDate?: string; endDate?: string }>;
 }) {
+  const params = await searchParams;
   const [pnl, balanceSheet, trialBalance, cashFlow, journalLedger, vatReport] = await Promise.all([
     getProfitAndLoss(),
     getBalanceSheet(),
     getTrialBalance(),
     getCashFlow(),
-    getJournalLedger(searchParams.startDate, searchParams.endDate),
+    getJournalLedger(params.startDate, params.endDate),
     getVATReport(),
   ]);
 
@@ -132,8 +133,8 @@ export default async function ReportsPage({
               <CardTitle>Journal Ledger</CardTitle>
               <div className="flex items-center gap-2">
                 <ReportFilters
-                  initialStartDate={searchParams.startDate}
-                  initialEndDate={searchParams.endDate}
+                  initialStartDate={params.startDate}
+                  initialEndDate={params.endDate}
                 />
                 <ExportButtons
                   data={{

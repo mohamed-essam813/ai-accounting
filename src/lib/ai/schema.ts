@@ -6,6 +6,8 @@ export const PromptIntentEnum = z.enum([
   "record_payment",
   "reconcile_bank",
   "generate_report",
+  "create_credit_note",
+  "create_debit_note",
 ]);
 
 export const DraftEntitiesSchema = z.object({

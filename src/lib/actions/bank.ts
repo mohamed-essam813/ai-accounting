@@ -20,6 +20,7 @@ const ImportSchema = z.object({
       sourceFile: z.string().optional(),
     }),
   ),
+  bankAccountId: z.string().uuid().optional(),
 });
 
 export async function importBankTransactionsAction(input: z.infer<typeof ImportSchema>) {
@@ -32,6 +33,18 @@ export async function importBankTransactionsAction(input: z.infer<typeof ImportS
   const supabase = await createServerSupabaseClient();
 
   const tenantId = user.tenant.id;
+  
+  // If bankAccountId not provided, default to Cash account (1000)
+  let bankAccountId = payload.bankAccountId;
+  if (!bankAccountId) {
+    const { listAccounts } = await import("@/lib/data/accounts");
+    const accounts = await listAccounts();
+    const cashAccount = accounts.find((acc) => acc.code === "1000");
+    if (cashAccount) {
+      bankAccountId = cashAccount.id;
+    }
+  }
+  
   const rows: BankTransactionsInsert[] = payload.transactions.map((txn) => ({
     tenant_id: tenantId,
     date: txn.date,
@@ -40,6 +53,7 @@ export async function importBankTransactionsAction(input: z.infer<typeof ImportS
     counterparty: txn.counterparty ?? null,
     status: "unmatched" as const,
     source_file: txn.sourceFile ?? null,
+    bank_account_id: bankAccountId ?? null,
   }));
 
   // Use type assertion for insert to fix type inference

@@ -31,11 +31,16 @@ export function ensureBalanced(lines: JournalLine[]) {
   }
 }
 
-export function buildDefaultJournalLines(
+export async function buildDefaultJournalLines(
   draft: DraftPayload,
   accounts: Account[],
   mapping?: IntentAccountMapping | null,
-): { description: string; lines: JournalLine[] } {
+  options?: {
+    prompt?: string;
+    tenantId?: string;
+    useRAG?: boolean;
+  },
+): Promise<{ description: string; lines: JournalLine[] }> {
   const { intent, entities } = draft;
   const accountMap = new Map(accounts.map((account) => [account.id, account]));
 
@@ -49,8 +54,35 @@ export function buildDefaultJournalLines(
 
   const resolveByCode = (code: string) => accounts.find((acct) => acct.code === code);
 
+  // Try RAG-based account selection if enabled and prompt/tenantId provided
+  let ragMapping: IntentAccountMapping | null = null;
+  if (options?.useRAG && options.prompt && options.tenantId) {
+    try {
+      const { selectAccountsFromPrompt } = await import("@/lib/ai/account-selection");
+      const selected = await selectAccountsFromPrompt(
+        options.prompt,
+        intent,
+        options.tenantId,
+        accounts,
+      );
+      
+      if (selected.debitAccountId && selected.creditAccountId) {
+        ragMapping = {
+          intent,
+          debit_account_id: selected.debitAccountId,
+          credit_account_id: selected.creditAccountId,
+          tax_debit_account_id: selected.taxDebitAccountId ?? null,
+          tax_credit_account_id: selected.taxCreditAccountId ?? null,
+        };
+      }
+    } catch (ragError) {
+      console.warn("RAG account selection failed, falling back to manual mapping:", ragError);
+    }
+  }
+
   const fallbackMapping = inferMappingFromCodes(intent, accounts, resolveByCode);
-  const resolvedMapping = mapping ?? fallbackMapping;
+  // Priority: RAG mapping > Manual mapping > Fallback mapping
+  const resolvedMapping = ragMapping ?? mapping ?? fallbackMapping;
 
   if (!resolvedMapping) {
     throw new Error(`No journal mapping available for intent "${intent}".`);
@@ -66,9 +98,14 @@ export function buildDefaultJournalLines(
   const taxAmount = Number(taxAmountRaw.toFixed(2));
   const hasTax = taxAmount > 0;
 
+  const intentLabel = intent === "create_credit_note" 
+    ? "Credit Note" 
+    : intent === "create_debit_note"
+    ? "Debit Note"
+    : intent.replace("_", " ");
   const description =
     entities.description ??
-    `${intent.replace("_", " ")} for ${entities.counterparty ?? "unknown counterparty"}`;
+    `${intentLabel} for ${entities.counterparty ?? "unknown counterparty"}`;
   const memo = [
     entities.counterparty ? `Counterparty: ${entities.counterparty}` : null,
     entities.invoice_number ? `Invoice #: ${entities.invoice_number}` : null,
@@ -86,15 +123,38 @@ export function buildDefaultJournalLines(
     ? findAccountById(resolvedMapping.tax_credit_account_id)
     : null;
 
+  // Handle credit notes and debit notes differently
+  const isCreditNote = intent === "create_credit_note";
+  const isDebitNote = intent === "create_debit_note";
+
   let debitBaseAmount = amount;
   let creditBaseAmount = amount;
 
-  if (hasTax && taxCreditAccount) {
-    debitBaseAmount += taxAmount;
-  }
+  // For credit notes: DR Revenue + DR VAT, CR Receivable
+  // For debit notes: DR Payable, CR Expense + CR VAT Input
+  if (isCreditNote) {
+    // Credit note: amount goes to revenue (debit), tax goes to VAT output (debit)
+    debitBaseAmount = amount;
+    if (hasTax && taxDebitAccount) {
+      debitBaseAmount += taxAmount;
+    }
+    creditBaseAmount = amount + (hasTax ? taxAmount : 0);
+  } else if (isDebitNote) {
+    // Debit note: amount goes to payable (debit), expense and VAT are credited
+    debitBaseAmount = amount + (hasTax ? taxAmount : 0);
+    creditBaseAmount = amount;
+    if (hasTax && taxCreditAccount) {
+      creditBaseAmount += taxAmount;
+    }
+  } else {
+    // Standard invoice/bill logic
+    if (hasTax && taxCreditAccount) {
+      debitBaseAmount += taxAmount;
+    }
 
-  if (hasTax && taxDebitAccount) {
-    creditBaseAmount += taxAmount;
+    if (hasTax && taxDebitAccount) {
+      creditBaseAmount += taxAmount;
+    }
   }
 
   const lines: JournalLine[] = [
@@ -112,6 +172,7 @@ export function buildDefaultJournalLines(
     },
   ];
 
+  // Add tax lines
   if (hasTax && taxDebitAccount) {
     lines.push({
       account_id: taxDebitAccount.id,
@@ -194,6 +255,48 @@ function inferMappingFromCodes(
         credit_account_id: receivable.id,
         tax_debit_account_id: null,
         tax_credit_account_id: null,
+      };
+    }
+    case "create_credit_note": {
+      // Credit Note (Customer): DR Sales Revenue, DR VAT Output, CR Accounts Receivable
+      const revenue = resolveByCode("4000");
+      const receivable = resolveByCode("1100");
+      const vatOutput = resolveByCode("2100");
+      if (!revenue || !receivable) {
+        throw new Error(
+          "Missing default accounts for credit note intent (4000/1100). " +
+          "Please create these accounts in the Chart of Accounts: " +
+          "Code 4000 (Sales Revenue) and Code 1100 (Accounts Receivable). " +
+          "Or go to Accounts → Intent Mappings to configure custom account mappings."
+        );
+      }
+      return {
+        intent,
+        debit_account_id: revenue.id,
+        credit_account_id: receivable.id,
+        tax_debit_account_id: vatOutput?.id ?? null,
+        tax_credit_account_id: null,
+      };
+    }
+    case "create_debit_note": {
+      // Debit Note (Vendor): DR Accounts Payable, CR Expense, CR VAT Input
+      const payable = resolveByCode("2000");
+      const expense = resolveByCode("5000");
+      const vatInput = resolveByCode("5100");
+      if (!payable || !expense) {
+        throw new Error(
+          "Missing default accounts for debit note intent (2000/5000). " +
+          "Please create these accounts in the Chart of Accounts: " +
+          "Code 2000 (Accounts Payable) and Code 5000 (Expense). " +
+          "Or go to Accounts → Intent Mappings to configure custom account mappings."
+        );
+      }
+      return {
+        intent,
+        debit_account_id: payable.id,
+        credit_account_id: expense.id,
+        tax_debit_account_id: null,
+        tax_credit_account_id: vatInput?.id ?? null,
       };
     }
     case "reconcile_bank":

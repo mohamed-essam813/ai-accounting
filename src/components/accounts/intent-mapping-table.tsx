@@ -49,6 +49,8 @@ const SUPPORTED_INTENTS: PromptIntent[] = [
   "create_invoice",
   "create_bill",
   "record_payment",
+  "create_credit_note",
+  "create_debit_note",
 ];
 
 export function IntentMappingTable({ accounts, mappings, canManage }: Props) {

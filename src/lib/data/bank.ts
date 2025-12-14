@@ -4,7 +4,7 @@ import type { Database } from "@/lib/database.types";
 
 type BankTransactionsRow = Database["public"]["Tables"]["bank_transactions"]["Row"];
 
-export async function listBankTransactions(limit = 50) {
+export async function listBankTransactions(limit = 50, bankAccountId?: string) {
   const user = await getCurrentUser();
   if (!user?.tenant) {
     return [];
@@ -15,15 +15,22 @@ export async function listBankTransactions(limit = 50) {
   const table = supabase.from("bank_transactions") as unknown as {
     select: (columns: string) => {
       eq: (column: string, value: string) => {
+        eq?: (column: string, value: string) => {
+          order: (column: string, options?: { ascending?: boolean }) => {
+            limit: (count: number) => Promise<{ data: BankTransactionsRow[] | null; error: unknown }>;
+          };
+        };
         order: (column: string, options?: { ascending?: boolean }) => {
           limit: (count: number) => Promise<{ data: BankTransactionsRow[] | null; error: unknown }>;
         };
       };
     };
   };
-  const { data, error } = await table
-    .select("*")
-    .eq("tenant_id", user.tenant.id)
+  let query = table.select("*").eq("tenant_id", user.tenant.id);
+  if (bankAccountId) {
+    query = query.eq?.("bank_account_id", bankAccountId) ?? query;
+  }
+  const { data, error } = await query
     .order("date", { ascending: false })
     .limit(limit);
 

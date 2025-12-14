@@ -4,6 +4,13 @@ import { useState, useTransition } from "react";
 import Papa from "papaparse";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { importBankTransactionsAction } from "@/lib/actions/bank";
 import { toast } from "sonner";
 
@@ -14,9 +21,21 @@ type ParsedTransaction = {
   counterparty?: string | null;
 };
 
-export function BankUploader() {
+type Account = {
+  id: string;
+  code: string;
+  name: string;
+};
+
+type Props = {
+  bankAccountId?: string;
+  accounts?: Account[];
+};
+
+export function BankUploader({ bankAccountId: initialBankAccountId, accounts = [] }: Props) {
   const [transactions, setTransactions] = useState<ParsedTransaction[]>([]);
   const [fileName, setFileName] = useState<string | null>(null);
+  const [selectedBankAccountId, setSelectedBankAccountId] = useState<string>(initialBankAccountId ?? "");
   const [isPending, startTransition] = useTransition();
 
   const handleFile = (file: File) => {
@@ -54,6 +73,10 @@ export function BankUploader() {
       toast.error("No transactions ready for import.");
       return;
     }
+    if (!selectedBankAccountId && accounts.length > 0) {
+      toast.error("Please select a bank account before importing.");
+      return;
+    }
     startTransition(async () => {
       try {
         await importBankTransactionsAction({
@@ -61,6 +84,7 @@ export function BankUploader() {
             ...txn,
             sourceFile: fileName ?? undefined,
           })),
+          bankAccountId: selectedBankAccountId || undefined,
         });
         toast.success("Transactions imported");
         setTransactions([]);
@@ -83,6 +107,29 @@ export function BankUploader() {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
+        {accounts.length > 0 && (
+          <div className="space-y-2">
+            <label className="text-sm font-medium">Bank Account *</label>
+            <Select
+              value={selectedBankAccountId}
+              onValueChange={setSelectedBankAccountId}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Select bank account" />
+              </SelectTrigger>
+              <SelectContent>
+                {accounts.map((account) => (
+                  <SelectItem key={account.id} value={account.id}>
+                    {account.code} · {account.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              Select the bank account these transactions belong to
+            </p>
+          </div>
+        )}
         <div className="flex items-center justify-between gap-4">
           <input
             type="file"

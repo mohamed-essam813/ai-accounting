@@ -12,7 +12,17 @@ export type AuditEvent = AuditLogsRow & {
   changesSummary?: string | null;
 };
 
-export async function getRecentAuditEvents(limit = 100, searchQuery?: string) {
+type SearchParams = {
+  search?: string;
+  invoiceNumber?: string;
+  billNumber?: string;
+  contact?: string;
+  amount?: string;
+  date?: string;
+  action?: string;
+};
+
+export async function getRecentAuditEvents(limit = 100, searchParams?: SearchParams | string) {
   const user = await getCurrentUser();
   if (!user?.tenant) {
     return [];
@@ -20,31 +30,118 @@ export async function getRecentAuditEvents(limit = 100, searchQuery?: string) {
 
   const supabase = await createServerSupabaseClient();
   
-  // Type assertion to fix Supabase type inference
-  const table = supabase.from("audit_logs") as unknown as {
-    select: (columns: string) => {
-      eq: (column: string, value: string) => {
-        or?: (filter: string) => {
-          order: (column: string, options?: { ascending?: boolean }) => {
-            limit: (count: number) => Promise<{ data: AuditLogsRow[] | null; error: unknown }>;
-          };
-        };
-        order: (column: string, options?: { ascending?: boolean }) => {
-          limit: (count: number) => Promise<{ data: AuditLogsRow[] | null; error: unknown }>;
-        };
+  // Handle legacy string search for backward compatibility
+  const params: SearchParams = typeof searchParams === "string" 
+    ? { search: searchParams }
+    : searchParams ?? {};
+
+  // For draft-related filters (invoice number, bill number, contact, amount),
+  // we need to first find matching drafts, then filter audit logs by those draft IDs
+  // Since Supabase doesn't support complex JSONB queries easily, we fetch and filter in memory
+  let draftFilterIds: string[] | null = null;
+  
+  if (params.invoiceNumber || params.billNumber || params.contact || params.amount) {
+    // Fetch all drafts for the tenant (we'll filter in memory)
+    type DraftsRow = Database["public"]["Tables"]["drafts"]["Row"];
+    const draftsTable = supabase.from("drafts") as unknown as {
+      select: (columns: string) => {
+        eq: (column: string, value: string) => Promise<{ data: Pick<DraftsRow, "id" | "data_json">[] | null; error: unknown }>;
       };
     };
-  };
-  
-  let query = table.select("*").eq("tenant_id", user.tenant.id);
-  
-  // Add search filter if provided
-  if (searchQuery) {
-    const searchFilter = `action.ilike.%${searchQuery}%,entity.ilike.%${searchQuery}%,entity_id.ilike.%${searchQuery}%`;
-    query = query.or?.(searchFilter) ?? query;
+    
+    const { data: allDrafts, error: draftError } = await draftsTable
+      .select("id, data_json")
+      .eq("tenant_id", user.tenant.id);
+    
+    if (draftError) {
+      console.error("Failed to query drafts for filtering:", draftError);
+      return [];
+    }
+    
+    if (allDrafts && allDrafts.length > 0) {
+      // Filter drafts in memory based on search criteria
+      const filtered = allDrafts.filter((draft) => {
+        const data = draft.data_json as {
+          invoice_number?: string | null;
+          bill_number?: string | null;
+          counterparty?: string | null;
+          amount?: number | null;
+        };
+        
+        if (params.invoiceNumber) {
+          const invoiceLower = params.invoiceNumber.toLowerCase();
+          if (!data.invoice_number?.toLowerCase().includes(invoiceLower)) return false;
+        }
+        
+        if (params.billNumber) {
+          const billLower = params.billNumber.toLowerCase();
+          if (!data.bill_number?.toLowerCase().includes(billLower) &&
+              !data.invoice_number?.toLowerCase().includes(billLower)) return false;
+        }
+        
+        if (params.contact) {
+          const contactLower = params.contact.toLowerCase();
+          if (!data.counterparty?.toLowerCase().includes(contactLower)) return false;
+        }
+        
+        if (params.amount) {
+          const amountValue = parseFloat(params.amount);
+          if (!isNaN(amountValue)) {
+            if (data.amount === null || data.amount === undefined) return false;
+            if (Math.abs((data.amount ?? 0) - amountValue) >= 0.01) return false;
+          }
+        }
+        
+        return true;
+      });
+      
+      if (filtered.length > 0) {
+        draftFilterIds = filtered.map((d) => d.id);
+      } else {
+        // No matching drafts found, return empty result
+        return [];
+      }
+    } else {
+      // No drafts at all, return empty result if we're filtering by draft fields
+      return [];
+    }
   }
-  
-  const { data, error } = await query
+
+  // Build audit logs query with backend filtering
+  let auditQuery = supabase
+    .from("audit_logs")
+    .select("*")
+    .eq("tenant_id", user.tenant.id);
+
+  // Filter by action (direct SQL filter)
+  if (params.action) {
+    auditQuery = auditQuery.eq("action", params.action);
+  }
+
+  // Filter by date (direct SQL filter)
+  if (params.date) {
+    const searchDate = new Date(params.date).toISOString().split("T")[0];
+    const startDate = `${searchDate}T00:00:00.000Z`;
+    const endDate = `${searchDate}T23:59:59.999Z`;
+    auditQuery = auditQuery.gte("created_at", startDate).lte("created_at", endDate);
+  }
+
+  // Filter by general search (action or entity) - backend SQL ILIKE
+  if (params.search) {
+    const searchLower = params.search.toLowerCase();
+    auditQuery = auditQuery.or(`action.ilike.%${searchLower}%,entity.ilike.%${searchLower}%`);
+  }
+
+  // Filter by draft IDs if we have them (for invoice/bill/contact/amount filters)
+  if (draftFilterIds && draftFilterIds.length > 0) {
+    auditQuery = auditQuery.eq("entity", "drafts").in("entity_id", draftFilterIds);
+  } else if (draftFilterIds && draftFilterIds.length === 0) {
+    // No matching drafts, return empty result
+    return [];
+  }
+
+  // Execute query with ordering and limit
+  const { data: allData, error } = await auditQuery
     .order("created_at", { ascending: false })
     .limit(limit);
 
@@ -53,13 +150,49 @@ export async function getRecentAuditEvents(limit = 100, searchQuery?: string) {
     throw error;
   }
 
-  // Fetch user details for actor_ids and extract document numbers
-  const actorIds = new Set<string>();
+  if (!allData || allData.length === 0) {
+    return [];
+  }
+
+  const data = allData;
+
+  // Get drafts data for document numbers (only for the filtered results)
   const draftIds = new Set<string>();
-  
-  (data ?? []).forEach((entry) => {
+  data.forEach((entry) => {
+    if (entry.entity === "drafts" && entry.entity_id) {
+      draftIds.add(entry.entity_id);
+    }
+  });
+
+  let draftsMap = new Map<string, { invoice_number?: string | null; bill_number?: string | null; counterparty?: string | null; amount?: number | null }>();
+  if (draftIds.size > 0) {
+    type DraftsRow = Database["public"]["Tables"]["drafts"]["Row"];
+    const draftsTable = supabase.from("drafts") as unknown as {
+      select: (columns: string) => {
+        in: (column: string, values: string[]) => Promise<{ data: Pick<DraftsRow, "id" | "data_json">[] | null; error: unknown }>;
+      };
+    };
+    const { data: drafts } = await draftsTable.select("id, data_json").in("id", Array.from(draftIds));
+    drafts?.forEach((draft) => {
+      const data = draft.data_json as {
+        invoice_number?: string | null;
+        bill_number?: string | null;
+        counterparty?: string | null;
+        amount?: number | null;
+      };
+      draftsMap.set(draft.id, {
+        invoice_number: data.invoice_number,
+        bill_number: data.bill_number,
+        counterparty: data.counterparty,
+        amount: typeof data.amount === "number" ? data.amount : null,
+      });
+    });
+  }
+
+  // Fetch user details for actor_ids
+  const actorIds = new Set<string>();
+  data.forEach((entry) => {
     if (entry.actor_id) actorIds.add(entry.actor_id);
-    if (entry.entity === "drafts" && entry.entity_id) draftIds.add(entry.entity_id);
   });
 
   // Get user details
@@ -78,35 +211,10 @@ export async function getRecentAuditEvents(limit = 100, searchQuery?: string) {
     });
   }
 
-  // Get draft document numbers (invoice/bill numbers)
-  const draftIdsArray = Array.from(draftIds);
-  let documentNumbersMap = new Map<string, string>();
-  if (draftIdsArray.length > 0) {
-    type DraftsRow = Database["public"]["Tables"]["drafts"]["Row"];
-    const draftsTable = supabase.from("drafts") as unknown as {
-      select: (columns: string) => {
-        in: (column: string, values: string[]) => Promise<{ data: Pick<DraftsRow, "id" | "data_json" | "intent">[] | null; error: unknown }>;
-      };
-    };
-    const { data: drafts } = await draftsTable.select("id, data_json, intent").in("id", draftIdsArray);
-    drafts?.forEach((draft) => {
-      const data = draft.data_json as { invoice_number?: string | null };
-      if (data?.invoice_number) {
-        documentNumbersMap.set(draft.id, data.invoice_number);
-      } else if (draft.intent === "create_bill") {
-        // Extract bill number if available
-        const billData = draft.data_json as { bill_number?: string | null; invoice_number?: string | null };
-        if (billData?.bill_number || billData?.invoice_number) {
-          documentNumbersMap.set(draft.id, billData.bill_number || billData.invoice_number || "");
-        }
-      }
-    });
-  }
-
-  return (data ?? []).map((entry) => {
+  return data.map((entry) => {
     const actor = entry.actor_id ? usersMap.get(entry.actor_id) : null;
     const documentNumber = entry.entity === "drafts" && entry.entity_id 
-      ? documentNumbersMap.get(entry.entity_id) 
+      ? draftsMap.get(entry.entity_id)?.invoice_number ?? draftsMap.get(entry.entity_id)?.bill_number ?? null
       : null;
     
     return {
@@ -118,4 +226,3 @@ export async function getRecentAuditEvents(limit = 100, searchQuery?: string) {
     } as AuditEvent;
   });
 }
-

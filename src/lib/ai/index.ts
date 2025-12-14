@@ -131,9 +131,29 @@ export async function parseAccountingPrompt(prompt: string, context: ParsePrompt
     );
   }
 
-  // RAG: Retrieve relevant context from embeddings
+  // RAG: Retrieve relevant context from embeddings, including accounts
   let ragContext = "";
+  let accountsContext = "";
   try {
+    // Get all accounts for the tenant to include in prompt
+    const { listAccounts } = await import("@/lib/data/accounts");
+    const accounts = await listAccounts();
+    
+    if (accounts.length > 0) {
+      accountsContext = "\n\nAVAILABLE CHART OF ACCOUNTS:\n";
+      accountsContext += "Select the most appropriate accounts from this list based on the user's prompt:\n";
+      accounts.forEach((acc) => {
+        accountsContext += `- ${acc.code} | ${acc.name} | Type: ${acc.type} | ID: ${acc.id}\n`;
+      });
+      accountsContext += "\nWhen selecting accounts, match the transaction type:\n";
+      accountsContext += "- Revenue transactions: Use revenue accounts (type: 'revenue')\n";
+      accountsContext += "- Expense transactions: Use expense accounts (type: 'expense')\n";
+      accountsContext += "- Customer invoices: DR Accounts Receivable (1100), CR Revenue account\n";
+      accountsContext += "- Vendor bills: DR Expense account, CR Accounts Payable (2000)\n";
+      accountsContext += "- Payments: Use Cash (1000) or specific bank accounts\n";
+    }
+
+    // Retrieve relevant context from embeddings
     const relevantContexts = await retrieveRelevantContext(trimmedPrompt, context.tenantId, {
       limit: 5,
       entityTypes: ["account", "transaction", "mapping"],
@@ -167,7 +187,7 @@ export async function parseAccountingPrompt(prompt: string, context: ParsePrompt
         "",
         "REQUIRED FORMAT:",
         "{",
-        '  "intent": "create_invoice" | "create_bill" | "record_payment" | "reconcile_bank" | "generate_report",',
+        '  "intent": "create_invoice" | "create_bill" | "record_payment" | "reconcile_bank" | "generate_report" | "create_credit_note" | "create_debit_note",',
         '  "entities": {',
         '    "amount": number (required),',
         '    "currency": string (required, e.g., "USD", "EUR"),',
@@ -182,15 +202,23 @@ export async function parseAccountingPrompt(prompt: string, context: ParsePrompt
         "}",
         "",
         `User Prompt: ${trimmedPrompt}`,
+        accountsContext,
         ragContext,
         "",
         "INSTRUCTIONS:",
-        "- Extract the intent from the prompt (invoice, bill, payment, etc.)",
+        "- Extract the intent from the prompt:",
+        "  * 'create_invoice' for sales invoices to customers",
+        "  * 'create_bill' for supplier bills/vendor invoices",
+        "  * 'create_credit_note' for customer credit notes (returns, refunds, adjustments)",
+        "  * 'create_debit_note' for vendor debit notes (corrections to supplier bills)",
+        "  * 'record_payment' for customer or supplier payments",
         "- Extract amount, currency, date, and other relevant fields",
         "- If a field is not mentioned, use null for optional fields",
         "- Date must be in YYYY-MM-DD format",
         "- Confidence should reflect how certain you are (0.0 to 1.0)",
         "- Use the context above to understand account names and company terminology",
+        "- IMPORTANT: The system will automatically select accounts based on your intent and the chart of accounts above.",
+        "  You don't need to specify account IDs in your response - just extract the transaction details.",
         "",
         "Return ONLY the JSON object, no additional text or explanation.",
       ].join("\n"),

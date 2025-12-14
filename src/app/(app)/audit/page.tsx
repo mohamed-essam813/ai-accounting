@@ -16,20 +16,36 @@ export const revalidate = 60;
 export default async function AuditPage({
   searchParams,
 }: {
-  searchParams: { search?: string };
+  searchParams: Promise<{
+    search?: string;
+    invoiceNumber?: string;
+    billNumber?: string;
+    contact?: string;
+    amount?: string;
+    date?: string;
+    action?: string;
+  }>;
 }) {
-  const searchQuery = searchParams.search;
-  const entries = await getRecentAuditEvents(100, searchQuery);
+  const params = await searchParams;
+  const entries = await getRecentAuditEvents(100, params);
 
   return (
     <div className="space-y-6">
       <div>
         <h2 className="text-2xl font-semibold">Audit Trail</h2>
         <p className="text-sm text-muted-foreground">
-          Track who created, edited, and approved drafts. Search by invoice number, bill number, user, or date.
+          Track who created, edited, and approved drafts. Search by invoice number, bill number, contact, amount, date, or action type.
         </p>
       </div>
-      <AuditLogSearch initialSearch={searchQuery} />
+      <AuditLogSearch
+        initialSearch={params.search}
+        initialInvoiceNumber={params.invoiceNumber}
+        initialBillNumber={params.billNumber}
+        initialContact={params.contact}
+        initialAmount={params.amount}
+        initialDate={params.date}
+        initialAction={params.action}
+      />
       <div className="overflow-hidden rounded-lg border bg-card">
         <Table>
           <TableHeader>
@@ -46,7 +62,7 @@ export default async function AuditPage({
             {entries.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={6} className="py-6 text-center text-sm text-muted-foreground">
-                  {searchQuery ? "No audit events found matching your search." : "No audit events yet."}
+                  {Object.keys(params).length > 0 ? "No audit events found matching your search." : "No audit events yet."}
                 </TableCell>
               </TableRow>
             ) : (

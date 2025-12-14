@@ -8,6 +8,7 @@ import {
   Settings,
   Waypoints,
   BookOpen,
+  Users,
 } from "lucide-react";
 
 type NavItem = {
@@ -41,6 +42,12 @@ export const mainNavigation: NavItem[] = [
     href: "/accounts",
     icon: Layers,
     description: "Maintain accounts and control double-entry mapping.",
+  },
+  {
+    title: "Contacts",
+    href: "/contacts",
+    icon: Users,
+    description: "Manage customers, vendors, and other contacts with auto-generated codes.",
   },
   {
     title: "Journals",

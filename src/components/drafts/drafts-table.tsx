@@ -37,6 +37,9 @@ import { PromptIntentEnum } from "@/lib/ai/schema";
 import { toast } from "sonner";
 import { JournalPreview } from "./journal-preview";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import type { Database } from "@/lib/database.types";
+
+type Account = Database["public"]["Tables"]["chart_of_accounts"]["Row"];
 
 type DraftTableItem = {
   id: string;
@@ -61,9 +64,10 @@ type DraftTableItem = {
 
 type DraftTableProps = {
   drafts: DraftTableItem[];
+  accounts?: Account[];
 };
 
-export function DraftsTable({ drafts }: DraftTableProps) {
+export function DraftsTable({ drafts, accounts = [] }: DraftTableProps) {
   const [isPending, startTransition] = useTransition();
   const [editorDraft, setEditorDraft] = useState<DraftTableItem | null>(null);
   const [isEditorOpen, setIsEditorOpen] = useState(false);
@@ -182,7 +186,7 @@ export function DraftsTable({ drafts }: DraftTableProps) {
         </Table>
       </div>
 
-      <DraftEditorDialog draft={editorDraft} open={isEditorOpen} onOpenChange={handleEditorChange} />
+      <DraftEditorDialog draft={editorDraft} open={isEditorOpen} onOpenChange={handleEditorChange} accounts={accounts} />
     </>
   );
 }
@@ -191,6 +195,7 @@ type DraftEditorDialogProps = {
   draft: DraftTableItem | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  accounts?: Account[];
 };
 
 const DraftIntentOptions = PromptIntentEnum.options;
@@ -255,7 +260,7 @@ function getDefaultValues(draft: DraftTableItem): DraftEditFormValues {
   };
 }
 
-function DraftEditorDialog({ draft, open, onOpenChange }: DraftEditorDialogProps) {
+function DraftEditorDialog({ draft, open, onOpenChange, accounts = [] }: DraftEditorDialogProps) {
   const [isSaving, startTransition] = useTransition();
   const defaultValues = useMemo(() => (draft ? getDefaultValues(draft) : undefined), [draft]);
   const form = useForm<DraftEditFormValues>({
@@ -334,7 +339,7 @@ function DraftEditorDialog({ draft, open, onOpenChange }: DraftEditorDialogProps
               <TabsTrigger value="preview">Journal Preview</TabsTrigger>
             </TabsList>
             <TabsContent value="preview">
-              <JournalPreview draftId={draft.id} />
+              <JournalPreview draftId={draft.id} accounts={accounts} />
             </TabsContent>
             <TabsContent value="edit">
           <form className="space-y-4" onSubmit={form.handleSubmit(onSubmit)}>

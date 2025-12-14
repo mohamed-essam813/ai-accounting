@@ -37,10 +37,24 @@ export async function createServerSupabaseClient(): Promise<SupabaseClient<Datab
             });
           } catch (error) {
             // The `setAll` method was called from a Server Component.
-            // This can be ignored if you have middleware refreshing
-            // user sessions.
+            // This is expected behavior in Next.js Server Components.
+            // Cookies can only be modified in Server Actions or Route Handlers.
+            // This is handled by middleware for session refresh.
+            // Silently ignore ALL cookie errors in Server Components - they are expected.
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            const isExpectedCookieError = 
+              errorMessage.includes("Cookies can only be modified") ||
+              errorMessage.includes("Route Handler") ||
+              errorMessage.includes("Server Action") ||
+              errorMessage.includes("Server Component");
+            
+            if (isExpectedCookieError) {
+              // This is the expected Server Component cookie error - silently ignore
+              return;
+            }
+            // Only log truly unexpected errors (not cookie-related)
             if (process.env.NODE_ENV !== "production") {
-              console.warn("[supabase] Failed to set cookies (this is normal in Server Components):", error);
+              console.warn("[supabase] Unexpected error:", error);
             }
           }
         },

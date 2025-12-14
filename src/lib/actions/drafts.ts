@@ -47,10 +47,16 @@ export async function saveDraftAction(input: z.infer<typeof SaveDraftSchema>) {
     entities.invoice_number = await generateInvoiceNumber(user.tenant.id);
   }
 
+  // Store original prompt in data_json for RAG-based account selection
+  const dataJson = {
+    ...entities,
+    original_prompt: (payload as { rawPrompt?: string }).rawPrompt ?? null,
+  };
+
   const insertData: DraftsInsert = {
     tenant_id: user.tenant.id,
     intent: payload.intent,
-    data_json: entities,
+    data_json: dataJson,
     status: "draft",
     created_by: user.id,
     confidence: payload.confidence,
@@ -289,31 +295,68 @@ export async function postDraftAction(input: z.infer<typeof PostDraftSchema>) {
   }
 
   const accounts = await listAccounts();
-  type IntentMappingRow = Database["public"]["Tables"]["intent_account_mappings"]["Row"];
-  const { data: mapping } = await supabase
-    .from("intent_account_mappings")
-    .select<"*", IntentMappingRow>("*")
-    .eq("tenant_id", user.tenant.id)
-    .eq("intent", draft.intent)
-    .maybeSingle();
-  const parsedDraft = DraftSchema.parse({
-    intent: draft.intent,
-    entities: draft.data_json,
-    confidence: draft.confidence ? Number(draft.confidence) : 0,
-  });
+  
+  // Check if draft has edited journal lines
+  const draftData = draft.data_json as Record<string, unknown>;
+  const editedLines = draftData.edited_journal_lines as
+    | Array<{
+        account_id: string;
+        debit: number;
+        credit: number;
+        memo: string | null;
+      }>
+    | undefined;
+  const editedDescription = draftData.edited_description as string | undefined;
 
-  // Convert database mapping to IntentAccountMapping type, casting intent to the correct enum type
-  const intentMapping = mapping
-    ? ({
-        intent: mapping.intent as DraftPayload["intent"],
-        debit_account_id: mapping.debit_account_id,
-        credit_account_id: mapping.credit_account_id,
-        tax_debit_account_id: mapping.tax_debit_account_id,
-        tax_credit_account_id: mapping.tax_credit_account_id,
-      } as IntentAccountMapping)
-    : undefined;
+  let description: string;
+  let lines: JournalLine[];
 
-  const { description, lines } = buildDefaultJournalLines(parsedDraft, accounts, intentMapping);
+  if (editedLines && editedLines.length > 0) {
+    // Use edited journal lines
+    description = editedDescription ?? draftData.description as string ?? "";
+    lines = editedLines.map((line) => ({
+      account_id: line.account_id,
+      debit: Number(line.debit),
+      credit: Number(line.credit),
+      memo: line.memo ?? null,
+    }));
+  } else {
+    // Generate journal lines from draft
+    type IntentMappingRow = Database["public"]["Tables"]["intent_account_mappings"]["Row"];
+    const { data: mapping } = await supabase
+      .from("intent_account_mappings")
+      .select<"*", IntentMappingRow>("*")
+      .eq("tenant_id", user.tenant.id)
+      .eq("intent", draft.intent)
+      .maybeSingle();
+    const parsedDraft = DraftSchema.parse({
+      intent: draft.intent,
+      entities: draft.data_json,
+      confidence: draft.confidence ? Number(draft.confidence) : 0,
+    });
+
+    // Convert database mapping to IntentAccountMapping type, casting intent to the correct enum type
+    const intentMapping = mapping
+      ? ({
+          intent: mapping.intent as DraftPayload["intent"],
+          debit_account_id: mapping.debit_account_id,
+          credit_account_id: mapping.credit_account_id,
+          tax_debit_account_id: mapping.tax_debit_account_id,
+          tax_credit_account_id: mapping.tax_credit_account_id,
+        } as IntentAccountMapping)
+      : undefined;
+
+    // Try to get original prompt from draft data for RAG-based account selection
+    const originalPrompt = (draft.data_json as { original_prompt?: string })?.original_prompt;
+    
+    const result = await buildDefaultJournalLines(parsedDraft, accounts, intentMapping, {
+      prompt: originalPrompt,
+      tenantId: user.tenant.id,
+      useRAG: true, // Enable RAG-based dynamic account selection
+    });
+    description = result.description;
+    lines = result.lines;
+  }
 
   if (lines.length === 0) {
     throw new Error("No journal lines generated for draft.");
@@ -466,6 +509,43 @@ export async function getDraftJournalPreview(draftId: string) {
     confidence: draft.confidence ? Number(draft.confidence) : 0,
   });
 
+  // Check if draft has edited journal lines
+  const draftData = draft.data_json as Record<string, unknown>;
+  const editedLines = draftData.edited_journal_lines as
+    | Array<{
+        account_id: string;
+        debit: number;
+        credit: number;
+        memo: string | null;
+      }>
+    | undefined;
+  const editedDescription = draftData.edited_description as string | undefined;
+
+  if (editedLines && editedLines.length > 0) {
+    // Use edited journal lines
+    const accountMap = new Map(accounts.map((account) => [account.id, account]));
+    const journalLines = editedLines.map((line) => {
+      const account = accountMap.get(line.account_id);
+      return {
+        account_id: line.account_id,
+        account_code: account?.code ?? "",
+        account_name: account?.name ?? "",
+        account_type: account?.type ?? "",
+        debit: line.debit,
+        credit: line.credit,
+        memo: line.memo,
+      };
+    });
+
+    return {
+      description: editedDescription ?? parsedDraft.entities.description ?? "",
+      journalLines,
+      entities: parsedDraft.entities,
+      intent: parsedDraft.intent,
+    };
+  }
+
+  // Otherwise, generate journal lines from draft
   const intentMapping = mapping
     ? ({
         intent: mapping.intent as DraftPayload["intent"],
@@ -476,7 +556,14 @@ export async function getDraftJournalPreview(draftId: string) {
       } as IntentAccountMapping)
     : undefined;
 
-  const { description, lines } = buildDefaultJournalLines(parsedDraft, accounts, intentMapping);
+  // Try to get original prompt from draft data for RAG-based account selection
+  const originalPrompt = (draft.data_json as { original_prompt?: string })?.original_prompt;
+  
+  const { description, lines } = await buildDefaultJournalLines(parsedDraft, accounts, intentMapping, {
+    prompt: originalPrompt,
+    tenantId: user.tenant.id,
+    useRAG: true, // Enable RAG-based dynamic account selection
+  });
 
   // Map journal lines to include account details
   const accountMap = new Map(accounts.map((account) => [account.id, account]));
@@ -499,4 +586,101 @@ export async function getDraftJournalPreview(draftId: string) {
     entities: parsedDraft.entities,
     intent: parsedDraft.intent,
   };
+}
+
+const UpdateJournalLinesSchema = z.object({
+  draftId: z.string().uuid(),
+  description: z.string(),
+  journalLines: z.array(
+    z.object({
+      account_id: z.string().uuid(),
+      debit: z.number().min(0),
+      credit: z.number().min(0),
+      memo: z.string().nullable(),
+    })
+  ),
+});
+
+export async function updateDraftJournalLines(input: z.infer<typeof UpdateJournalLinesSchema>) {
+  const payload = UpdateJournalLinesSchema.parse(input);
+  const user = await getCurrentUser();
+  if (!user?.tenant) {
+    throw new Error("User tenant not resolved.");
+  }
+
+  const supabase = await createServerSupabaseClient();
+  const { data: existing, error: fetchError } = await supabase
+    .from("drafts")
+    .select<"id, status, data_json", Pick<DraftsRow, "id" | "status" | "data_json">>("id, status, data_json")
+    .eq("id", payload.draftId)
+    .eq("tenant_id", user.tenant.id)
+    .maybeSingle();
+
+  if (fetchError) {
+    console.error("Failed to load draft for update", fetchError);
+    throw fetchError;
+  }
+
+  if (!existing) {
+    throw new Error("Draft not found.");
+  }
+
+  if (existing.status === "posted") {
+    throw new Error("Posted drafts cannot be edited.");
+  }
+
+  // Validate journal lines are balanced
+  const totalDebit = payload.journalLines.reduce((sum, line) => sum + line.debit, 0);
+  const totalCredit = payload.journalLines.reduce((sum, line) => sum + line.credit, 0);
+  if (Math.abs(totalDebit - totalCredit) >= 0.01) {
+    throw new Error(`Journal entry is not balanced. Debit: ${totalDebit}, Credit: ${totalCredit}`);
+  }
+
+  // Store edited journal lines in data_json
+  const existingData = existing.data_json as Record<string, unknown>;
+  const updatedData = {
+    ...existingData,
+    edited_journal_lines: payload.journalLines,
+    edited_description: payload.description,
+  };
+
+  const nextStatus = existing.status === "approved" ? "draft" : existing.status;
+
+  const updateData: DraftsUpdate = {
+    data_json: updatedData,
+    status: nextStatus,
+  };
+
+  const table = supabase.from("drafts") as unknown as {
+    update: (values: DraftsUpdate) => {
+      eq: (column: string, value: string) => {
+        eq: (column: string, value: string) => Promise<{ error: unknown }>;
+      };
+    };
+  };
+  const { error } = await table.update(updateData).eq("id", payload.draftId).eq("tenant_id", user.tenant.id);
+
+  if (error) {
+    console.error("Failed to update draft journal lines", error);
+    throw error;
+  }
+
+  const auditData: AuditLogsInsert = {
+    tenant_id: user.tenant.id,
+    actor_id: user.id,
+    action: "draft.journal_lines_updated",
+    entity: "drafts",
+    entity_id: payload.draftId,
+    changes: {
+      description: payload.description,
+      line_count: payload.journalLines.length,
+    },
+  };
+  const auditTable = supabase.from("audit_logs") as unknown as {
+    insert: (values: AuditLogsInsert[]) => Promise<{ error: unknown }>;
+  };
+  await auditTable.insert([auditData]);
+
+  revalidatePath("/drafts");
+  return { success: true };
 }

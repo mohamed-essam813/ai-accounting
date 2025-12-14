@@ -1,11 +1,12 @@
 import { listDrafts } from "@/lib/data/drafts";
+import { listAccounts } from "@/lib/data/accounts";
 import { DraftsTable } from "@/components/drafts/drafts-table";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 export const revalidate = 60;
 
 export default async function DraftsPage() {
-  const drafts = await listDrafts();
+  const [drafts, accounts] = await Promise.all([listDrafts(), listAccounts()]);
 
   return (
     <div className="space-y-6">
@@ -15,7 +16,7 @@ export default async function DraftsPage() {
           Review AI generated drafts, approve them, and post balanced journal entries.
         </p>
       </div>
-      <DraftsTable drafts={drafts} />
+      <DraftsTable drafts={drafts} accounts={accounts} />
       <Card>
         <CardHeader>
           <CardTitle>Workflow Guidance</CardTitle>
