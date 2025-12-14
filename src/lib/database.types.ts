@@ -331,7 +331,7 @@ export type Database = {
         }
         Insert: {
           address?: string | null
-          code: string
+          code?: string | null
           created_at?: string
           email?: string | null
           id?: string
