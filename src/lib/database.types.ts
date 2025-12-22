@@ -489,6 +489,71 @@ export type Database = {
           },
         ]
       }
+      insights: {
+        Row: {
+          category: string
+          context_json: Json | null
+          created_at: string
+          draft_id: string | null
+          id: string
+          insight_text: string
+          journal_entry_id: string | null
+          level: string
+          tenant_id: string
+        }
+        Insert: {
+          category: string
+          context_json?: Json | null
+          created_at?: string
+          draft_id?: string | null
+          id?: string
+          insight_text: string
+          journal_entry_id?: string | null
+          level: string
+          tenant_id: string
+        }
+        Update: {
+          category?: string
+          context_json?: Json | null
+          created_at?: string
+          draft_id?: string | null
+          id?: string
+          insight_text?: string
+          journal_entry_id?: string | null
+          level?: string
+          tenant_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "insights_draft_id_fkey"
+            columns: ["draft_id"]
+            isOneToOne: false
+            referencedRelation: "drafts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "insights_journal_entry_id_fkey"
+            columns: ["journal_entry_id"]
+            isOneToOne: false
+            referencedRelation: "journal_entries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "insights_journal_entry_id_fkey"
+            columns: ["journal_entry_id"]
+            isOneToOne: false
+            referencedRelation: "v_journal_ledger"
+            referencedColumns: ["entry_id"]
+          },
+          {
+            foreignKeyName: "insights_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       intent_account_mappings: {
         Row: {
           created_at: string
@@ -959,6 +1024,94 @@ export type Database = {
       }
     }
     Views: {
+      v_ap_ageing: {
+        Row: {
+          bill_number: string | null
+          current_0_30: number | null
+          days_31_60: number | null
+          days_61_90: number | null
+          days_90_plus: number | null
+          days_overdue: number | null
+          due_date: string | null
+          entry_date: string | null
+          outstanding_amount: number | null
+          tenant_id: string | null
+          vendor_name: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "drafts_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      v_ap_ageing_summary: {
+        Row: {
+          tenant_id: string | null
+          total_31_60: number | null
+          total_61_90: number | null
+          total_90_plus: number | null
+          total_current: number | null
+          total_outstanding: number | null
+          vendor_name: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "drafts_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      v_ar_ageing: {
+        Row: {
+          current_0_30: number | null
+          customer_name: string | null
+          days_31_60: number | null
+          days_61_90: number | null
+          days_90_plus: number | null
+          days_overdue: number | null
+          due_date: string | null
+          entry_date: string | null
+          invoice_number: string | null
+          outstanding_amount: number | null
+          tenant_id: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "drafts_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      v_ar_ageing_summary: {
+        Row: {
+          customer_name: string | null
+          tenant_id: string | null
+          total_31_60: number | null
+          total_61_90: number | null
+          total_90_plus: number | null
+          total_current: number | null
+          total_outstanding: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "drafts_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       v_balance_sheet: {
         Row: {
           assets: number | null
@@ -1025,6 +1178,50 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "journal_entries_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      v_recent_primary_insights: {
+        Row: {
+          category: string | null
+          context_json: Json | null
+          created_at: string | null
+          draft_id: string | null
+          id: string | null
+          insight_text: string | null
+          journal_entry_id: string | null
+          tenant_id: string | null
+          transaction_date: string | null
+          transaction_description: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "insights_draft_id_fkey"
+            columns: ["draft_id"]
+            isOneToOne: false
+            referencedRelation: "drafts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "insights_journal_entry_id_fkey"
+            columns: ["journal_entry_id"]
+            isOneToOne: false
+            referencedRelation: "journal_entries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "insights_journal_entry_id_fkey"
+            columns: ["journal_entry_id"]
+            isOneToOne: false
+            referencedRelation: "v_journal_ledger"
+            referencedColumns: ["entry_id"]
+          },
+          {
+            foreignKeyName: "insights_tenant_id_fkey"
             columns: ["tenant_id"]
             isOneToOne: false
             referencedRelation: "tenants"

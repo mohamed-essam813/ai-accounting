@@ -123,6 +123,31 @@ export async function createJournalEntryAction(
   };
   await auditTable.insert([auditData]);
 
+  // Generate and save insights (async, don't wait)
+  import("@/lib/insights/context-builder")
+    .then(({ buildInsightContext }) =>
+      import("@/lib/insights/generate")
+        .then(({ generateInsights }) =>
+          import("@/lib/data/insights").then(({ saveInsights }) => {
+            return buildInsightContext(entry.id)
+              .then((context) => generateInsights(context))
+              .then((generatedInsights) => {
+                const allInsights = [
+                  ...generatedInsights.primary,
+                  ...generatedInsights.secondary,
+                  ...(generatedInsights.deep_dive || []),
+                ].map((insight) => ({
+                  ...insight,
+                  tenant_id: user.tenant.id,
+                  journal_entry_id: entry.id,
+                }));
+                return saveInsights(allInsights);
+              });
+          }),
+        ),
+    )
+    .catch((err) => console.error("Failed to generate insights:", err));
+
   revalidatePath("/journals");
   revalidatePath("/reports");
   revalidatePath("/dashboard");

@@ -432,8 +432,36 @@ export async function postDraftAction(input: z.infer<typeof PostDraftSchema>) {
   };
   await draftTable.update(updateData).eq("id", payload.draftId).eq("tenant_id", user.tenant.id);
 
-  // Populate transaction embedding for RAG (async, don't wait)
+  // Generate and save insights (async, don't wait)
   const tenantId = user.tenant.id;
+  import("@/lib/insights/context-builder")
+    .then(({ buildInsightContext }) =>
+      import("@/lib/insights/generate")
+        .then(({ generateInsights }) =>
+          import("@/lib/data/insights").then(({ saveInsights }) => {
+            // Build context and generate insights
+            return buildInsightContext(entry.id, payload.draftId)
+              .then((context) => generateInsights(context))
+              .then((generatedInsights) => {
+                // Combine all insights and set tenant_id and references
+                const allInsights = [
+                  ...generatedInsights.primary,
+                  ...generatedInsights.secondary,
+                  ...(generatedInsights.deep_dive || []),
+                ].map((insight) => ({
+                  ...insight,
+                  tenant_id: tenantId,
+                  journal_entry_id: entry.id,
+                  draft_id: payload.draftId,
+                }));
+                return saveInsights(allInsights);
+              });
+          }),
+        ),
+    )
+    .catch((err) => console.error("Failed to generate insights:", err));
+
+  // Populate transaction embedding for RAG (async, don't wait)
   import("@/lib/ai/populate-embeddings")
     .then(({ populateTransactionEmbedding }) =>
       populateTransactionEmbedding({

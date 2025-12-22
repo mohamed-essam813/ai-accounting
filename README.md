@@ -14,6 +14,7 @@ A SaaS accounting platform that converts natural language prompts into structure
 
 - **[SETUP_GUIDE.md](./SETUP_GUIDE.md)** - Complete setup instructions, troubleshooting, security guidelines, and RAG feature documentation
 - **[DEPLOYMENT.md](./DEPLOYMENT.md)** - Free tier deployment guide for Vercel, Supabase, and OpenAI
+- **[IMPLEMENTATION.md](./IMPLEMENTATION.md)** - PRD compliance implementation summary and testing checklist
 
 ## 🛠 Tech Stack
 
@@ -29,9 +30,12 @@ A SaaS accounting platform that converts natural language prompts into structure
 - ✅ Natural language prompt → AI draft generation
 - ✅ Draft review, editing, and approval workflow
 - ✅ Double-entry journal posting with balance validation
+- ✅ **Insight Engine** - Automatic contextual insights after every transaction
+- ✅ **PRD-Compliant Dashboard** - Financial Radar with attention signals
 - ✅ Configurable intent-to-account mappings
 - ✅ Bank CSV import and reconciliation
-- ✅ Financial reports (P&L, Balance Sheet, Trial Balance)
+- ✅ Financial reports (P&L, Balance Sheet, Trial Balance, AR/AP Ageing)
+- ✅ Date range filters with presets (Monthly, Quarterly, Yearly)
 - ✅ Multi-tenant architecture with RLS
 - ✅ User roles and permissions
 - ✅ Subscription management

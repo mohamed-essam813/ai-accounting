@@ -25,6 +25,9 @@ type JournalLedgerRow = {
 import { formatCurrency, formatDate } from "@/lib/format";
 import { ReportFilters } from "@/components/reports/report-filters";
 import { ExportButtons } from "@/components/reports/export-buttons";
+import { ARAgeingTable } from "@/components/reports/ar-ageing-table";
+import { APAgeingTable } from "@/components/reports/ap-ageing-table";
+import { getARAgeing, getARAgeingSummary, getAPAgeing, getAPAgeingSummary } from "@/lib/data/ageing";
 
 export const revalidate = 120;
 
@@ -34,13 +37,17 @@ export default async function ReportsPage({
   searchParams: Promise<{ startDate?: string; endDate?: string }>;
 }) {
   const params = await searchParams;
-  const [pnl, balanceSheet, trialBalance, cashFlow, journalLedger, vatReport] = await Promise.all([
+  const [pnl, balanceSheet, trialBalance, cashFlow, journalLedger, vatReport, arAgeing, arAgeingSummary, apAgeing, apAgeingSummary] = await Promise.all([
     getProfitAndLoss(),
     getBalanceSheet(),
     getTrialBalance(),
     getCashFlow(),
     getJournalLedger(params.startDate, params.endDate),
     getVATReport(),
+    getARAgeing(),
+    getARAgeingSummary(),
+    getAPAgeing(),
+    getAPAgeingSummary(),
   ]);
 
   return (
@@ -52,13 +59,15 @@ export default async function ReportsPage({
         </p>
       </div>
       <Tabs defaultValue="pnl" className="space-y-6">
-        <TabsList className="grid w-full grid-cols-6">
+        <TabsList className="grid w-full grid-cols-8">
           <TabsTrigger value="pnl">P&amp;L</TabsTrigger>
           <TabsTrigger value="balance">Balance Sheet</TabsTrigger>
           <TabsTrigger value="cashflow">Cash Flow</TabsTrigger>
           <TabsTrigger value="ledger">Journal Ledger</TabsTrigger>
           <TabsTrigger value="vat">VAT Report</TabsTrigger>
           <TabsTrigger value="trial">Trial Balance</TabsTrigger>
+          <TabsTrigger value="ar">AR Ageing</TabsTrigger>
+          <TabsTrigger value="ap">AP Ageing</TabsTrigger>
         </TabsList>
         <TabsContent value="pnl">
           <Card>
@@ -273,6 +282,80 @@ export default async function ReportsPage({
                   )}
                 </TableBody>
               </Table>
+            </CardContent>
+          </Card>
+        </TabsContent>
+        <TabsContent value="ar">
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between">
+              <CardTitle>Accounts Receivable Ageing</CardTitle>
+              <ExportButtons
+                data={{
+                  title: "AR-Ageing",
+                  headers: [
+                    "Customer",
+                    "Invoice #",
+                    "Due Date",
+                    "Days Overdue",
+                    "Current (0-30)",
+                    "31-60 Days",
+                    "61-90 Days",
+                    "90+ Days",
+                    "Outstanding",
+                  ],
+                  rows: arAgeing.map((item) => [
+                    item.customer_name,
+                    item.invoice_number || "",
+                    item.due_date,
+                    item.days_overdue,
+                    item.current_0_30,
+                    item.days_31_60,
+                    item.days_61_90,
+                    item.days_90_plus,
+                    item.outstanding_amount,
+                  ]),
+                }}
+              />
+            </CardHeader>
+            <CardContent>
+              <ARAgeingTable items={arAgeing} summary={arAgeingSummary} />
+            </CardContent>
+          </Card>
+        </TabsContent>
+        <TabsContent value="ap">
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between">
+              <CardTitle>Accounts Payable Ageing</CardTitle>
+              <ExportButtons
+                data={{
+                  title: "AP-Ageing",
+                  headers: [
+                    "Vendor",
+                    "Bill #",
+                    "Due Date",
+                    "Days Overdue",
+                    "Current (0-30)",
+                    "31-60 Days",
+                    "61-90 Days",
+                    "90+ Days",
+                    "Outstanding",
+                  ],
+                  rows: apAgeing.map((item) => [
+                    item.vendor_name,
+                    item.bill_number || "",
+                    item.due_date,
+                    item.days_overdue,
+                    item.current_0_30,
+                    item.days_31_60,
+                    item.days_61_90,
+                    item.days_90_plus,
+                    item.outstanding_amount,
+                  ]),
+                }}
+              />
+            </CardHeader>
+            <CardContent>
+              <APAgeingTable items={apAgeing} summary={apAgeingSummary} />
             </CardContent>
           </Card>
         </TabsContent>
