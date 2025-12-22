@@ -14,7 +14,7 @@ export type InsightLevel = "primary" | "secondary" | "deep_dive";
 
 export interface Insight {
   id?: string;
-  tenant_id: string;
+  tenant_id?: string; // Optional - added when saving to database
   journal_entry_id?: string;
   draft_id?: string;
   category: InsightCategory;

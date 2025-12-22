@@ -17,16 +17,17 @@ export async function saveInsights(insights: Insight[]): Promise<void> {
   }
 
   const supabase = await createServerSupabaseClient();
+  const tenantId = user.tenant.id;
 
   // Ensure all insights have tenant_id
   const insightsToInsert: InsightsInsert[] = insights.map((insight) => ({
-    tenant_id: user.tenant.id,
+    tenant_id: tenantId,
     journal_entry_id: insight.journal_entry_id || undefined,
     draft_id: insight.draft_id || undefined,
     category: insight.category,
     level: insight.level,
     insight_text: insight.insight_text,
-    context_json: insight.context_json || undefined,
+    context_json: (insight.context_json as Database["public"]["Tables"]["insights"]["Row"]["context_json"]) || null,
   }));
 
   const table = supabase.from("insights") as unknown as {
@@ -64,9 +65,10 @@ export async function getInsightsForJournalEntry(
     };
   };
 
+  const tenantId = user.tenant.id;
   const { data, error } = await table
     .select("*")
-    .eq("tenant_id", user.tenant.id)
+    .eq("tenant_id", tenantId)
     .eq("journal_entry_id", journalEntryId)
     .order("created_at", { ascending: false });
 
@@ -121,9 +123,10 @@ export async function getRecentPrimaryInsights(limit: number = 10): Promise<Insi
     };
   };
 
+  const tenantId = user.tenant.id;
   const { data, error } = await view
     .select("*")
-    .eq("tenant_id", user.tenant.id)
+    .eq("tenant_id", tenantId)
     .limit(limit)
     .order("created_at", { ascending: false });
 

@@ -124,6 +124,7 @@ export async function createJournalEntryAction(
   await auditTable.insert([auditData]);
 
   // Generate and save insights (async, don't wait)
+  const tenantId = user.tenant.id;
   import("@/lib/insights/context-builder")
     .then(({ buildInsightContext }) =>
       import("@/lib/insights/generate")
@@ -138,7 +139,7 @@ export async function createJournalEntryAction(
                   ...(generatedInsights.deep_dive || []),
                 ].map((insight) => ({
                   ...insight,
-                  tenant_id: user.tenant.id,
+                  tenant_id: tenantId,
                   journal_entry_id: entry.id,
                 }));
                 return saveInsights(allInsights);
