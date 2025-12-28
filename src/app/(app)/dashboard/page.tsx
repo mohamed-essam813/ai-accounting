@@ -29,15 +29,15 @@ export default async function DashboardPage() {
   ]);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 pb-6">
       {/* Section 1: Financial Pulse (Top Narrative) */}
       <FinancialPulseCard pulse={pulse} />
 
       {/* Section 2: Attention Signals (Core) */}
       <div>
-        <div className="mb-3">
-          <h2 className="text-lg font-semibold">Attention Signals</h2>
-          <p className="text-sm text-muted-foreground">
+        <div className="mb-4">
+          <h2 className="text-xl font-semibold tracking-tight">Attention Signals</h2>
+          <p className="text-sm text-muted-foreground mt-1">
             Key financial indicators that need your attention
           </p>
         </div>
@@ -45,30 +45,42 @@ export default async function DashboardPage() {
       </div>
 
       {/* Section 3: Recent Financial Events (Optional) */}
-      {events.length > 0 && <RecentFinancialEvents events={events} />}
+      {events.length > 0 && (
+        <div>
+          <div className="mb-4">
+            <h2 className="text-xl font-semibold tracking-tight">Recent Financial Events</h2>
+            <p className="text-sm text-muted-foreground mt-1">
+              Meaningful financial activities and insights
+            </p>
+          </div>
+          <RecentFinancialEvents events={events} />
+        </div>
+      )}
 
       {/* Section 4: Banks (Utility) */}
-      <Card>
+      <Card className="border-2">
         <CardHeader>
-          <CardTitle className="text-sm font-medium flex items-center gap-2">
-            <Banknote className="h-4 w-4" />
+          <CardTitle className="text-base font-semibold flex items-center gap-2">
+            <Banknote className="h-5 w-5 text-muted-foreground" />
             Bank Accounts
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="flex items-center justify-between text-sm">
-            <span className="text-muted-foreground">Connected banks</span>
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium">Connected banks</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                Manage bank connections and reconciliation in the Bank module.
+              </p>
+            </div>
             <Link
               href="/bank"
-              className="flex items-center gap-1 text-primary hover:underline"
+              className="flex items-center gap-1.5 text-primary hover:text-primary/80 font-medium text-sm transition-colors"
             >
               <span>Reconcile</span>
-              <Link2 className="h-3 w-3" />
+              <Link2 className="h-4 w-4" />
             </Link>
           </div>
-          <p className="text-xs text-muted-foreground mt-2">
-            Manage bank connections and reconciliation in the Bank module.
-          </p>
         </CardContent>
       </Card>
     </div>

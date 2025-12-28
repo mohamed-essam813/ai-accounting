@@ -12,36 +12,33 @@ A SaaS accounting platform that converts natural language prompts into structure
 
 ## 📚 Documentation
 
-- **[SETUP_GUIDE.md](./SETUP_GUIDE.md)** - Complete setup instructions, troubleshooting, security guidelines, and RAG feature documentation
-- **[DEPLOYMENT.md](./DEPLOYMENT.md)** - Free tier deployment guide for Vercel, Supabase, and OpenAI
-- **[IMPLEMENTATION.md](./IMPLEMENTATION.md)** - PRD compliance implementation summary and testing checklist
+- **[SETUP_GUIDE.md](./SETUP_GUIDE.md)** - Setup instructions and configuration
+- **[DEPLOYMENT.md](./DEPLOYMENT.md)** - Deployment guide for Vercel, Supabase, and OpenAI
+- **[IMPLEMENTATION_SUMMARY.md](./IMPLEMENTATION_SUMMARY.md)** - Implementation summary
 
 ## 🛠 Tech Stack
 
 - **Frontend**: Next.js 16 (App Router), TypeScript, Tailwind CSS, shadcn/ui
 - **Backend**: Next.js API Routes + Server Actions
 - **Database**: Supabase (PostgreSQL + Row-Level Security)
-- **AI**: OpenAI GPT-5.1 via Vercel AI SDK with RAG (Retrieval-Augmented Generation)
+- **AI**: OpenAI GPT-4o (or GPT-5.1 if available) via Vercel AI SDK with RAG (Retrieval-Augmented Generation)
 - **Storage**: Supabase Storage
 - **OCR**: Google Cloud Vision API (optional)
 
 ## ✨ Features
 
-- ✅ Natural language prompt → AI draft generation
-- ✅ Draft review, editing, and approval workflow
-- ✅ Double-entry journal posting with balance validation
-- ✅ **Insight Engine** - Automatic contextual insights after every transaction
-- ✅ **PRD-Compliant Dashboard** - Financial Radar with attention signals
-- ✅ Configurable intent-to-account mappings
-- ✅ Bank CSV import and reconciliation
-- ✅ Financial reports (P&L, Balance Sheet, Trial Balance, AR/AP Ageing)
-- ✅ Date range filters with presets (Monthly, Quarterly, Yearly)
-- ✅ Multi-tenant architecture with RLS
-- ✅ User roles and permissions
-- ✅ Subscription management
-- ✅ OCR document processing
-- ✅ AI usage tracking and caching
-- ✅ RAG (Retrieval-Augmented Generation) for context-aware AI parsing
+- Natural language prompt → AI draft generation
+- Draft review, editing, and approval workflow
+- Double-entry journal posting with balance validation
+- Insight Engine - Automatic contextual insights after every transaction
+- Financial Radar Dashboard with attention signals
+- Inventory management (FIFO/Weighted Average)
+- Fixed assets & depreciation
+- Financial reports (P&L, Balance Sheet, Cash Flow, AR/AP Ageing)
+- Bank reconciliation with CSV import
+- Contacts management (customers and vendors)
+- Multi-tenant architecture with RLS
+- User roles and permissions (admin, accountant, business_user, auditor)
 
 ## 📁 Project Structure
 
@@ -101,12 +98,6 @@ See [SETUP_GUIDE.md](./SETUP_GUIDE.md) for details.
 
 Currently manual testing only. Automated tests planned for future release.
 
-## ⚠️ Missing for Production
-
-- Payment processing (Stripe/Paddle integration)
-- Email notifications system
-- Automated tests (unit + E2E)
-- Error monitoring (Sentry)
 
 ## 💰 Costs
 
@@ -114,10 +105,9 @@ Currently manual testing only. Automated tests planned for future release.
 - Vercel: Free (100GB bandwidth/month)
 - Supabase: Free tier (500MB database, 1GB storage)
 - OpenAI: $5 free credits, then ~$10-20/month
-- Google Vision: 1,000 requests/month free, then ~$1.50/1,000
 - **Total**: ~$10-25/month after free credits
 
-See [DEPLOYMENT.md](./DEPLOYMENT.md) for free tier deployment guide.
+See [DEPLOYMENT.md](./DEPLOYMENT.md) for deployment guide.
 
 ## 📝 License
 

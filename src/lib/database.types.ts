@@ -367,6 +367,81 @@ export type Database = {
           },
         ]
       }
+      depreciation_schedules: {
+        Row: {
+          accumulated_depreciation: number
+          asset_id: string
+          created_at: string
+          depreciation_amount: number
+          id: string
+          journal_entry_id: string | null
+          net_book_value: number
+          period_end: string
+          period_start: string
+          tenant_id: string
+        }
+        Insert: {
+          accumulated_depreciation: number
+          asset_id: string
+          created_at?: string
+          depreciation_amount: number
+          id?: string
+          journal_entry_id?: string | null
+          net_book_value: number
+          period_end: string
+          period_start: string
+          tenant_id: string
+        }
+        Update: {
+          accumulated_depreciation?: number
+          asset_id?: string
+          created_at?: string
+          depreciation_amount?: number
+          id?: string
+          journal_entry_id?: string | null
+          net_book_value?: number
+          period_end?: string
+          period_start?: string
+          tenant_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "depreciation_schedules_asset_id_fkey"
+            columns: ["asset_id"]
+            isOneToOne: false
+            referencedRelation: "fixed_assets"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "depreciation_schedules_asset_id_fkey"
+            columns: ["asset_id"]
+            isOneToOne: false
+            referencedRelation: "v_fixed_assets_summary"
+            referencedColumns: ["asset_id"]
+          },
+          {
+            foreignKeyName: "depreciation_schedules_journal_entry_id_fkey"
+            columns: ["journal_entry_id"]
+            isOneToOne: false
+            referencedRelation: "journal_entries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "depreciation_schedules_journal_entry_id_fkey"
+            columns: ["journal_entry_id"]
+            isOneToOne: false
+            referencedRelation: "v_journal_ledger"
+            referencedColumns: ["entry_id"]
+          },
+          {
+            foreignKeyName: "depreciation_schedules_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       drafts: {
         Row: {
           approved_at: string | null
@@ -482,6 +557,74 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "embeddings_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      fixed_assets: {
+        Row: {
+          category: string
+          cost: number
+          created_at: string
+          depreciation_method: string
+          description: string | null
+          disposal_gain_loss: number | null
+          disposal_proceeds: number | null
+          disposed_at: string | null
+          id: string
+          is_active: boolean
+          name: string
+          purchase_date: string
+          residual_value: number
+          start_depreciation_date: string | null
+          tenant_id: string
+          updated_at: string
+          useful_life_months: number
+        }
+        Insert: {
+          category: string
+          cost: number
+          created_at?: string
+          depreciation_method: string
+          description?: string | null
+          disposal_gain_loss?: number | null
+          disposal_proceeds?: number | null
+          disposed_at?: string | null
+          id?: string
+          is_active?: boolean
+          name: string
+          purchase_date: string
+          residual_value?: number
+          start_depreciation_date?: string | null
+          tenant_id: string
+          updated_at?: string
+          useful_life_months: number
+        }
+        Update: {
+          category?: string
+          cost?: number
+          created_at?: string
+          depreciation_method?: string
+          description?: string | null
+          disposal_gain_loss?: number | null
+          disposal_proceeds?: number | null
+          disposed_at?: string | null
+          id?: string
+          is_active?: boolean
+          name?: string
+          purchase_date?: string
+          residual_value?: number
+          start_depreciation_date?: string | null
+          tenant_id?: string
+          updated_at?: string
+          useful_life_months?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "fixed_assets_tenant_id_fkey"
             columns: ["tenant_id"]
             isOneToOne: false
             referencedRelation: "tenants"
@@ -644,6 +787,248 @@ export type Database = {
           },
           {
             foreignKeyName: "intent_account_mappings_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      inventory_ageing: {
+        Row: {
+          ageing_bucket: string
+          batch_number: number | null
+          created_at: string
+          days_in_stock: number
+          id: string
+          item_id: string
+          purchase_date: string
+          quantity: number
+          tenant_id: string
+          total_value: number
+          unit_cost: number
+          updated_at: string
+        }
+        Insert: {
+          ageing_bucket: string
+          batch_number?: number | null
+          created_at?: string
+          days_in_stock: number
+          id?: string
+          item_id: string
+          purchase_date: string
+          quantity: number
+          tenant_id: string
+          total_value: number
+          unit_cost: number
+          updated_at?: string
+        }
+        Update: {
+          ageing_bucket?: string
+          batch_number?: number | null
+          created_at?: string
+          days_in_stock?: number
+          id?: string
+          item_id?: string
+          purchase_date?: string
+          quantity?: number
+          tenant_id?: string
+          total_value?: number
+          unit_cost?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "inventory_ageing_item_id_fkey"
+            columns: ["item_id"]
+            isOneToOne: false
+            referencedRelation: "inventory_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "inventory_ageing_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      inventory_balances: {
+        Row: {
+          average_cost: number | null
+          id: string
+          item_id: string
+          last_transaction_date: string | null
+          quantity: number
+          tenant_id: string
+          total_value: number
+          updated_at: string
+        }
+        Insert: {
+          average_cost?: number | null
+          id?: string
+          item_id: string
+          last_transaction_date?: string | null
+          quantity?: number
+          tenant_id: string
+          total_value?: number
+          updated_at?: string
+        }
+        Update: {
+          average_cost?: number | null
+          id?: string
+          item_id?: string
+          last_transaction_date?: string | null
+          quantity?: number
+          tenant_id?: string
+          total_value?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "inventory_balances_item_id_fkey"
+            columns: ["item_id"]
+            isOneToOne: false
+            referencedRelation: "inventory_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "inventory_balances_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      inventory_items: {
+        Row: {
+          created_at: string
+          description: string | null
+          id: string
+          is_active: boolean
+          name: string
+          sku: string | null
+          tenant_id: string
+          unit: string
+          updated_at: string
+          valuation_method: string
+        }
+        Insert: {
+          created_at?: string
+          description?: string | null
+          id?: string
+          is_active?: boolean
+          name: string
+          sku?: string | null
+          tenant_id: string
+          unit?: string
+          updated_at?: string
+          valuation_method: string
+        }
+        Update: {
+          created_at?: string
+          description?: string | null
+          id?: string
+          is_active?: boolean
+          name?: string
+          sku?: string | null
+          tenant_id?: string
+          unit?: string
+          updated_at?: string
+          valuation_method?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "inventory_items_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      inventory_transactions: {
+        Row: {
+          batch_number: number | null
+          cogs_amount: number | null
+          created_at: string
+          date: string
+          draft_id: string | null
+          id: string
+          item_id: string
+          journal_entry_id: string | null
+          notes: string | null
+          quantity: number
+          tenant_id: string
+          total_cost: number
+          transaction_type: string
+          unit_cost: number
+        }
+        Insert: {
+          batch_number?: number | null
+          cogs_amount?: number | null
+          created_at?: string
+          date: string
+          draft_id?: string | null
+          id?: string
+          item_id: string
+          journal_entry_id?: string | null
+          notes?: string | null
+          quantity: number
+          tenant_id: string
+          total_cost: number
+          transaction_type: string
+          unit_cost: number
+        }
+        Update: {
+          batch_number?: number | null
+          cogs_amount?: number | null
+          created_at?: string
+          date?: string
+          draft_id?: string | null
+          id?: string
+          item_id?: string
+          journal_entry_id?: string | null
+          notes?: string | null
+          quantity?: number
+          tenant_id?: string
+          total_cost?: number
+          transaction_type?: string
+          unit_cost?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "inventory_transactions_draft_id_fkey"
+            columns: ["draft_id"]
+            isOneToOne: false
+            referencedRelation: "drafts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "inventory_transactions_item_id_fkey"
+            columns: ["item_id"]
+            isOneToOne: false
+            referencedRelation: "inventory_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "inventory_transactions_journal_entry_id_fkey"
+            columns: ["journal_entry_id"]
+            isOneToOne: false
+            referencedRelation: "journal_entries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "inventory_transactions_journal_entry_id_fkey"
+            columns: ["journal_entry_id"]
+            isOneToOne: false
+            referencedRelation: "v_journal_ledger"
+            referencedColumns: ["entry_id"]
+          },
+          {
+            foreignKeyName: "inventory_transactions_tenant_id_fkey"
             columns: ["tenant_id"]
             isOneToOne: false
             referencedRelation: "tenants"
@@ -1144,6 +1529,69 @@ export type Database = {
           },
         ]
       }
+      v_fixed_assets_summary: {
+        Row: {
+          accumulated_depreciation: number | null
+          asset_id: string | null
+          category: string | null
+          cost: number | null
+          depreciation_method: string | null
+          disposal_gain_loss: number | null
+          disposal_proceeds: number | null
+          disposed_at: string | null
+          is_active: boolean | null
+          months_depreciated: number | null
+          name: string | null
+          net_book_value: number | null
+          purchase_date: string | null
+          residual_value: number | null
+          start_depreciation_date: string | null
+          tenant_id: string | null
+          useful_life_months: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "fixed_assets_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      v_inventory_summary: {
+        Row: {
+          average_cost: number | null
+          item_id: string | null
+          item_name: string | null
+          last_transaction_date: string | null
+          quantity: number | null
+          quantity_0_30: number | null
+          quantity_31_60: number | null
+          quantity_61_90: number | null
+          quantity_90_plus: number | null
+          sku: string | null
+          tenant_id: string | null
+          total_value: number | null
+          valuation_method: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "inventory_balances_item_id_fkey"
+            columns: ["item_id"]
+            isOneToOne: false
+            referencedRelation: "inventory_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "inventory_balances_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       v_journal_ledger: {
         Row: {
           account_code: string | null
@@ -1170,7 +1618,9 @@ export type Database = {
       }
       v_profit_and_loss: {
         Row: {
+          gain_loss_on_disposal: number | null
           net_income: number | null
+          operating_profit: number | null
           tenant_id: string | null
           total_expense: number | null
           total_revenue: number | null
@@ -1268,6 +1718,36 @@ export type Database = {
       }
     }
     Functions: {
+      calculate_cogs_fifo: {
+        Args: {
+          p_date: string
+          p_item_id: string
+          p_quantity: number
+          p_tenant_id: string
+        }
+        Returns: number
+      }
+      calculate_cogs_weighted_average: {
+        Args: { p_item_id: string; p_quantity: number; p_tenant_id: string }
+        Returns: number
+      }
+      calculate_depreciation_reducing_balance: {
+        Args: {
+          p_cost: number
+          p_current_nbv: number
+          p_residual_value: number
+          p_useful_life_months: number
+        }
+        Returns: number
+      }
+      calculate_depreciation_straight_line: {
+        Args: {
+          p_cost: number
+          p_residual_value: number
+          p_useful_life_months: number
+        }
+        Returns: number
+      }
       fn_log_audit: {
         Args: {
           p_action: string
@@ -1300,6 +1780,10 @@ export type Database = {
           metadata: Json
           similarity: number
         }[]
+      }
+      update_inventory_ageing: {
+        Args: { p_tenant_id: string }
+        Returns: undefined
       }
     }
     Enums: {

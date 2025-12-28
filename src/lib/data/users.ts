@@ -4,9 +4,18 @@ import type { Database } from "@/lib/database.types";
 
 export const getCurrentUser = cache(async () => {
   const supabase = await createServerSupabaseClient();
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
+  
+  // Try to get session, but handle errors gracefully (e.g., invalid refresh token)
+  let session;
+  try {
+    const sessionResult = await supabase.auth.getSession();
+    session = sessionResult.data?.session;
+  } catch (error) {
+    // If there's an auth error (like invalid refresh token), just return null
+    // This happens when user is not logged in or has stale tokens
+    console.warn("Auth session check failed (user likely not logged in):", error);
+    return null;
+  }
 
   if (!session?.user) {
     return null;

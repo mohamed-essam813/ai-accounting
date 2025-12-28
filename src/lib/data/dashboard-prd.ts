@@ -179,7 +179,7 @@ async function getCashFlowSignal(): Promise<AttentionSignal | null> {
     title: "Cash Flow",
     status,
     explanation,
-    drillDownPath: "/reports/pnl",
+    drillDownPath: "/insights/cash",
   };
 }
 
@@ -210,7 +210,7 @@ async function getReceivablesSignal(): Promise<AttentionSignal | null> {
     title: "Receivables",
     status,
     explanation,
-    drillDownPath: "/contacts",
+    drillDownPath: "/insights/receivables",
   };
 }
 
@@ -220,8 +220,9 @@ async function getPayablesSignal(): Promise<AttentionSignal | null> {
   let status: AttentionSignalStatus = "stable";
   let explanation = "";
 
-  if (payables === 0) {
-    return null; // Don't show if no payables
+  // If payables is 0 or negative (credit balance), don't show signal
+  if (payables <= 0) {
+    return null;
   }
 
   if (payables > 50000) {
@@ -237,7 +238,7 @@ async function getPayablesSignal(): Promise<AttentionSignal | null> {
     title: "Payables",
     status,
     explanation,
-    drillDownPath: "/contacts",
+    drillDownPath: "/insights/payables",
   };
 }
 
@@ -282,7 +283,7 @@ async function getTaxExposureSignal(): Promise<AttentionSignal | null> {
     title: "Tax Exposure",
     status,
     explanation,
-    drillDownPath: "/reports/pnl",
+    drillDownPath: "/reports/pnl?tab=vat", // Tax reports are verification screens (Proof Zone)
   };
 }
 
@@ -300,7 +301,7 @@ async function getRevenueMomentumSignal(): Promise<AttentionSignal | null> {
     title: "Revenue Momentum",
     status: "stable",
     explanation: `Year-to-date revenue: ${formatCurrency(revenue)}.`,
-    drillDownPath: "/reports/pnl",
+    drillDownPath: "/reports/pnl?tab=pnl", // Revenue is shown in P&L report
   };
 }
 
@@ -325,7 +326,12 @@ async function getExpenseControlSignal(): Promise<AttentionSignal | null> {
       status = "stable";
       explanation = `Expenses are ${expenseRatio.toFixed(0)}% of revenue.`;
     }
+  } else if (revenue < 0) {
+    // Revenue is negative (losses), show absolute expense amount
+    status = "worsening";
+    explanation = `Expenses at ${formatCurrency(expenses)} with negative revenue.`;
   } else {
+    // No revenue
     status = "worsening";
     explanation = `Expenses at ${formatCurrency(expenses)} with no revenue.`;
   }
@@ -335,7 +341,7 @@ async function getExpenseControlSignal(): Promise<AttentionSignal | null> {
     title: "Expense Control",
     status,
     explanation,
-    drillDownPath: "/reports/pnl",
+    drillDownPath: "/reports/pnl?tab=pnl", // Expenses are shown in P&L report
   };
 }
 

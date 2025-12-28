@@ -1,23 +1,14 @@
-# 🚀 Deployment Guide - Free Tier Setup
+# Deployment Guide
 
-This guide will help you deploy your AI Accounting Platform to **Vercel** (free tier) with all free services.
+Deploy to Vercel with Supabase and OpenAI.
 
-## ⚡ Quick Start (If You Already Have Credentials)
+## ⚡ Quick Start
 
-If you already have Supabase, OpenAI, and Google Cloud set up in `.env.local`:
-
-1. **Test build locally**: `npm run build`
-2. **Push to GitHub** (if not already)
-3. **Deploy to Vercel**: 
-   - Import repo → Add environment variables from `.env.local` → Deploy
-   - Copy these from `.env.local`: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_JWT_SECRET`, `OPENAI_API_KEY`
-   - For `NEXT_PUBLIC_APP_URL`: Use placeholder first, update after deploy
-   - For Google Cloud: Convert file path to JSON string (see Step 5)
-4. **Run migrations**: Use Supabase Dashboard SQL Editor (see Step 3.3)
-5. **Update `NEXT_PUBLIC_APP_URL`**: Set to your Vercel URL after first deploy
-6. **Link your user**: Sign up, then link to tenant via SQL (see Step 3.4)
-
-**See detailed steps below for complete instructions.**
+1. **Test build**: `npm run build`
+2. **Push to GitHub**
+3. **Deploy to Vercel**: Import repo → Add environment variables → Deploy
+4. **Run migrations**: Use Supabase Dashboard SQL Editor
+5. **Link user**: Sign up, then link to tenant via SQL
 
 ---
 
@@ -28,16 +19,11 @@ If you already have Supabase, OpenAI, and Google Cloud set up in `.env.local`:
 - Supabase account (free tier)
 - OpenAI account (free tier available, but limited)
 
-## 🎯 Free Tier Services Overview
+## Free Tier Limits
 
-| Service | Free Tier Limits | Cost After Free Tier |
-|---------|-----------------|---------------------|
-| **Vercel** | Unlimited projects, 100GB bandwidth/month | $20/month for Pro |
-| **Supabase** | 500MB database, 1GB storage, 2GB bandwidth | $25/month for Pro |
-| **OpenAI** | $5 free credits (one-time) | Pay-as-you-go (~$0.005/prompt) |
-| **Google Cloud Vision** | 1,000 requests/month free | $1.50 per 1,000 images |
-
-**Total Monthly Cost**: $0 (if you stay within free tiers)
+- **Vercel**: 100GB bandwidth/month
+- **Supabase**: 500MB database, 1GB storage
+- **OpenAI**: $5 free credits, then pay-as-you-go
 
 ---
 
@@ -195,51 +181,51 @@ supabase db push
 #### Option B: Using Supabase Dashboard (Easier)
 
 1. Go to Supabase Dashboard → **SQL Editor**
-2. Open each migration file from `supabase/migrations/` in order:
+2. Run each migration file from `supabase/migrations/` in order (all 17 files):
    - `202411080001_init.sql`
    - `202411080002_pending_invites.sql`
+   - `202411080003_intent_mappings.sql`
+   - `202411080004_source_documents.sql`
+   - `202411080005_ai_usage.sql`
+   - `202411080006_subscriptions.sql`
    - `202411080007_fix_app_users_rls.sql`
    - `202411080008_rag_embeddings.sql`
    - `202411080009_rag_rpc_function.sql`
-3. Run each SQL file in the SQL Editor (copy-paste and execute)
+   - `202411080010_additional_reports.sql`
+   - `202411080011_contacts.sql`
+   - `202411080012_bank_account_selector.sql`
+   - `202411080013_insights.sql`
+   - `202411080014_ar_ap_ageing.sql`
+   - `202411080015_inventory.sql`
+   - `202411080016_fixed_assets.sql`
+   - `202411080017_update_pnl_gain_loss.sql`
+3. After migrations, run `supabase/seed.sql` to create default accounts
 
 ### 3.4 Link Your First User
 
-After migrations, you need to link your Supabase Auth user to a tenant:
+After migrations, link your Supabase Auth user to a tenant:
 
 1. Sign up/login to your app (creates Auth user)
-2. Go to Supabase Dashboard → **SQL Editor**
-3. Run this SQL (replace `YOUR_EMAIL` with your actual email):
-
-```sql
--- Get your user ID
-SELECT id, email FROM auth.users WHERE email = 'YOUR_EMAIL';
-
--- Create a tenant (replace USER_ID with the id from above)
-INSERT INTO tenants (id, name, subscription_tier)
-VALUES (gen_random_uuid(), 'My Company', 'free')
-RETURNING id;
-
--- Link user to tenant (replace USER_ID and TENANT_ID)
-INSERT INTO app_users (id, tenant_id, email, role)
-VALUES (
-  'USER_ID_FROM_ABOVE',
-  'TENANT_ID_FROM_ABOVE',
-  'YOUR_EMAIL',
-  'admin'
-);
-```
-
-Or use the simpler approach - create a tenant first, then sign up:
+2. Get your Auth User ID from Supabase Dashboard → **Authentication** → **Users**
+3. Go to Supabase Dashboard → **SQL Editor**
+4. Run this SQL (replace `YOUR_AUTH_USER_ID` and `YOUR_EMAIL`):
 
 ```sql
 -- Create tenant
 INSERT INTO tenants (id, name, subscription_tier)
 VALUES (gen_random_uuid(), 'My Company', 'free')
-RETURNING id, name;
-```
+RETURNING id;
 
-Then manually link your user after signup using the SQL above.
+-- Link user to tenant (use the tenant ID from above)
+INSERT INTO app_users (id, auth_user_id, tenant_id, email, role)
+VALUES (
+  gen_random_uuid(),
+  'YOUR_AUTH_USER_ID',
+  'TENANT_ID_FROM_ABOVE',
+  'YOUR_EMAIL',
+  'admin'
+);
+```
 
 ---
 
@@ -340,145 +326,19 @@ cat path/to/your-key.json | jq -c
 
 ## Step 6: Update App URL
 
-After your first deployment:
-
-1. Go to Vercel → Your Project → **Settings** → **Environment Variables**
-2. Update `NEXT_PUBLIC_APP_URL` to your actual Vercel URL:
-   ```
-   https://your-project-name.vercel.app
-   ```
-3. Redeploy (Vercel will auto-redeploy when you update env vars, or trigger manually)
-
----
+After first deployment, update `NEXT_PUBLIC_APP_URL` in Vercel to your actual Vercel URL.
 
 ## Step 7: Verify Deployment
 
-### 7.1 Check Build Logs
-
-1. Go to Vercel → Your Project → **Deployments**
-2. Click on the latest deployment
-3. Check **Build Logs** for any errors
-
-### 7.2 Test Your App
-
 1. Visit your Vercel URL
-2. Try signing up/login
-3. Test creating an account
-4. Test AI prompt parsing
-5. Check Supabase Dashboard → **Table Editor** to see data
+2. Sign up/login
+3. Link user to tenant via SQL (see Step 3.4)
+4. Test the application
 
-### 7.3 Common Issues
+## Common Issues
 
-**Issue: "Invalid environment variables"**
-- Check all required env vars are set in Vercel
-- Make sure `NEXT_PUBLIC_APP_URL` matches your Vercel domain
-- Redeploy after adding env vars
-
-**Issue: "Cannot connect to Supabase"**
-- Verify `NEXT_PUBLIC_SUPABASE_URL` and keys are correct
-- Check Supabase project is active (not paused)
-
-**Issue: "OpenAI API error"**
-- Verify `OPENAI_API_KEY` is correct
-- Check OpenAI account has credits/payment method
-- Check rate limits in OpenAI dashboard
-
-**Issue: "Database error"**
-- Make sure migrations ran successfully
-- Check Supabase Dashboard → **Table Editor** to see if tables exist
-
----
-
-## Step 8: Custom Domain (Optional - Free)
-
-Vercel allows custom domains on the free tier:
-
-1. Go to Vercel → Your Project → **Settings** → **Domains**
-2. Add your domain (e.g., `accounting.yourdomain.com`)
-3. Follow DNS configuration instructions
-4. Vercel will provide SSL automatically (free)
-
----
-
-## Step 9: Monitoring & Maintenance
-
-### 9.1 Check Usage
-
-- **Vercel**: Dashboard shows bandwidth usage
-- **Supabase**: Dashboard → **Settings** → **Usage** shows database/storage usage
-- **OpenAI**: Dashboard → **Usage** shows API usage and costs
-
-### 9.2 Set Up Alerts
-
-- **Vercel**: Automatic email alerts for deployments
-- **Supabase**: Email alerts for usage limits (in Settings)
-- **OpenAI**: Usage alerts (in Settings → Limits)
-
-### 9.3 Database Backups
-
-Supabase free tier includes:
-- **Point-in-time recovery**: Last 7 days
-- **Manual backups**: Export via Dashboard → **Settings** → **Database**
-
----
-
-## 🎉 You're Live!
-
-Your AI Accounting Platform is now deployed and accessible worldwide!
-
-**Next Steps:**
-1. Share your Vercel URL with team members
-2. Create additional users via the invite system
-3. Set up your chart of accounts
-4. Start processing transactions!
-
----
-
-## 📊 Free Tier Limits Summary
-
-| Resource | Free Tier Limit | What Happens When Exceeded |
-|----------|----------------|---------------------------|
-| **Vercel Bandwidth** | 100GB/month | Site may slow down or require upgrade |
-| **Supabase Database** | 500MB | Database becomes read-only |
-| **Supabase Storage** | 1GB | Uploads will fail |
-| **OpenAI API** | $5 free credits | Requires payment method |
-| **Google Vision** | 1,000 requests/month | Charges apply ($1.50/1,000) |
-
-**Tip**: Monitor usage regularly to avoid surprises!
-
----
-
-## 🔒 Security Checklist
-
-- ✅ Never commit `.env.local` or API keys to git
-- ✅ Use Vercel environment variables (not hardcoded)
-- ✅ Keep `SUPABASE_SERVICE_ROLE_KEY` secret (server-side only)
-- ✅ Enable Supabase Row-Level Security (RLS) policies
-- ✅ Use strong database passwords
-- ✅ Enable 2FA on Vercel, Supabase, and OpenAI accounts
-
----
-
-## 💰 Cost Estimation
-
-**Free Tier Usage (Typical Small Business):**
-- Vercel: $0 (within 100GB bandwidth)
-- Supabase: $0 (within 500MB database)
-- OpenAI: ~$10-20/month (after free credits)
-- Google Vision: $0-5/month (if using OCR)
-
-**Total**: ~$10-25/month for a small business
-
----
-
-## 🆘 Need Help?
-
-- **Vercel Issues**: [Vercel Docs](https://vercel.com/docs)
-- **Supabase Issues**: [Supabase Docs](https://supabase.com/docs)
-- **OpenAI Issues**: [OpenAI Docs](https://platform.openai.com/docs)
-- **Project Issues**: Check `SETUP_GUIDE.md` for troubleshooting
-
----
-
-**Happy Deploying! 🚀**
+- **Invalid environment variables**: Check all required vars are set
+- **Cannot connect to Supabase**: Verify URL and keys are correct
+- **OpenAI API error**: Check API key and account credits
+- **Database error**: Ensure all 17 migrations ran successfully
 

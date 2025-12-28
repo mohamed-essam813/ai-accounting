@@ -1,5 +1,6 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { TabsContent, TabsTrigger } from "@/components/ui/tabs";
+import { ReportsTabs } from "@/components/reports/reports-tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
   getProfitAndLoss,
@@ -34,9 +35,10 @@ export const revalidate = 120;
 export default async function ReportsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ startDate?: string; endDate?: string }>;
+  searchParams: Promise<{ startDate?: string; endDate?: string; tab?: string }>;
 }) {
   const params = await searchParams;
+  const defaultTab = params.tab || "pnl";
   const [pnl, balanceSheet, trialBalance, cashFlow, journalLedger, vatReport, arAgeing, arAgeingSummary, apAgeing, apAgeingSummary] = await Promise.all([
     getProfitAndLoss(),
     getBalanceSheet(),
@@ -58,17 +60,7 @@ export default async function ReportsPage({
           Real-time financial reports derived from posted journal entries. Use filters to adjust date ranges.
         </p>
       </div>
-      <Tabs defaultValue="pnl" className="space-y-6">
-        <TabsList className="grid w-full grid-cols-8">
-          <TabsTrigger value="pnl">P&amp;L</TabsTrigger>
-          <TabsTrigger value="balance">Balance Sheet</TabsTrigger>
-          <TabsTrigger value="cashflow">Cash Flow</TabsTrigger>
-          <TabsTrigger value="ledger">Journal Ledger</TabsTrigger>
-          <TabsTrigger value="vat">VAT Report</TabsTrigger>
-          <TabsTrigger value="trial">Trial Balance</TabsTrigger>
-          <TabsTrigger value="ar">AR Ageing</TabsTrigger>
-          <TabsTrigger value="ap">AP Ageing</TabsTrigger>
-        </TabsList>
+      <ReportsTabs defaultTab={defaultTab}>
         <TabsContent value="pnl">
           <Card>
             <CardHeader className="flex flex-row items-center justify-between">
@@ -359,7 +351,7 @@ export default async function ReportsPage({
             </CardContent>
           </Card>
         </TabsContent>
-      </Tabs>
+      </ReportsTabs>
     </div>
   );
 }

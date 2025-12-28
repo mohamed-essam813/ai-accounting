@@ -20,6 +20,7 @@ export async function saveInsights(insights: Insight[]): Promise<void> {
   const tenantId = user.tenant.id;
 
   // Ensure all insights have tenant_id
+  // Engineering Guide Section 3.4: Store all insight output contract fields in context_json
   const insightsToInsert: InsightsInsert[] = insights.map((insight) => ({
     tenant_id: tenantId,
     journal_entry_id: insight.journal_entry_id || undefined,
@@ -27,7 +28,16 @@ export async function saveInsights(insights: Insight[]): Promise<void> {
     category: insight.category,
     level: insight.level,
     insight_text: insight.insight_text,
-    context_json: (insight.context_json as Database["public"]["Tables"]["insights"]["Row"]["context_json"]) || null,
+    context_json: {
+      ...(insight.context_json || {}),
+      // Engineering Guide Section 3.4: Required insight output contract fields
+      insight_type: insight.insight_type,
+      what_changed: insight.what_changed,
+      why_it_changed: insight.why_it_changed,
+      business_impact: insight.business_impact,
+      confidence_level: insight.confidence_level,
+      drill_down_targets: insight.drill_down_targets,
+    } as Database["public"]["Tables"]["insights"]["Row"]["context_json"],
   }));
 
   const table = supabase.from("insights") as unknown as {
@@ -77,17 +87,27 @@ export async function getInsightsForJournalEntry(
     return [];
   }
 
-  return (data || []).map((row) => ({
-    id: row.id,
-    tenant_id: row.tenant_id,
-    journal_entry_id: row.journal_entry_id || undefined,
-    draft_id: row.draft_id || undefined,
-    category: row.category as Insight["category"],
-    level: row.level as Insight["level"],
-    insight_text: row.insight_text,
-    context_json: (row.context_json as Record<string, unknown>) || undefined,
-    created_at: row.created_at,
-  }));
+  return (data || []).map((row) => {
+    const contextJson = (row.context_json as Record<string, unknown>) || {};
+    return {
+      id: row.id,
+      tenant_id: row.tenant_id,
+      journal_entry_id: row.journal_entry_id || undefined,
+      draft_id: row.draft_id || undefined,
+      category: row.category as Insight["category"],
+      level: row.level as Insight["level"],
+      insight_text: row.insight_text,
+      context_json: contextJson,
+      // Engineering Guide Section 3.4: Extract insight output contract fields
+      insight_type: contextJson.insight_type as string | undefined,
+      what_changed: contextJson.what_changed as string | undefined,
+      why_it_changed: contextJson.why_it_changed as string | undefined,
+      business_impact: contextJson.business_impact as string | undefined,
+      confidence_level: contextJson.confidence_level as "high" | "medium" | "low" | undefined,
+      drill_down_targets: contextJson.drill_down_targets as string[] | undefined,
+      created_at: row.created_at,
+    };
+  });
 }
 
 export async function getRecentPrimaryInsights(limit: number = 10): Promise<Insight[]> {
@@ -135,16 +155,26 @@ export async function getRecentPrimaryInsights(limit: number = 10): Promise<Insi
     return [];
   }
 
-  return (data || []).map((row) => ({
-    id: row.id,
-    tenant_id: row.tenant_id,
-    journal_entry_id: row.journal_entry_id || undefined,
-    draft_id: row.draft_id || undefined,
-    category: row.category as Insight["category"],
-    level: "primary" as const,
-    insight_text: row.insight_text,
-    context_json: (row.context_json as Record<string, unknown>) || undefined,
-    created_at: row.created_at,
-  }));
+  return (data || []).map((row) => {
+    const contextJson = (row.context_json as Record<string, unknown>) || {};
+    return {
+      id: row.id,
+      tenant_id: row.tenant_id,
+      journal_entry_id: row.journal_entry_id || undefined,
+      draft_id: row.draft_id || undefined,
+      category: row.category as Insight["category"],
+      level: "primary" as const,
+      insight_text: row.insight_text,
+      context_json: contextJson,
+      // Engineering Guide Section 3.4: Extract insight output contract fields
+      insight_type: contextJson.insight_type as string | undefined,
+      what_changed: contextJson.what_changed as string | undefined,
+      why_it_changed: contextJson.why_it_changed as string | undefined,
+      business_impact: contextJson.business_impact as string | undefined,
+      confidence_level: contextJson.confidence_level as "high" | "medium" | "low" | undefined,
+      drill_down_targets: contextJson.drill_down_targets as string[] | undefined,
+      created_at: row.created_at,
+    };
+  });
 }
 

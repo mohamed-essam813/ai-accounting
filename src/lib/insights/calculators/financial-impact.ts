@@ -99,10 +99,39 @@ export async function generateFinancialImpactInsight(
     return null;
   }
 
+  // Determine what changed and why
+  let whatChanged = "";
+  let whyChanged = "";
+  let businessImpact = "";
+
+  if (intent === "create_invoice" && financial_delta.receivable_change) {
+    whatChanged = `Receivables increased by ${formatCurrency(financial_delta.receivable_change, currency)}`;
+    whyChanged = "Invoice issued to customer";
+    businessImpact = "Profit increased, but cash has not yet changed";
+  } else if (intent === "create_bill" && financial_delta.payable_change) {
+    whatChanged = `Payables increased by ${formatCurrency(financial_delta.payable_change, currency)}`;
+    whyChanged = "Bill received from supplier";
+    businessImpact = "Expenses increased, but cash has not yet gone out";
+  } else if (intent === "record_payment" && financial_delta.cash_change) {
+    whatChanged = `Cash ${financial_delta.cash_change > 0 ? "increased" : "decreased"} by ${formatCurrency(Math.abs(financial_delta.cash_change), currency)}`;
+    whyChanged = "Payment recorded";
+    businessImpact = financial_delta.cash_change > 0 ? "Cash position improved" : "Cash position decreased";
+  } else if (changes.length > 0) {
+    whatChanged = changes[0];
+    whyChanged = "Transaction posted";
+    businessImpact = "Financial position changed";
+  }
+
   return {
     category: "financial_impact",
     level: "primary",
     insight_text: formatInsightText(insightText),
+    insight_type: "financial_impact",
+    what_changed: whatChanged,
+    why_it_changed: whyChanged,
+    business_impact: businessImpact,
+    confidence_level: "high",
+    drill_down_targets: ["/reports"],
     context_json: {
       financial_delta,
       intent,

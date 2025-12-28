@@ -34,10 +34,10 @@ export function FinancialPulseCard({ pulse }: Props) {
 
   return (
     <Card className={`${bgColorMap[pulse.severity]} border-2`}>
-      <CardContent>
-        <div className="flex items-start gap-3">
-          <Icon className={`h-5 w-5 ${colorMap[pulse.severity]} mt-0.5 flex-shrink-0`} />
-          <p className={`text-base leading-relaxed ${pulse.severity === "urgent" ? "font-semibold" : ""}`}>
+      <CardContent className="py-4 px-6">
+        <div className="flex items-center gap-3">
+          <Icon className={`h-5 w-5 ${colorMap[pulse.severity]} flex-shrink-0`} />
+          <p className={`text-base flex-1 ${pulse.severity === "urgent" ? "font-semibold" : pulse.severity === "attention" ? "font-medium" : ""}`}>
             {pulse.text}
           </p>
         </div>

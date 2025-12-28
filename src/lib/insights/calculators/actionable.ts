@@ -62,10 +62,41 @@ export async function generateActionableInsight(
     return null;
   }
 
+  // Determine what changed and why
+  let whatChanged = "";
+  let whyChanged = "";
+  let businessImpact = "";
+
+  if (intent === "create_invoice" && counterparty) {
+    whatChanged = "New invoice created requiring follow-up";
+    whyChanged = "Invoice issued to customer";
+    businessImpact = "Timely payment collection needed to maintain cash flow";
+  } else if (intent === "create_bill" && financial_delta?.payable_change) {
+    const totalPayables = (previous_state?.total_payables || 0) + financial_delta.payable_change;
+    whatChanged = `Payables increased to ${formatCurrency(totalPayables, currency)}`;
+    whyChanged = "Bill received from supplier";
+    businessImpact = totalPayables > 20000 ? "Payment planning required to manage cash flow" : "Payables manageable";
+  } else if (previous_state?.cash_balance !== undefined && financial_delta?.cash_change) {
+    const newCashBalance = previous_state.cash_balance + financial_delta.cash_change;
+    whatChanged = `Cash balance is ${formatCurrency(newCashBalance, currency)}`;
+    whyChanged = "Cash position changed";
+    businessImpact = newCashBalance < 5000 ? "Low cash requires immediate action" : "Cash position stable";
+  } else if (financial_delta?.tax_change && financial_delta.tax_change > 0) {
+    whatChanged = `Tax liability increased by ${formatCurrency(financial_delta.tax_change, currency)}`;
+    whyChanged = "Taxable transaction recorded";
+    businessImpact = "Funds need to be set aside for tax payment";
+  }
+
   return {
     category: "actionable_next_step",
     level,
     insight_text: formatInsightText(insightText),
+    insight_type: "actionable_next_step",
+    what_changed: whatChanged || "Action required",
+    why_it_changed: whyChanged || "Transaction requires follow-up",
+    business_impact: businessImpact || "Next steps needed to maintain financial health",
+    confidence_level: "high",
+    drill_down_targets: ["/contacts", "/reports"],
     context_json: {
       intent,
       amount,

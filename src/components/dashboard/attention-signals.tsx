@@ -27,7 +27,7 @@ export function AttentionSignals({ signals }: Props) {
   }
 
   return (
-    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
       {signals.map((signal) => (
         <AttentionSignalCard key={signal.id} signal={signal} />
       ))}
@@ -64,24 +64,40 @@ function AttentionSignalCard({ signal }: { signal: AttentionSignal }) {
   const Icon = config.icon;
 
   const content = (
-    <Card className={`${config.bgColor} ${config.borderColor} border hover:shadow-md transition-shadow`}>
+    <Card className={`${config.bgColor} ${config.borderColor} border-2 hover:shadow-lg hover:scale-[1.02] transition-all duration-200 cursor-pointer group`}>
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between">
-          <CardTitle className="text-sm font-medium">{signal.title}</CardTitle>
-          <Badge variant={config.badgeVariant} className="text-xs">
+          <CardTitle className="text-sm font-semibold">{signal.title}</CardTitle>
+          <Badge variant={config.badgeVariant} className="text-xs capitalize">
             {signal.status}
           </Badge>
         </div>
       </CardHeader>
-      <CardContent className="space-y-2">
-        <div className="flex items-start gap-2">
-          <Icon className={`h-4 w-4 ${config.color} mt-0.5 flex-shrink-0`} />
-          <p className="text-sm text-muted-foreground leading-relaxed">{signal.explanation}</p>
+      <CardContent className="space-y-3">
+        <div className="flex items-start gap-3">
+          <div className={`p-1.5 rounded-md ${config.bgColor} ${config.borderColor} border`}>
+            <Icon className={`h-4 w-4 ${config.color} flex-shrink-0`} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm text-muted-foreground leading-relaxed">
+              {signal.explanation.split(/(AED\s?[\d,]+\.?\d*|\$[\d,]+\.?\d*|[\d,]+\.?\d*%)/g).map((part, i) => {
+                // Check if this part is a currency amount or percentage
+                if (/^(AED\s?[\d,]+\.?\d*|\$[\d,]+\.?\d*|[\d,]+\.?\d*%)$/.test(part)) {
+                  return (
+                    <span key={i} className="font-bold text-foreground text-base">
+                      {part}
+                    </span>
+                  );
+                }
+                return <span key={i}>{part}</span>;
+              })}
+            </p>
+          </div>
         </div>
         {signal.drillDownPath && (
-          <div className="flex items-center gap-1 text-xs text-muted-foreground pt-1">
+          <div className="flex items-center gap-1.5 text-xs font-medium text-primary pt-2 group-hover:gap-2 transition-all">
             <span>View details</span>
-            <ArrowRight className="h-3 w-3" />
+            <ArrowRight className="h-3.5 w-3.5 group-hover:translate-x-0.5 transition-transform" />
           </div>
         )}
       </CardContent>

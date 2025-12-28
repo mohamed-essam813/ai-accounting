@@ -79,10 +79,35 @@ export async function generateCashFlowInsight(
     return null;
   }
 
+  // Determine what changed and why
+  let whatChanged = "";
+  let whyChanged = "";
+  let businessImpact = "";
+
+  if (intent === "create_invoice") {
+    whatChanged = "Receivables increased, cash unchanged";
+    whyChanged = "Invoice issued but payment not yet received";
+    businessImpact = "Profit increased, cash will increase when customer pays";
+  } else if (intent === "create_bill") {
+    whatChanged = "Payables increased, cash unchanged";
+    whyChanged = "Bill received but payment not yet made";
+    businessImpact = "Expenses increased, cash will decrease when payment is made";
+  } else if (intent === "record_payment" && financial_delta?.cash_change) {
+    whatChanged = `Cash ${financial_delta.cash_change > 0 ? "increased" : "decreased"} by ${formatCurrency(Math.abs(financial_delta.cash_change), currency)}`;
+    whyChanged = "Payment recorded";
+    businessImpact = financial_delta.cash_change > 0 ? "Cash position improved" : "Cash position decreased";
+  }
+
   return {
     category: "cash_flow",
     level,
     insight_text: formatInsightText(insightText),
+    insight_type: "cash_flow",
+    what_changed: whatChanged,
+    why_it_changed: whyChanged,
+    business_impact: businessImpact,
+    confidence_level: "high",
+    drill_down_targets: ["/insights/receivables", "/insights/payables"],
     context_json: {
       intent,
       cash_change: financial_delta?.cash_change || 0,

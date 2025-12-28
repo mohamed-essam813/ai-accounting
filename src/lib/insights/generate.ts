@@ -16,10 +16,21 @@ const MAX_PRIMARY_INSIGHTS = 2;
 /**
  * Generate insights for a transaction
  * PRD Rule: Max 2 insights per action, plain language only, always answer "why this matters"
+ * Engineering Guide Section 3.1: Only generate if meaningful change detected
  */
 export async function generateInsights(
   context: InsightContext & { tenant_id: string },
 ): Promise<GeneratedInsights> {
+  // Engineering Guide Section 3.1: Check if meaningful change occurred
+  // If nothing changed meaningfully → no insight (silence is valid)
+  if (!hasMeaningfulChange(context)) {
+    return {
+      primary: [],
+      secondary: [],
+      deep_dive: [],
+    };
+  }
+
   const insights: GeneratedInsights = {
     primary: [],
     secondary: [],
@@ -87,17 +98,77 @@ export async function generateInsights(
 }
 
 /**
+ * Engineering Guide Section 3.1: Insight Trigger Conditions
+ * An insight is generated only if at least one of the following changes:
+ * - Ageing bucket movement
+ * - Trend direction change
+ * - Risk threshold crossed
+ * - Cash impact delta detected
+ */
+function hasMeaningfulChange(context: InsightContext & { tenant_id: string }): boolean {
+  const { financial_delta, previous_state } = context;
+
+  // Check for cash impact delta
+  if (financial_delta?.cash_change && Math.abs(financial_delta.cash_change) > 0) {
+    return true;
+  }
+
+  // Check for risk threshold crossed (cash balance)
+  if (previous_state?.cash_balance !== undefined && financial_delta?.cash_change) {
+    const newCashBalance = previous_state.cash_balance + financial_delta.cash_change;
+    if (newCashBalance < 0 || newCashBalance < 5000) {
+      return true; // Risk threshold crossed
+    }
+  }
+
+  // Check for ageing bucket movement (for AR/AP)
+  if (context.intent === "create_invoice" || context.intent === "create_bill") {
+    // Ageing changes will be checked in the specific calculators
+    // But we know there's a transaction, so allow generation
+    return true;
+  }
+
+  // Check for revenue/expense changes
+  if (financial_delta?.revenue_change && Math.abs(financial_delta.revenue_change) > 0) {
+    return true;
+  }
+  if (financial_delta?.expense_change && Math.abs(financial_delta.expense_change) > 0) {
+    return true;
+  }
+
+  // Check for tax changes
+  if (financial_delta?.tax_change && Math.abs(financial_delta.tax_change) > 0) {
+    return true;
+  }
+
+  // Check for receivables/payables changes
+  if (financial_delta?.receivable_change && Math.abs(financial_delta.receivable_change) > 0) {
+    return true;
+  }
+  if (financial_delta?.payable_change && Math.abs(financial_delta.payable_change) > 0) {
+    return true;
+  }
+
+  // If no meaningful change detected, return false (silence is valid)
+  return false;
+}
+
+/**
  * Format insight text to ensure plain language
  * PRD: "Plain language only"
+ * UX Composition Section 2.2: Must use plain business language, never say "Dr/Cr", "AR increased"
  */
 export function formatInsightText(text: string): string {
   // Remove accounting jargon, ensure clarity
   return text
-    .replace(/DR\s+/gi, "debit ")
-    .replace(/CR\s+/gi, "credit ")
-    .replace(/AR\s+/gi, "accounts receivable ")
-    .replace(/AP\s+/gi, "accounts payable ")
+    .replace(/DR\s+/gi, "")
+    .replace(/CR\s+/gi, "")
+    .replace(/AR\s+/gi, "receivables ")
+    .replace(/AP\s+/gi, "payables ")
+    .replace(/Accounts Receivable/gi, "receivables")
+    .replace(/Accounts Payable/gi, "payables")
     .replace(/P&L/gi, "profit and loss")
+    .replace(/\s+/g, " ") // Remove extra spaces
     .trim();
 }
 

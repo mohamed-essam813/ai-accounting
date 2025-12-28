@@ -66,10 +66,42 @@ export async function generateTrendInsight(
     return null;
   }
 
+  // Determine what changed and why
+  let whatChanged = "";
+  let whyChanged = "";
+  let businessImpact = "";
+
+  if (intent === "create_invoice" && financial_delta?.revenue_change) {
+    const revenueYtd = (previous_state?.revenue_ytd || 0) + financial_delta.revenue_change;
+    const percentage = revenueYtd > 0 ? (financial_delta.revenue_change / revenueYtd) * 100 : 0;
+    whatChanged = `Revenue increased by ${formatCurrency(financial_delta.revenue_change, currency)} (${percentage.toFixed(0)}% of YTD)`;
+    whyChanged = "Invoice issued";
+    businessImpact = percentage > 20 ? "Significant transaction for business" : "Revenue momentum maintained";
+  } else if (intent === "create_bill" && financial_delta?.expense_change) {
+    const expensesYtd = (previous_state?.expenses_ytd || 0) + financial_delta.expense_change;
+    const percentage = expensesYtd > 0 ? (financial_delta.expense_change / expensesYtd) * 100 : 0;
+    whatChanged = `Expenses increased by ${formatCurrency(financial_delta.expense_change, currency)} (${percentage.toFixed(0)}% of YTD)`;
+    whyChanged = "Bill received";
+    businessImpact = percentage > 15 ? "Expense growth requires monitoring" : "Expense trend normal";
+  } else if (previous_state?.revenue_ytd && previous_state?.expenses_ytd) {
+    const revenueYtd = previous_state.revenue_ytd + (financial_delta?.revenue_change || 0);
+    const expensesYtd = previous_state.expenses_ytd + (financial_delta?.expense_change || 0);
+    const expenseRatio = expensesYtd > 0 && revenueYtd > 0 ? (expensesYtd / revenueYtd) * 100 : 0;
+    whatChanged = `Expense ratio is ${expenseRatio.toFixed(0)}% of revenue`;
+    whyChanged = "Expenses growing relative to revenue";
+    businessImpact = expenseRatio > 80 ? "Expenses growing faster than revenue—consider cost optimization" : "Expense ratio manageable";
+  }
+
   return {
     category: "trend_behavior",
     level,
     insight_text: formatInsightText(insightText),
+    insight_type: "trend_behavior",
+    what_changed: whatChanged || "Financial trend detected",
+    why_it_changed: whyChanged || "Transaction pattern",
+    business_impact: businessImpact || "Monitor trend for business impact",
+    confidence_level: "medium",
+    drill_down_targets: ["/reports"],
     context_json: {
       intent,
       amount,

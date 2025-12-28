@@ -9,6 +9,7 @@ import {
   Waypoints,
   BookOpen,
   Users,
+  Package,
 } from "lucide-react";
 
 type NavItem = {
@@ -48,6 +49,12 @@ export const mainNavigation: NavItem[] = [
     href: "/contacts",
     icon: Users,
     description: "Manage customers, vendors, and other contacts with auto-generated codes.",
+  },
+  {
+    title: "Inventory",
+    href: "/inventory",
+    icon: Package,
+    description: "Track inventory items with FIFO or Weighted Average valuation.",
   },
   {
     title: "Journals",

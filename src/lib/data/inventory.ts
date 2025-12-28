@@ -1,0 +1,283 @@
+/**
+ * Inventory Data Access Layer
+ * MVP Feedback Section 7: Inventory (FIFO / Weighted Average)
+ */
+
+import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { getCurrentUser } from "./users";
+import type { Database } from "@/lib/database.types";
+
+type InventoryItemRow = Database["public"]["Tables"]["inventory_items"]["Row"];
+type InventoryTransactionRow = Database["public"]["Tables"]["inventory_transactions"]["Row"];
+type InventoryBalanceRow = Database["public"]["Tables"]["inventory_balances"]["Row"];
+
+export interface InventoryItem {
+  id: string;
+  tenant_id: string;
+  name: string;
+  sku: string | null;
+  description: string | null;
+  unit: string;
+  valuation_method: "fifo" | "weighted_average";
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface InventoryTransaction {
+  id: string;
+  tenant_id: string;
+  item_id: string;
+  transaction_type: "purchase" | "sale" | "adjustment" | "return";
+  date: string;
+  quantity: number;
+  unit_cost: number;
+  total_cost: number;
+  batch_number: number | null;
+  cogs_amount: number | null;
+  journal_entry_id: string | null;
+  draft_id: string | null;
+  notes: string | null;
+  created_at: string;
+}
+
+export interface InventoryBalance {
+  id: string;
+  tenant_id: string;
+  item_id: string;
+  quantity: number;
+  average_cost: number | null;
+  total_value: number;
+  last_transaction_date: string | null;
+  updated_at: string;
+}
+
+export interface InventorySummary {
+  item_id: string;
+  item_name: string;
+  sku: string | null;
+  valuation_method: "fifo" | "weighted_average";
+  quantity: number;
+  average_cost: number | null;
+  total_value: number;
+  last_transaction_date: string | null;
+  quantity_0_30: number;
+  quantity_31_60: number;
+  quantity_61_90: number;
+  quantity_90_plus: number;
+}
+
+/**
+ * Get all inventory items for the current tenant
+ */
+export async function getInventoryItems(): Promise<InventoryItem[]> {
+  const user = await getCurrentUser();
+  if (!user?.tenant) {
+    return [];
+  }
+
+  const supabase = await createServerSupabaseClient();
+  const table = supabase.from("inventory_items") as unknown as {
+    select: (columns: string) => {
+      eq: (column: string, value: string) => {
+        order: (column: string) => Promise<{
+          data: InventoryItemRow[] | null;
+          error: unknown;
+        }>;
+      };
+    };
+  };
+
+  const { data, error } = await table
+    .select("*")
+    .eq("tenant_id", user.tenant.id)
+    .order("name");
+
+  if (error) {
+    console.error("Failed to fetch inventory items:", error);
+    return [];
+  }
+
+  return (data || []).map((row) => ({
+    id: row.id,
+    tenant_id: row.tenant_id,
+    name: row.name,
+    sku: row.sku,
+    description: row.description,
+    unit: row.unit,
+    valuation_method: row.valuation_method as "fifo" | "weighted_average",
+    is_active: row.is_active,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  }));
+}
+
+/**
+ * Get inventory summary (with ageing breakdown)
+ */
+export async function getInventorySummary(): Promise<InventorySummary[]> {
+  const user = await getCurrentUser();
+  if (!user?.tenant) {
+    return [];
+  }
+
+  const supabase = await createServerSupabaseClient();
+  const view = supabase.from("v_inventory_summary") as unknown as {
+    select: (columns: string) => {
+      eq: (column: string, value: string) => {
+        order: (column: string) => Promise<{
+          data: Array<{
+            tenant_id: string;
+            item_id: string;
+            item_name: string;
+            sku: string | null;
+            valuation_method: string;
+            quantity: number;
+            average_cost: number | null;
+            total_value: number;
+            last_transaction_date: string | null;
+            quantity_0_30: number;
+            quantity_31_60: number;
+            quantity_61_90: number;
+            quantity_90_plus: number;
+          }> | null;
+          error: unknown;
+        }>;
+      };
+    };
+  };
+
+  const { data, error } = await view
+    .select("*")
+    .eq("tenant_id", user.tenant.id)
+    .order("item_name");
+
+  if (error) {
+    console.error("Failed to fetch inventory summary:", error);
+    return [];
+  }
+
+  return (data || []).map((row) => ({
+    item_id: row.item_id,
+    item_name: row.item_name,
+    sku: row.sku,
+    valuation_method: row.valuation_method as "fifo" | "weighted_average",
+    quantity: Number(row.quantity),
+    average_cost: row.average_cost ? Number(row.average_cost) : null,
+    total_value: Number(row.total_value),
+    last_transaction_date: row.last_transaction_date,
+    quantity_0_30: Number(row.quantity_0_30),
+    quantity_31_60: Number(row.quantity_31_60),
+    quantity_61_90: Number(row.quantity_61_90),
+    quantity_90_plus: Number(row.quantity_90_plus),
+  }));
+}
+
+/**
+ * Get inventory balance for a specific item
+ */
+export async function getInventoryBalance(itemId: string): Promise<InventoryBalance | null> {
+  const user = await getCurrentUser();
+  if (!user?.tenant) {
+    return null;
+  }
+
+  const supabase = await createServerSupabaseClient();
+  const table = supabase.from("inventory_balances") as unknown as {
+    select: (columns: string) => {
+      eq: (column: string, value: string) => {
+        eq: (column: string, value: string) => {
+          maybeSingle: () => Promise<{
+            data: InventoryBalanceRow | null;
+            error: unknown;
+          }>;
+        };
+      };
+    };
+  };
+
+  const { data, error } = await table
+    .select("*")
+    .eq("tenant_id", user.tenant.id)
+    .eq("item_id", itemId)
+    .maybeSingle();
+
+  if (error) {
+    console.error("Failed to fetch inventory balance:", error);
+    return null;
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return {
+    id: data.id,
+    tenant_id: data.tenant_id,
+    item_id: data.item_id,
+    quantity: Number(data.quantity),
+    average_cost: data.average_cost ? Number(data.average_cost) : null,
+    total_value: Number(data.total_value),
+    last_transaction_date: data.last_transaction_date,
+    updated_at: data.updated_at,
+  };
+}
+
+/**
+ * Get inventory transactions for an item
+ */
+export async function getInventoryTransactions(
+  itemId: string,
+  limit: number = 50,
+): Promise<InventoryTransaction[]> {
+  const user = await getCurrentUser();
+  if (!user?.tenant) {
+    return [];
+  }
+
+  const supabase = await createServerSupabaseClient();
+  const table = supabase.from("inventory_transactions") as unknown as {
+    select: (columns: string) => {
+      eq: (column: string, value: string) => {
+        eq: (column: string, value: string) => {
+          order: (column: string, options?: { ascending?: boolean }) => {
+            limit: (count: number) => Promise<{
+              data: InventoryTransactionRow[] | null;
+              error: unknown;
+            }>;
+          };
+        };
+      };
+    };
+  };
+
+  const { data, error } = await table
+    .select("*")
+    .eq("tenant_id", user.tenant.id)
+    .eq("item_id", itemId)
+    .order("date", { ascending: false })
+    .limit(limit);
+
+  if (error) {
+    console.error("Failed to fetch inventory transactions:", error);
+    return [];
+  }
+
+  return (data || []).map((row) => ({
+    id: row.id,
+    tenant_id: row.tenant_id,
+    item_id: row.item_id,
+    transaction_type: row.transaction_type as "purchase" | "sale" | "adjustment" | "return",
+    date: row.date,
+    quantity: Number(row.quantity),
+    unit_cost: Number(row.unit_cost),
+    total_cost: Number(row.total_cost),
+    batch_number: row.batch_number,
+    cogs_amount: row.cogs_amount ? Number(row.cogs_amount) : null,
+    journal_entry_id: row.journal_entry_id,
+    draft_id: row.draft_id,
+    notes: row.notes,
+    created_at: row.created_at,
+  }));
+}
+

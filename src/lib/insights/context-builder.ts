@@ -8,6 +8,7 @@ import { listAccounts } from "@/lib/data/accounts";
 import { getProfitAndLoss, getBalanceSheet } from "@/lib/data/reports";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { getCurrentUser } from "@/lib/data/users";
+import { getARAgeingSummary, getAPAgeingSummary } from "@/lib/data/ageing";
 import type { Database } from "@/lib/database.types";
 
 type JournalEntryRow = Database["public"]["Tables"]["journal_entries"]["Row"];
@@ -209,9 +210,11 @@ async function getPreviousFinancialState(
   try {
     // Get P&L and Balance Sheet before this date
     // This is a simplified version - in production, you'd query with date filters
-    const [pnl, balanceSheet] = await Promise.all([
+    const [pnl, balanceSheet, arAgeingSummary, apAgeingSummary] = await Promise.all([
       getProfitAndLoss(),
       getBalanceSheet(),
+      getARAgeingSummary(),
+      getAPAgeingSummary(),
     ]);
 
     // Get cash balance from trial balance
@@ -263,12 +266,38 @@ async function getPreviousFinancialState(
         ? Number(payablesAccount.total_credit) - Number(payablesAccount.total_debit)
         : 0;
 
+    // Calculate AR ageing totals (Engineering Guide Section 3.2)
+    const arAgeingTotal = arAgeingSummary.reduce(
+      (acc, item) => ({
+        current_0_30: acc.current_0_30 + item.total_current,
+        days_31_60: acc.days_31_60 + item.total_31_60,
+        days_61_90: acc.days_61_90 + item.total_61_90,
+        days_90_plus: acc.days_90_plus + item.total_90_plus,
+        total_outstanding: acc.total_outstanding + item.total_outstanding,
+      }),
+      { current_0_30: 0, days_31_60: 0, days_61_90: 0, days_90_plus: 0, total_outstanding: 0 },
+    );
+
+    // Calculate AP ageing totals (Engineering Guide Section 3.3)
+    const apAgeingTotal = apAgeingSummary.reduce(
+      (acc, item) => ({
+        current_0_30: acc.current_0_30 + item.total_current,
+        days_31_60: acc.days_31_60 + item.total_31_60,
+        days_61_90: acc.days_61_90 + item.total_61_90,
+        days_90_plus: acc.days_90_plus + item.total_90_plus,
+        total_outstanding: acc.total_outstanding + item.total_outstanding,
+      }),
+      { current_0_30: 0, days_31_60: 0, days_61_90: 0, days_90_plus: 0, total_outstanding: 0 },
+    );
+
     return {
       cash_balance: cashBalance,
       total_receivables: totalReceivables,
       total_payables: totalPayables,
       revenue_ytd: pnl?.total_revenue ? Number(pnl.total_revenue) : 0,
       expenses_ytd: pnl?.total_expense ? Number(pnl.total_expense) : 0,
+      ar_ageing: arAgeingTotal,
+      ap_ageing: apAgeingTotal,
     };
   } catch (error) {
     console.error("Failed to get previous financial state:", error);
