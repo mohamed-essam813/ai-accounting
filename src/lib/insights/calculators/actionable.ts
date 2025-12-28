@@ -5,6 +5,7 @@
 
 import type { Insight, InsightContext } from "../types";
 import { formatInsightText } from "../generate";
+import { formatCurrency } from "@/lib/format";
 
 export async function generateActionableInsight(
   context: InsightContext,
