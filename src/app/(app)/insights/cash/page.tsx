@@ -56,9 +56,11 @@ export default async function CashInsightPage() {
   ]);
 
   const netCashFlow = Number(cashFlow?.net_cash_flow ?? 0);
-  const operatingCashFlow = Number(cashFlow?.operating_cash_flow ?? 0);
-  const investingCashFlow = Number(cashFlow?.investing_cash_flow ?? 0);
-  const financingCashFlow = Number(cashFlow?.financing_cash_flow ?? 0);
+  // Note: Operating/Investing/Financing breakdown not available in current view
+  // Using net cash flow as approximation for operating activities
+  const operatingCashFlow = netCashFlow;
+  const investingCashFlow = 0;
+  const financingCashFlow = 0;
 
   // Generate insight summary (UX Composition Section 3, Screen 2, Section A)
   let insightSummary = "";
