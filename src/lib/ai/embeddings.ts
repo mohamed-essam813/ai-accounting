@@ -89,33 +89,31 @@ export async function retrieveRelevantContext(
   const supabase = createServiceSupabaseClient();
 
   // Use RPC function for vector similarity search
-  // Type assertion to fix Supabase type inference
-  type MatchEmbeddingsArgs = Database["public"]["Functions"]["match_embeddings"]["Args"];
-  const rpcFn = supabase.rpc as unknown as (
-    name: "match_embeddings",
-    args: MatchEmbeddingsArgs,
-  ) => Promise<{
-    data: Database["public"]["Functions"]["match_embeddings"]["Returns"] | null;
-    error: unknown;
-  }>;
-  const { data, error } = await rpcFn("match_embeddings", {
-    query_embedding: embeddingString,
-    match_tenant_id: tenantId,
-    match_threshold: threshold,
-    match_count: limit,
-    entity_types: options.entityTypes?.length ? options.entityTypes : undefined,
-  });
+  // Direct RPC call with proper error handling
+  try {
+    const { data, error } = await supabase.rpc("match_embeddings", {
+      query_embedding: embeddingString,
+      match_tenant_id: tenantId,
+      match_threshold: threshold,
+      match_count: limit,
+      entity_types: options.entityTypes?.length ? options.entityTypes : null,
+    } as any); // Type assertion needed as database types may not include this function yet
 
-  if (error) {
-    console.error("Vector search error:", error);
-    // Fallback: return empty array if vector search fails
+    if (error) {
+      console.error("Vector search error:", error);
+      // Fallback: return empty array if vector search fails
+      return [];
+    }
+
+    return (data ?? []).map((item: { content: string; metadata: unknown; similarity: number }) => ({
+      content: item.content,
+      metadata: (item.metadata as Record<string, unknown>) ?? null,
+      similarity: item.similarity,
+    }));
+  } catch (rpcError) {
+    console.error("RPC call failed:", rpcError);
+    // Fallback: return empty array if RPC fails
     return [];
   }
-
-  return (data ?? []).map((item: { content: string; metadata: unknown; similarity: number }) => ({
-    content: item.content,
-    metadata: (item.metadata as Record<string, unknown>) ?? null,
-    similarity: item.similarity,
-  }));
 }
 

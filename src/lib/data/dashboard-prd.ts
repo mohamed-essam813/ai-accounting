@@ -7,6 +7,17 @@ import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { getCurrentUser } from "./users";
 import { getProfitAndLoss, getBalanceSheet, getCashFlow } from "./reports";
 import { getRecentPrimaryInsights } from "./insights";
+import { getARAgeingSummary, getAPAgeingSummary } from "./ageing";
+import {
+  getPeriodFinancialData,
+  type PeriodFinancialData,
+} from "./period-comparison";
+import {
+  getCurrentMonth,
+  getPreviousMonth,
+  calculateComparison,
+  formatComparison,
+} from "@/lib/utils/period-comparison";
 import type { Database } from "@/lib/database.types";
 
 type TrialBalanceView = Database["public"]["Views"]["v_trial_balance"]["Row"];
@@ -127,11 +138,11 @@ export async function getAttentionSignals(): Promise<AttentionSignal[]> {
     return [];
   }
 
-  const [cashFlow, receivables, payables, taxExposure, revenueMomentum, expenseControl] =
+  const [cashFlow, receivablesHealth, payablesPressure, taxExposure, revenueMomentum, expenseControl] =
     await Promise.all([
       getCashFlowSignal(),
-      getReceivablesSignal(),
-      getPayablesSignal(),
+      getReceivablesHealthSignal(),
+      getPayablesPressureSignal(),
       getTaxExposureSignal(),
       getRevenueMomentumSignal(),
       getExpenseControlSignal(),
@@ -140,38 +151,69 @@ export async function getAttentionSignals(): Promise<AttentionSignal[]> {
   const signals: AttentionSignal[] = [];
 
   if (cashFlow) signals.push(cashFlow);
-  if (receivables) signals.push(receivables);
-  if (payables) signals.push(payables);
+  if (receivablesHealth) signals.push(receivablesHealth);
+  if (payablesPressure) signals.push(payablesPressure);
   if (taxExposure) signals.push(taxExposure);
   if (revenueMomentum) signals.push(revenueMomentum);
   if (expenseControl) signals.push(expenseControl);
+
+  // Sort by urgency: worsening first, then improving, then stable
+  signals.sort((a, b) => {
+    const order = { worsening: 0, improving: 1, stable: 2 };
+    return order[a.status] - order[b.status];
+  });
 
   return signals.slice(0, 6); // Max 6 signals
 }
 
 async function getCashFlowSignal(): Promise<AttentionSignal | null> {
-  const cashBalance = await getCashBalance();
-  const cashFlow = await getCashFlow();
+  const [cashBalance, cashFlow, receivables, payables] = await Promise.all([
+    getCashBalance(),
+    getCashFlow(),
+    getReceivablesBalance(),
+    getPayablesBalance(),
+  ]);
+  
   const netCashFlow = Number(cashFlow?.net_cash_flow ?? 0);
 
   let status: AttentionSignalStatus = "stable";
   let explanation = "";
 
+  // Cash signals must always reference cause, not balance alone (Feedback Section 3.1)
   if (cashBalance < 0) {
     status = "worsening";
-    explanation = `Cash balance is negative (${formatCurrency(cashBalance)}). Immediate action required.`;
+    // Explain why cash is negative (cause) and impact
+    if (receivables > Math.abs(cashBalance) * 0.5) {
+      explanation = "Cash balance is negative because a high portion of revenue is still unpaid. Collection timing is currently affecting liquidity.";
+    } else if (payables > Math.abs(cashBalance)) {
+      explanation = "Cash balance is negative due to upcoming supplier payments exceeding available funds. Immediate action required.";
+    } else {
+      explanation = "Cash balance is negative. Expenses or payments have exceeded available funds. Immediate action required.";
+    }
   } else if (cashBalance < 5000) {
     status = "worsening";
-    explanation = `Cash balance is low (${formatCurrency(cashBalance)}). Monitor closely.`;
+    // Explain why cash is low (cause) and impact
+    if (receivables > cashBalance * 2) {
+      explanation = "Cash is low because a high portion of revenue is still unpaid. Collection timing is currently affecting liquidity.";
+    } else if (payables > cashBalance) {
+      explanation = "Cash is low relative to upcoming supplier payments. Plan payment schedule carefully.";
+    } else {
+      explanation = "Cash balance is low. Monitor closely and ensure collections are on track.";
+    }
   } else if (netCashFlow < 0) {
     status = "worsening";
-    explanation = "Cash flow is negative this period.";
+    // Explain cause of negative cash flow
+    if (receivables > payables) {
+      explanation = "Cash flow is negative this period because collections are slower than expected, despite receivables being higher than payables.";
+    } else {
+      explanation = "Cash flow is negative this period. Outflows are exceeding inflows.";
+    }
   } else if (netCashFlow > 0) {
     status = "improving";
-    explanation = "Cash flow is positive this period.";
+    explanation = "Cash flow is positive this period. Collections and inflows are healthy.";
   } else {
     status = "stable";
-    explanation = "Cash flow is stable.";
+    explanation = "Cash flow is stable with no significant changes this period.";
   }
 
   return {
@@ -183,59 +225,103 @@ async function getCashFlowSignal(): Promise<AttentionSignal | null> {
   };
 }
 
-async function getReceivablesSignal(): Promise<AttentionSignal | null> {
-  const receivables = await getReceivablesBalance();
-  const overdueCount = await getOverdueReceivablesCount();
+/**
+ * Receivables Health Signal (Feedback Section 4.1)
+ * Must be ageing-based, not total-based
+ */
+async function getReceivablesHealthSignal(): Promise<AttentionSignal | null> {
+  const ageingSummary = await getARAgeingSummary();
+  
+  if (ageingSummary.length === 0) {
+    return null; // Don't show if no receivables
+  }
+
+  // Calculate ageing totals
+  const totalOutstanding = ageingSummary.reduce((sum, item) => sum + item.total_outstanding, 0);
+  const totalCurrent = ageingSummary.reduce((sum, item) => sum + item.total_current, 0);
+  const total31_60 = ageingSummary.reduce((sum, item) => sum + item.total_31_60, 0);
+  const total61_90 = ageingSummary.reduce((sum, item) => sum + item.total_61_90, 0);
+  const total90Plus = ageingSummary.reduce((sum, item) => sum + item.total_90_plus, 0);
+  
+  const overdueTotal = total31_60 + total61_90 + total90Plus;
+  const overduePercentage = totalOutstanding > 0 ? (overdueTotal / totalOutstanding) * 100 : 0;
 
   let status: AttentionSignalStatus = "stable";
   let explanation = "";
 
-  if (receivables === 0) {
-    return null; // Don't show if no receivables
-  }
-
-  if (overdueCount > 0) {
-    status = "worsening";
-    explanation = `${overdueCount} overdue ${overdueCount === 1 ? "invoice" : "invoices"}. Total receivables: ${formatCurrency(receivables)}.`;
-  } else if (receivables > 50000) {
-    status = "worsening";
-    explanation = `Receivables are high (${formatCurrency(receivables)}). Consider following up on collections.`;
-  } else {
+  // Ageing-based signals (Feedback Section 4.1)
+  if (overdueTotal === 0 && totalOutstanding > 0) {
     status = "stable";
-    explanation = `Receivables are at ${formatCurrency(receivables)}.`;
+    explanation = "Most receivables are still within normal payment terms.";
+  } else if (overduePercentage < 10) {
+    status = "stable";
+    explanation = "Most receivables are current. A small portion is overdue, with minimal impact on cash availability.";
+  } else if (overduePercentage < 30) {
+    status = "worsening";
+    explanation = "A growing portion of receivables is overdue, slowing cash. Collection timing is affecting liquidity.";
+  } else {
+    status = "worsening";
+    explanation = "A significant portion of receivables is overdue. This delay is significantly slowing cash availability and increasing collection risk.";
   }
 
   return {
-    id: "receivables",
-    title: "Receivables",
+    id: "receivables_health",
+    title: "Receivables Health",
     status,
     explanation,
     drillDownPath: "/insights/receivables",
   };
 }
 
-async function getPayablesSignal(): Promise<AttentionSignal | null> {
-  const payables = await getPayablesBalance();
+/**
+ * Payables Pressure Signal (Feedback Section 4.2)
+ * Must show upcoming payment context, not just totals
+ */
+async function getPayablesPressureSignal(): Promise<AttentionSignal | null> {
+  const [ageingSummary, cashBalance] = await Promise.all([
+    getAPAgeingSummary(),
+    getCashBalance(),
+  ]);
+
+  if (ageingSummary.length === 0) {
+    return null; // Don't show if no payables
+  }
+
+  // Calculate ageing totals
+  const totalOutstanding = ageingSummary.reduce((sum, item) => sum + item.total_outstanding, 0);
+  const totalCurrent = ageingSummary.reduce((sum, item) => sum + item.total_current, 0);
+  const total31_60 = ageingSummary.reduce((sum, item) => sum + item.total_31_60, 0);
+  const total61_90 = ageingSummary.reduce((sum, item) => sum + item.total_61_90, 0);
+  const total90Plus = ageingSummary.reduce((sum, item) => sum + item.total_90_plus, 0);
+  
+  // Near-term payables (due in next 30 days)
+  const nearTermPayables = totalCurrent + total31_60;
+  const cashComfortThreshold = cashBalance * 0.3; // 30% of cash as comfort buffer
 
   let status: AttentionSignalStatus = "stable";
   let explanation = "";
 
-  // If payables is 0 or negative (credit balance), don't show signal
-  if (payables <= 0) {
-    return null;
-  }
-
-  if (payables > 50000) {
+  // Upcoming payment context (Feedback Section 4.2)
+  if (nearTermPayables === 0 && totalOutstanding > 0) {
+    status = "stable";
+    explanation = "No major supplier payments are due in the next 14 days.";
+  } else if (nearTermPayables > 0 && nearTermPayables < cashComfortThreshold) {
+    status = "stable";
+    explanation = "Upcoming payables are manageable relative to available cash.";
+  } else if (nearTermPayables > cashBalance) {
     status = "worsening";
-    explanation = `Payables are high (${formatCurrency(payables)}). Plan payment schedule.`;
+    explanation = "Upcoming payables may pressure cash if collections do not improve. Plan payment schedule carefully.";
+  } else if (nearTermPayables > cashComfortThreshold) {
+    status = "worsening";
+    explanation = "Upcoming supplier payments are significant relative to cash. Monitor collections closely.";
   } else {
     status = "stable";
-    explanation = `Payables are at ${formatCurrency(payables)}.`;
+    explanation = "Upcoming payables are within normal payment terms.";
   }
 
   return {
-    id: "payables",
-    title: "Payables",
+    id: "payables_pressure",
+    title: "Payables Pressure",
     status,
     explanation,
     drillDownPath: "/insights/payables",
@@ -243,8 +329,12 @@ async function getPayablesSignal(): Promise<AttentionSignal | null> {
 }
 
 async function getTaxExposureSignal(): Promise<AttentionSignal | null> {
-  const supabase = await createServerSupabaseClient();
-  const user = await getCurrentUser();
+  const [supabase, user, cashBalance] = await Promise.all([
+    createServerSupabaseClient(),
+    getCurrentUser(),
+    getCashBalance(),
+  ]);
+  
   if (!user?.tenant) return null;
 
   // Get VAT report
@@ -270,12 +360,19 @@ async function getTaxExposureSignal(): Promise<AttentionSignal | null> {
   let status: AttentionSignalStatus = "stable";
   let explanation = "";
 
+  // Add cash context (Feedback Section 3.4)
   if (vatPayable > 10000) {
     status = "worsening";
-    explanation = `Tax liability is ${formatCurrency(vatPayable)}. Ensure funds are set aside.`;
+    if (vatPayable > cashBalance) {
+      explanation = `Tax liability is ${formatCurrency(vatPayable)} and exceeds available cash. Ensure funds are set aside before the due date.`;
+    } else if (vatPayable > cashBalance * 0.5) {
+      explanation = `Tax liability is ${formatCurrency(vatPayable)} and represents a significant portion of available cash. Plan accordingly.`;
+    } else {
+      explanation = `Tax liability is ${formatCurrency(vatPayable)}. Ensure funds are set aside, but it does not significantly affect short-term cash.`;
+    }
   } else {
     status = "stable";
-    explanation = `Tax liability is ${formatCurrency(vatPayable)}.`;
+    explanation = `Tax liability is low (${formatCurrency(vatPayable)}) and does not affect short-term cash.`;
   }
 
   return {
@@ -283,28 +380,80 @@ async function getTaxExposureSignal(): Promise<AttentionSignal | null> {
     title: "Tax Exposure",
     status,
     explanation,
-    drillDownPath: "/reports/pnl?tab=vat", // Tax reports are verification screens (Proof Zone)
+    // No drill-down path - tax insight detail view doesn't exist yet (Feedback Section 5)
   };
 }
 
+/**
+ * Revenue Momentum Signal (Feedback Section 3.2)
+ * Must be relative/comparative, not absolute totals
+ * Excel Elimination Doctrine: Native Comparisons
+ */
 async function getRevenueMomentumSignal(): Promise<AttentionSignal | null> {
-  const pnl = await getProfitAndLoss();
-  const revenue = Number(pnl?.total_revenue ?? 0);
+  // Get current and previous month data for comparison
+  const currentMonth = getCurrentMonth();
+  const previousMonth = getPreviousMonth();
 
-  if (revenue === 0) {
+  const [currentData, previousData, receivables] = await Promise.all([
+    getPeriodFinancialData(currentMonth),
+    getPeriodFinancialData(previousMonth),
+    getReceivablesBalance(),
+  ]);
+
+  const currentRevenue = currentData.revenue;
+  const previousRevenue = previousData.revenue;
+
+  if (currentRevenue === 0 && previousRevenue === 0) {
     return null;
   }
 
-  // Simplified: In production, compare with previous period
+  // Calculate period comparison (Excel Elimination Doctrine)
+  const comparison = calculateComparison(currentRevenue, previousRevenue);
+  const { text: comparisonText } = formatComparison(comparison);
+
+  let status: AttentionSignalStatus = "stable";
+  let explanation = "";
+
+  // Determine status based on comparison direction
+  if (comparison.direction === "up") {
+    status = "improving";
+    explanation = `Revenue for this period is ${Math.abs(comparison.percentageChange).toFixed(1)}% higher than the previous period. ${comparisonText}`;
+  } else if (comparison.direction === "down") {
+    status = "worsening";
+    explanation = `Revenue for this period is ${Math.abs(comparison.percentageChange).toFixed(1)}% lower than the previous period. ${comparisonText}`;
+  } else {
+    // Stable revenue, but check collection timing
+    if (receivables > 0) {
+      const collectionRatio = receivables / currentRevenue;
+      if (collectionRatio > 0.5) {
+        status = "worsening";
+        explanation = `Revenue is stable compared to last month, but collections are slower. A high portion of revenue (${(collectionRatio * 100).toFixed(0)}%) is still unpaid.`;
+      } else if (collectionRatio > 0.3) {
+        status = "stable";
+        explanation = "Revenue is stable, but collections could be faster. Some receivables are still outstanding.";
+      } else {
+        status = "improving";
+        explanation = "Revenue is stable and collections are on track. Most receivables are being paid on time.";
+      }
+    } else {
+      status = "improving";
+      explanation = "Revenue is stable and all collections are current. Cash flow from operations is healthy.";
+    }
+  }
+
   return {
     id: "revenue_momentum",
     title: "Revenue Momentum",
-    status: "stable",
-    explanation: `Year-to-date revenue: ${formatCurrency(revenue)}.`,
-    drillDownPath: "/reports/pnl?tab=pnl", // Revenue is shown in P&L report
+    status,
+    explanation,
+    drillDownPath: "/insights/receivables", // Changed to insight detail view (Feedback Section 5)
   };
 }
 
+/**
+ * Expense Control Signal (Feedback Section 3.3)
+ * Must NOT calculate ratios when revenue is near zero
+ */
 async function getExpenseControlSignal(): Promise<AttentionSignal | null> {
   const pnl = await getProfitAndLoss();
   const revenue = Number(pnl?.total_revenue ?? 0);
@@ -317,23 +466,32 @@ async function getExpenseControlSignal(): Promise<AttentionSignal | null> {
   let status: AttentionSignalStatus = "stable";
   let explanation = "";
 
-  if (revenue > 0) {
+  // Critical: Do not calculate ratios when revenue is near zero (Feedback Section 3.3)
+  // Use a threshold to determine "near zero" (e.g., less than 10% of expenses)
+  const revenueThreshold = expenses * 0.1;
+
+  if (revenue > revenueThreshold) {
+    // Revenue is meaningful, can calculate ratio
     const expenseRatio = (expenses / revenue) * 100;
     if (expenseRatio > 80) {
       status = "worsening";
-      explanation = `Expenses are ${expenseRatio.toFixed(0)}% of revenue. Consider cost optimization.`;
-    } else {
+      explanation = "Fixed costs are growing faster than revenue this period. Consider cost optimization.";
+    } else if (expenseRatio > 60) {
       status = "stable";
-      explanation = `Expenses are ${expenseRatio.toFixed(0)}% of revenue.`;
+      explanation = "Expenses are in line with revenue. Monitor cost trends to maintain profitability.";
+    } else {
+      status = "improving";
+      explanation = "Expenses are well-controlled relative to revenue. Cost management is effective.";
     }
-  } else if (revenue < 0) {
-    // Revenue is negative (losses), show absolute expense amount
-    status = "worsening";
-    explanation = `Expenses at ${formatCurrency(expenses)} with negative revenue.`;
   } else {
-    // No revenue
-    status = "worsening";
-    explanation = `Expenses at ${formatCurrency(expenses)} with no revenue.`;
+    // Revenue is near zero or negative - show narrative, not ratio (Feedback Section 3.3)
+    if (revenue < 0) {
+      status = "worsening";
+      explanation = "Expenses currently exceed revenue due to timing differences. This is common in early-stage periods or when revenue recognition lags expenses.";
+    } else {
+      status = "worsening";
+      explanation = "Expenses currently exceed revenue due to timing differences. This is common in early-stage periods.";
+    }
   }
 
   return {
@@ -341,7 +499,7 @@ async function getExpenseControlSignal(): Promise<AttentionSignal | null> {
     title: "Expense Control",
     status,
     explanation,
-    drillDownPath: "/reports/pnl?tab=pnl", // Expenses are shown in P&L report
+    drillDownPath: "/insights/payables", // Changed to insight detail view (Feedback Section 5)
   };
 }
 
@@ -465,11 +623,6 @@ async function getPayablesBalance(): Promise<number> {
   return Number(payablesAccount.total_credit) - Number(payablesAccount.total_debit);
 }
 
-async function getOverdueReceivablesCount(): Promise<number> {
-  // Simplified: In production, query invoices with due_date < today and status = unpaid
-  // For now, return 0
-  return 0;
-}
 
 function formatCurrency(amount: number, currency: string = "USD"): string {
   return new Intl.NumberFormat("en-US", {

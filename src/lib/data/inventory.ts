@@ -281,3 +281,118 @@ export async function getInventoryTransactions(
   }));
 }
 
+export interface InventoryAgeing {
+  id: string;
+  item_id: string;
+  batch_number: number | null;
+  purchase_date: string;
+  quantity: number;
+  unit_cost: number;
+  total_value: number;
+  days_in_stock: number;
+  ageing_bucket: "0-30" | "31-60" | "61-90" | "90+";
+  created_at: string;
+}
+
+/**
+ * Get inventory ageing data for a specific item
+ */
+export async function getInventoryAgeing(itemId: string): Promise<InventoryAgeing[]> {
+  const user = await getCurrentUser();
+  if (!user?.tenant) {
+    return [];
+  }
+
+  const supabase = await createServerSupabaseClient();
+  type InventoryAgeingRow = Database["public"]["Tables"]["inventory_ageing"]["Row"];
+  
+  const table = supabase.from("inventory_ageing") as unknown as {
+    select: (columns: string) => {
+      eq: (column: string, value: string) => {
+        eq: (column: string, value: string) => {
+          order: (column: string, options?: { ascending?: boolean }) => Promise<{
+            data: InventoryAgeingRow[] | null;
+            error: unknown;
+          }>;
+        };
+      };
+    };
+  };
+
+  const { data, error } = await table
+    .select("*")
+    .eq("tenant_id", user.tenant.id)
+    .eq("item_id", itemId)
+    .order("purchase_date", { ascending: true });
+
+  if (error) {
+    console.error("Failed to fetch inventory ageing:", error);
+    return [];
+  }
+
+  return (data || []).map((row) => ({
+    id: row.id,
+    item_id: row.item_id,
+    batch_number: row.batch_number,
+    purchase_date: row.purchase_date,
+    quantity: Number(row.quantity),
+    unit_cost: Number(row.unit_cost),
+    total_value: Number(row.total_value),
+    days_in_stock: Number(row.days_in_stock),
+    ageing_bucket: row.ageing_bucket as "0-30" | "31-60" | "61-90" | "90+",
+    created_at: row.created_at,
+  }));
+}
+
+/**
+ * Get a single inventory item by ID
+ */
+export async function getInventoryItem(itemId: string): Promise<InventoryItem | null> {
+  const user = await getCurrentUser();
+  if (!user?.tenant) {
+    return null;
+  }
+
+  const supabase = await createServerSupabaseClient();
+  const table = supabase.from("inventory_items") as unknown as {
+    select: (columns: string) => {
+      eq: (column: string, value: string) => {
+        eq: (column: string, value: string) => {
+          maybeSingle: () => Promise<{
+            data: InventoryItemRow | null;
+            error: unknown;
+          }>;
+        };
+      };
+    };
+  };
+
+  const { data, error } = await table
+    .select("*")
+    .eq("tenant_id", user.tenant.id)
+    .eq("id", itemId)
+    .maybeSingle();
+
+  if (error) {
+    console.error("Failed to fetch inventory item:", error);
+    return null;
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return {
+    id: data.id,
+    tenant_id: data.tenant_id,
+    name: data.name,
+    sku: data.sku,
+    description: data.description,
+    unit: data.unit,
+    valuation_method: data.valuation_method as "fifo" | "weighted_average",
+    is_active: data.is_active,
+    created_at: data.created_at,
+    updated_at: data.updated_at,
+  };
+}
+

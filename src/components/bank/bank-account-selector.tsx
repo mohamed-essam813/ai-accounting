@@ -38,26 +38,31 @@ export function BankAccountSelector({ accounts, selectedAccountId }: Props) {
   return (
     <Card>
       <CardContent className="pt-6">
-        <div className="flex items-center gap-4">
-          <label htmlFor="bank-account" className="text-sm font-medium">
-            Bank Account:
-          </label>
-          <Select
-            value={selectedAccountId ?? "all"}
-            onValueChange={handleChange}
-          >
-            <SelectTrigger id="bank-account" className="w-[300px]">
-              <SelectValue placeholder="Select bank account" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Bank Accounts</SelectItem>
-              {accounts.map((account) => (
-                <SelectItem key={account.id} value={account.id}>
-                  {account.code} · {account.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+        <div className="space-y-2">
+          <div className="flex items-center gap-4">
+            <label htmlFor="bank-account" className="text-sm font-medium">
+              Select bank or cash account to reconcile:
+            </label>
+            <Select
+              value={selectedAccountId ?? "all"}
+              onValueChange={handleChange}
+            >
+              <SelectTrigger id="bank-account" className="w-[300px]">
+                <SelectValue placeholder="Select bank or cash account" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Bank Accounts</SelectItem>
+                {accounts.map((account) => (
+                  <SelectItem key={account.id} value={account.id}>
+                    {account.code} · {account.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Only bank and cash accounts can be reconciled.
+          </p>
         </div>
       </CardContent>
     </Card>

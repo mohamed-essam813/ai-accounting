@@ -3,25 +3,23 @@
 import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import { createInventoryItemAction } from "@/lib/actions/inventory";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Info } from "lucide-react";
 
-export function InventoryItemForm() {
+type Props = {
+  valuationMethod: "fifo" | "weighted_average";
+};
+
+export function InventoryItemForm({ valuationMethod }: Props) {
   const [isPending, startTransition] = useTransition();
   const [formData, setFormData] = useState({
     name: "",
     sku: "",
     description: "",
     unit: "unit",
-    valuation_method: "fifo" as "fifo" | "weighted_average",
   });
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -36,7 +34,6 @@ export function InventoryItemForm() {
           sku: "",
           description: "",
           unit: "unit",
-          valuation_method: "fifo",
         });
       } catch (error) {
         toast.error(
@@ -87,41 +84,25 @@ export function InventoryItemForm() {
         />
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2">
-        <div className="space-y-2">
-          <label htmlFor="unit" className="text-sm font-medium">
-            Unit
-          </label>
-          <Input
-            id="unit"
-            value={formData.unit}
-            onChange={(e) => setFormData({ ...formData, unit: e.target.value })}
-            placeholder="e.g., piece, kg, liter"
-          />
-        </div>
-        <div className="space-y-2">
-          <label htmlFor="valuation_method" className="text-sm font-medium">
-            Valuation Method *
-          </label>
-          <Select
-            value={formData.valuation_method}
-            onValueChange={(value: "fifo" | "weighted_average") =>
-              setFormData({ ...formData, valuation_method: value })
-            }
-          >
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="fifo">FIFO (First-In, First-Out)</SelectItem>
-              <SelectItem value="weighted_average">Weighted Average</SelectItem>
-            </SelectContent>
-          </Select>
-          <p className="text-xs text-muted-foreground">
-            Note: Valuation method cannot be changed once transactions exist.
-          </p>
-        </div>
+      <div className="space-y-2">
+        <label htmlFor="unit" className="text-sm font-medium">
+          Unit
+        </label>
+        <Input
+          id="unit"
+          value={formData.unit}
+          onChange={(e) => setFormData({ ...formData, unit: e.target.value })}
+          placeholder="e.g., piece, kg, liter"
+        />
       </div>
+
+      {/* Read-only valuation method display */}
+      <Alert>
+        <Info className="h-4 w-4" />
+        <AlertDescription>
+          Inventory valuation method: <strong>{valuationMethod === "fifo" ? "FIFO (First-In, First-Out)" : "Weighted Average"}</strong> (company setting)
+        </AlertDescription>
+      </Alert>
 
       <Button type="submit" disabled={isPending || !formData.name}>
         {isPending ? "Creating..." : "Create Inventory Item"}

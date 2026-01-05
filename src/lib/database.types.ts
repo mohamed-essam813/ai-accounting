@@ -14,6 +14,92 @@ export type Database = {
   }
   public: {
     Tables: {
+      accounting_policies: {
+        Row: {
+          created_at: string
+          effective_date: string
+          id: string
+          inventory_valuation_method: string
+          tenant_id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          effective_date?: string
+          id?: string
+          inventory_valuation_method?: string
+          tenant_id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          effective_date?: string
+          id?: string
+          inventory_valuation_method?: string
+          tenant_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "accounting_policies_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: true
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      accounting_policy_changes: {
+        Row: {
+          changed_by: string
+          created_at: string
+          effective_date: string
+          id: string
+          new_value: string
+          policy_type: string
+          previous_value: string | null
+          reason: string
+          tenant_id: string
+        }
+        Insert: {
+          changed_by: string
+          created_at?: string
+          effective_date: string
+          id?: string
+          new_value: string
+          policy_type: string
+          previous_value?: string | null
+          reason: string
+          tenant_id: string
+        }
+        Update: {
+          changed_by?: string
+          created_at?: string
+          effective_date?: string
+          id?: string
+          new_value?: string
+          policy_type?: string
+          previous_value?: string | null
+          reason?: string
+          tenant_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "accounting_policy_changes_changed_by_fkey"
+            columns: ["changed_by"]
+            isOneToOne: false
+            referencedRelation: "app_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "accounting_policy_changes_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       ai_prompt_cache: {
         Row: {
           created_at: string
@@ -278,6 +364,7 @@ export type Database = {
       }
       chart_of_accounts: {
         Row: {
+          category: string | null
           code: string
           created_at: string
           id: string
@@ -287,6 +374,7 @@ export type Database = {
           type: string
         }
         Insert: {
+          category?: string | null
           code: string
           created_at?: string
           id?: string
@@ -296,6 +384,7 @@ export type Database = {
           type: string
         }
         Update: {
+          category?: string | null
           code?: string
           created_at?: string
           id?: string
@@ -447,6 +536,7 @@ export type Database = {
           approved_at: string | null
           approved_by: string | null
           confidence: number | null
+          contact_id: string | null
           created_at: string
           created_by: string
           data_json: Json
@@ -460,6 +550,7 @@ export type Database = {
           approved_at?: string | null
           approved_by?: string | null
           confidence?: number | null
+          contact_id?: string | null
           created_at?: string
           created_by: string
           data_json: Json
@@ -473,6 +564,7 @@ export type Database = {
           approved_at?: string | null
           approved_by?: string | null
           confidence?: number | null
+          contact_id?: string | null
           created_at?: string
           created_by?: string
           data_json?: Json
@@ -488,6 +580,13 @@ export type Database = {
             columns: ["approved_by"]
             isOneToOne: false
             referencedRelation: "app_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "drafts_contact_id_fkey"
+            columns: ["contact_id"]
+            isOneToOne: false
+            referencedRelation: "contacts"
             referencedColumns: ["id"]
           },
           {
@@ -1039,6 +1138,7 @@ export type Database = {
       journal_entries: {
         Row: {
           approved_by: string | null
+          contact_id: string | null
           created_at: string
           created_by: string
           date: string
@@ -1050,6 +1150,7 @@ export type Database = {
         }
         Insert: {
           approved_by?: string | null
+          contact_id?: string | null
           created_at?: string
           created_by: string
           date: string
@@ -1061,6 +1162,7 @@ export type Database = {
         }
         Update: {
           approved_by?: string | null
+          contact_id?: string | null
           created_at?: string
           created_by?: string
           date?: string
@@ -1076,6 +1178,13 @@ export type Database = {
             columns: ["approved_by"]
             isOneToOne: false
             referencedRelation: "app_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "journal_entries_contact_id_fkey"
+            columns: ["contact_id"]
+            isOneToOne: false
+            referencedRelation: "contacts"
             referencedColumns: ["id"]
           },
           {
@@ -1242,6 +1351,68 @@ export type Database = {
           },
           {
             foreignKeyName: "source_documents_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      subledgers: {
+        Row: {
+          balance: number
+          contact_id: string
+          created_at: string
+          gl_account_id: string
+          id: string
+          subledger_type: string
+          tenant_id: string
+          updated_at: string
+        }
+        Insert: {
+          balance?: number
+          contact_id: string
+          created_at?: string
+          gl_account_id: string
+          id?: string
+          subledger_type: string
+          tenant_id: string
+          updated_at?: string
+        }
+        Update: {
+          balance?: number
+          contact_id?: string
+          created_at?: string
+          gl_account_id?: string
+          id?: string
+          subledger_type?: string
+          tenant_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "subledgers_contact_id_fkey"
+            columns: ["contact_id"]
+            isOneToOne: false
+            referencedRelation: "contacts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "subledgers_gl_account_id_fkey"
+            columns: ["gl_account_id"]
+            isOneToOne: false
+            referencedRelation: "chart_of_accounts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "subledgers_gl_account_id_fkey"
+            columns: ["gl_account_id"]
+            isOneToOne: false
+            referencedRelation: "v_trial_balance"
+            referencedColumns: ["account_id"]
+          },
+          {
+            foreignKeyName: "subledgers_tenant_id_fkey"
             columns: ["tenant_id"]
             isOneToOne: false
             referencedRelation: "tenants"

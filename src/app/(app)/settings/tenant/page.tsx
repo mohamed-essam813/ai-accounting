@@ -4,7 +4,8 @@ import { UserInviteForm } from "@/components/settings/user-invite-form";
 import { UserList } from "@/components/settings/user-list";
 import { InvitesTable } from "@/components/settings/invites-table";
 import { SubscriptionManager } from "@/components/settings/subscription-manager";
-import { getTenantProfile } from "@/lib/data/tenant";
+import { AccountingPoliciesForm } from "@/components/settings/accounting-policies-form";
+import { getTenantProfile, getAccountingPolicy, listAccountingPolicyChanges } from "@/lib/data/tenant";
 import { listTenantUsers, listPendingInvites } from "@/lib/data/tenant";
 import { getCurrentUser } from "@/lib/data/users";
 import { canManageAccounts, type UserRole } from "@/lib/auth";
@@ -13,11 +14,12 @@ import {
   getSubscriptionUsage,
   listSubscriptionPlans,
 } from "@/lib/data/subscriptions";
+import { createServerSupabaseClient } from "@/lib/supabase/server";
 
 export const revalidate = 60;
 
 export default async function TenantSettingsPage() {
-  const [tenant, users, invites, currentUser, plans, subscription, usage] = await Promise.all([
+  const [tenant, users, invites, currentUser, plans, subscription, usage, policy, policyChanges] = await Promise.all([
     getTenantProfile(),
     listTenantUsers(),
     listPendingInvites(),
@@ -25,9 +27,25 @@ export default async function TenantSettingsPage() {
     listSubscriptionPlans(),
     getTenantSubscription(),
     getSubscriptionUsage(),
+    getAccountingPolicy(),
+    listAccountingPolicyChanges(),
   ]);
 
   const canManage = currentUser ? canManageAccounts(currentUser.role as UserRole) : false;
+
+  // Check if inventory transactions exist
+  let hasInventoryTransactions = false;
+  if (currentUser?.tenant) {
+    const supabase = await createServerSupabaseClient();
+    // Using type assertion since table may not be in generated types yet
+    const { data } = await supabase
+      .from("inventory_transactions" as any)
+      .select("id")
+      .eq("tenant_id", currentUser.tenant.id)
+      .limit(1)
+      .maybeSingle();
+    hasInventoryTransactions = !!data;
+  }
 
   return (
     <div className="space-y-8">
@@ -83,6 +101,23 @@ export default async function TenantSettingsPage() {
           </CardHeader>
           <CardContent>
             <InvitesTable invites={invites} />
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {canManage ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Accounting Policies</CardTitle>
+            <p className="text-sm text-muted-foreground">
+              Configure company-level accounting policies that apply consistently across all transactions.
+            </p>
+          </CardHeader>
+          <CardContent>
+            <AccountingPoliciesForm
+              policy={policy}
+              hasInventoryTransactions={hasInventoryTransactions}
+            />
           </CardContent>
         </Card>
       ) : null}

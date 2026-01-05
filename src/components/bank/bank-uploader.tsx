@@ -109,13 +109,13 @@ export function BankUploader({ bankAccountId: initialBankAccountId, accounts = [
       <CardContent className="space-y-4">
         {accounts.length > 0 && (
           <div className="space-y-2">
-            <label className="text-sm font-medium">Bank Account *</label>
+            <label className="text-sm font-medium">Select bank or cash account to reconcile *</label>
             <Select
               value={selectedBankAccountId}
               onValueChange={setSelectedBankAccountId}
             >
               <SelectTrigger>
-                <SelectValue placeholder="Select bank account" />
+                <SelectValue placeholder="Select bank or cash account" />
               </SelectTrigger>
               <SelectContent>
                 {accounts.map((account) => (
@@ -126,7 +126,7 @@ export function BankUploader({ bankAccountId: initialBankAccountId, accounts = [
               </SelectContent>
             </Select>
             <p className="text-xs text-muted-foreground">
-              Select the bank account these transactions belong to
+              Only bank and cash accounts can be reconciled. These transactions will be imported for the selected account.
             </p>
           </div>
         )}

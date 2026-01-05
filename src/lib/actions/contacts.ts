@@ -59,6 +59,9 @@ export async function createContactAction(input: z.infer<typeof ContactSchema>) 
     throw error;
   }
 
+  // Subledger will be auto-created by trigger, but we can verify it exists
+  // The trigger handles this automatically
+
   const auditData: AuditLogsInsert = {
     tenant_id: user.tenant.id,
     actor_id: user.id,
@@ -77,6 +80,84 @@ export async function createContactAction(input: z.infer<typeof ContactSchema>) 
   await auditTable.insert([auditData]);
 
   revalidatePath("/contacts");
+  return data;
+}
+
+/**
+ * Find or create contact by name and type
+ * Used by AI to automatically create contacts
+ */
+export async function findOrCreateContactAction(
+  name: string,
+  type: "customer" | "vendor"
+): Promise<ContactsRow> {
+  const user = await getCurrentUser();
+  if (!user?.tenant) {
+    throw new Error("User tenant not resolved.");
+  }
+
+  const supabase = await createServerSupabaseClient();
+
+  // First, try to find existing contact by name (case-insensitive)
+  const { data: existing } = await supabase
+    .from("contacts")
+    .select("*")
+    .eq("tenant_id", user.tenant.id)
+    .eq("type", type)
+    .ilike("name", name)
+    .eq("is_active", true)
+    .maybeSingle();
+
+  if (existing) {
+    return existing;
+  }
+
+  // Create new contact if not found
+  const insertData: ContactsInsert = {
+    tenant_id: user.tenant.id,
+    name: name.trim(),
+    type: type,
+    email: null,
+    phone: null,
+    address: null,
+    tax_id: null,
+    code: "",
+    is_active: true,
+  };
+
+  const table = supabase.from("contacts") as unknown as {
+    insert: (values: ContactsInsert[]) => {
+      select: (columns?: string) => Promise<{ data: ContactsRow[] | null; error: unknown }>;
+    };
+  };
+  const { data: contacts, error } = await table.insert([insertData]).select("*");
+  const data = contacts?.[0] ?? null;
+
+  if (error || !data) {
+    console.error("Failed to create contact", error);
+    throw new Error("Failed to create contact");
+  }
+
+  // Subledger will be auto-created by trigger
+
+  const auditData: AuditLogsInsert = {
+    tenant_id: user.tenant.id,
+    actor_id: user.id,
+    action: "contact.created",
+    entity: "contacts",
+    entity_id: data.id,
+    changes: {
+      name: data.name,
+      type: data.type,
+      code: data.code,
+      auto_created: true,
+    },
+  };
+  const auditTable = supabase.from("audit_logs") as unknown as {
+    insert: (values: AuditLogsInsert[]) => Promise<{ error: unknown }>;
+  };
+  await auditTable.insert([auditData]);
+
   return data;
 }
 

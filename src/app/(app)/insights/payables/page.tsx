@@ -220,6 +220,12 @@ export default async function PayablesInsightPage() {
         </CardHeader>
         <CardContent>
           <div className="flex flex-col gap-3">
+            <Link href="/ledger?accountCode=2000" className="block">
+              <Button variant="outline" className="w-full justify-between group hover:bg-accent">
+                <span>View Payables Ledger</span>
+                <ArrowRight className="h-4 w-4 opacity-0 group-hover:opacity-100 transition-opacity" />
+              </Button>
+            </Link>
             <Link href="/contacts" className="block">
               <Button variant="outline" className="w-full justify-between group hover:bg-accent">
                 <span>View Supplier Sub-Ledgers</span>

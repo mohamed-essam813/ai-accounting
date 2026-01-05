@@ -14,7 +14,7 @@ const CreateInventoryItemSchema = z.object({
   sku: z.string().optional().nullable(),
   description: z.string().optional().nullable(),
   unit: z.string().default("unit"),
-  valuation_method: z.enum(["fifo", "weighted_average"]),
+  // valuation_method removed - now inherited from tenant policy
 });
 
 export async function createInventoryItemAction(
@@ -28,6 +28,15 @@ export async function createInventoryItemAction(
   const payload = CreateInventoryItemSchema.parse(input);
 
   const supabase = await createServerSupabaseClient();
+
+  // Get valuation method from tenant accounting policy (using type assertion since table may not be in generated types yet)
+  const { data: policy } = await supabase
+    .from("accounting_policies" as any)
+    .select("inventory_valuation_method")
+    .eq("tenant_id", user.tenant.id)
+    .maybeSingle();
+
+  const valuationMethod = ((policy as any)?.inventory_valuation_method || "fifo") as "fifo" | "weighted_average";
 
   // Check if SKU already exists (if provided)
   if (payload.sku) {
@@ -51,7 +60,7 @@ export async function createInventoryItemAction(
       sku: payload.sku || null,
       description: payload.description || null,
       unit: payload.unit,
-      valuation_method: payload.valuation_method,
+      valuation_method: valuationMethod, // Inherited from tenant policy
     })
     .select()
     .single();

@@ -4,6 +4,7 @@
  */
 
 import { getInventoryItems, getInventorySummary } from "@/lib/data/inventory";
+import { getAccountingPolicy } from "@/lib/data/tenant";
 import { InventoryTable } from "@/components/inventory/inventory-table";
 import { InventoryItemForm } from "@/components/inventory/inventory-item-form";
 import { InventorySummaryCard } from "@/components/inventory/inventory-summary-card";
@@ -13,10 +14,13 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 export const revalidate = 60;
 
 export default async function InventoryPage() {
-  const [items, summary] = await Promise.all([
+  const [items, summary, policy] = await Promise.all([
     getInventoryItems(),
     getInventorySummary(),
+    getAccountingPolicy(),
   ]);
+
+  const valuationMethod = policy?.inventory_valuation_method || "fifo";
 
   return (
     <div className="space-y-6">
@@ -44,7 +48,7 @@ export default async function InventoryPage() {
               <CardTitle>Add New Inventory Item</CardTitle>
             </CardHeader>
             <CardContent>
-              <InventoryItemForm />
+              <InventoryItemForm valuationMethod={valuationMethod} />
             </CardContent>
           </Card>
           <InventoryTable items={items} summary={summary} />

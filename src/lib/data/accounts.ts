@@ -11,6 +11,7 @@ export async function listAccounts() {
   }
 
   const supabase = await createServerSupabaseClient();
+  // Select all columns (category may not exist if migration hasn't run yet)
   const { data, error } = await supabase
     .from("chart_of_accounts")
     .select("*")
@@ -22,7 +23,20 @@ export async function listAccounts() {
     throw error;
   }
 
-  return data ?? [];
+  // Map to ensure category is included (may be null if migration hasn't run)
+  return (data ?? []).map((acc) => {
+    const account = acc as unknown as ChartOfAccountsRow & { category?: "current" | "non_current" | null };
+    return {
+      id: account.id,
+      name: account.name,
+      code: account.code,
+      type: account.type,
+      category: account.category ?? null,
+      is_active: account.is_active,
+      tenant_id: account.tenant_id,
+      created_at: account.created_at,
+    };
+  });
 }
 
 export async function getAccountByCode(code: string) {

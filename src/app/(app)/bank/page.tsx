@@ -3,6 +3,7 @@ import { listAccounts } from "@/lib/data/accounts";
 import { BankUploader } from "@/components/bank/bank-uploader";
 import { BankTransactionsTable } from "@/components/bank/bank-transactions-table";
 import { BankAccountSelector } from "@/components/bank/bank-account-selector";
+import { filterBankAccounts } from "@/lib/accounting/is-bank-account";
 
 export const revalidate = 60;
 
@@ -17,10 +18,9 @@ export default async function BankPage({
     listAccounts(),
   ]);
 
-  // Filter to only bank accounts (asset accounts that are typically used for banking)
-  const bankAccounts = accounts.filter(
-    (acc) => acc.type === "asset" && (acc.code.startsWith("1") || acc.name.toLowerCase().includes("bank") || acc.name.toLowerCase().includes("cash"))
-  );
+  // Filter to only Cash/Bank accounts (codes 1000-1099)
+  // This is a strict accounting requirement: bank reconciliation must only work with Cash/Bank accounts
+  const bankAccounts = filterBankAccounts(accounts);
 
   return (
     <div className="space-y-8">

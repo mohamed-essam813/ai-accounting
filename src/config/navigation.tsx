@@ -75,6 +75,12 @@ export const mainNavigation: NavItem[] = [
     description: "Profit & Loss and Balance Sheet analytics.",
   },
   {
+    title: "General Ledger",
+    href: "/ledger",
+    icon: BookOpen,
+    description: "View all transactions by account. Trace numbers to source.",
+  },
+  {
     title: "Audit Log",
     href: "/audit",
     icon: Waypoints,

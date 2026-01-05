@@ -40,14 +40,14 @@ export function InventoryTable({ items, summary }: Props) {
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead>Item Name</TableHead>
-            <TableHead>SKU</TableHead>
-            <TableHead>Valuation Method</TableHead>
+            <TableHead className="text-left">Item Name</TableHead>
+            <TableHead className="text-left">SKU</TableHead>
+            <TableHead className="text-left">Valuation Method</TableHead>
             <TableHead className="text-right">Quantity</TableHead>
             <TableHead className="text-right">Unit Cost</TableHead>
             <TableHead className="text-right">Total Value</TableHead>
-            <TableHead className="text-right">Ageing</TableHead>
-            <TableHead></TableHead>
+            <TableHead className="text-left">Ageing</TableHead>
+            <TableHead className="text-right" style={{ paddingRight: '1rem' }}>Actions</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -61,11 +61,11 @@ export function InventoryTable({ items, summary }: Props) {
 
             return (
               <TableRow key={item.id}>
-                <TableCell className="font-medium">{item.name}</TableCell>
-                <TableCell className="text-muted-foreground">
+                <TableCell className="font-medium text-left">{item.name}</TableCell>
+                <TableCell className="text-muted-foreground text-left">
                   {item.sku || "-"}
                 </TableCell>
-                <TableCell>
+                <TableCell className="text-left">
                   <Badge variant="outline">
                     {item.valuation_method === "fifo" ? "FIFO" : "Weighted Avg"}
                   </Badge>
@@ -81,7 +81,7 @@ export function InventoryTable({ items, summary }: Props) {
                 <TableCell className="text-right font-medium">
                   {itemSummary ? formatCurrency(itemSummary.total_value) : formatCurrency(0)}
                 </TableCell>
-                <TableCell className="text-right">
+                <TableCell className="text-left">
                   {hasAgeing ? (
                     <Badge variant="destructive" className="text-xs">
                       Ageing
@@ -90,7 +90,7 @@ export function InventoryTable({ items, summary }: Props) {
                     <span className="text-muted-foreground text-xs">Current</span>
                   )}
                 </TableCell>
-                <TableCell>
+                <TableCell className="text-right" style={{ paddingRight: '1rem' }}>
                   <Link href={`/inventory/${item.id}`}>
                     <Button variant="ghost" size="sm">
                       View

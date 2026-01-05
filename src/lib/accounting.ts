@@ -54,38 +54,98 @@ export async function buildDefaultJournalLines(
 
   const resolveByCode = (code: string) => accounts.find((acct) => acct.code === code);
 
-  // Try RAG-based account selection if enabled and prompt/tenantId provided
-  let ragMapping: IntentAccountMapping | null = null;
-  if (options?.useRAG && options.prompt && options.tenantId) {
-    try {
-      const { selectAccountsFromPrompt } = await import("@/lib/ai/account-selection");
-      const selected = await selectAccountsFromPrompt(
-        options.prompt,
-        intent,
-        options.tenantId,
-        accounts,
-      );
-      
-      if (selected.debitAccountId && selected.creditAccountId) {
-        ragMapping = {
-          intent,
-          debit_account_id: selected.debitAccountId,
-          credit_account_id: selected.creditAccountId,
-          tax_debit_account_id: selected.taxDebitAccountId ?? null,
-          tax_credit_account_id: selected.taxCreditAccountId ?? null,
-        };
+  // Use AI-selected accounts if available (from draft.accounts)
+  // Priority: AI-selected accounts > Fallback mapping (code-based inference)
+  let resolvedMapping: IntentAccountMapping | null = null;
+
+  if (draft.accounts) {
+    // AI has suggested accounts - use them
+    const { listAccounts } = await import("@/lib/data/accounts");
+    const allAccounts = await listAccounts();
+    const accountMap = new Map(allAccounts.map((acc) => [acc.id, acc]));
+    
+    // Helper to find account by ID, with fallback to fetching directly from DB if not in list
+    const findAccount = async (suggestion: typeof draft.accounts.debit_account): Promise<Account | null> => {
+      if (suggestion.existing_account_id) {
+        // First try to find in the account list
+        const found = accountMap.get(suggestion.existing_account_id);
+        if (found) return found;
+        
+        // If not found in list (might be newly created), fetch directly from DB
+        if (options?.tenantId) {
+          const supabase = await import("@/lib/supabase/server").then((m) => m.createServerSupabaseClient());
+          const { data: accountData, error } = await supabase
+            .from("chart_of_accounts")
+            .select("*")
+            .eq("id", suggestion.existing_account_id)
+            .eq("tenant_id", options.tenantId)
+            .single();
+          
+          if (!error && accountData) {
+            return {
+              id: accountData.id,
+              name: accountData.name,
+              code: accountData.code,
+              type: accountData.type,
+              is_active: accountData.is_active,
+              tenant_id: accountData.tenant_id,
+              created_at: accountData.created_at,
+              category: (accountData as any).category ?? null,
+            } as Account;
+          }
+        }
+        return null;
       }
-    } catch (ragError) {
-      console.warn("RAG account selection failed, falling back to manual mapping:", ragError);
+      
+      // If no existing_account_id, search by name as fallback
+      return allAccounts.find(
+        (acc) => acc.name.toLowerCase() === suggestion.suggested_name.toLowerCase() &&
+                 acc.type === suggestion.suggested_type
+      ) ?? null;
+    };
+
+    const debitAccount = await findAccount(draft.accounts.debit_account);
+    const creditAccount = await findAccount(draft.accounts.credit_account);
+    const taxDebitAccount = draft.accounts.tax_debit_account
+      ? await findAccount(draft.accounts.tax_debit_account)
+      : null;
+    const taxCreditAccount = draft.accounts.tax_credit_account
+      ? await findAccount(draft.accounts.tax_credit_account)
+      : null;
+
+    if (debitAccount && creditAccount) {
+      resolvedMapping = {
+        intent,
+        debit_account_id: debitAccount.id,
+        credit_account_id: creditAccount.id,
+        tax_debit_account_id: taxDebitAccount?.id ?? null,
+        tax_credit_account_id: taxCreditAccount?.id ?? null,
+      };
     }
   }
 
-  const fallbackMapping = inferMappingFromCodes(intent, accounts, resolveByCode);
-  // Priority: RAG mapping > Manual mapping > Fallback mapping
-  const resolvedMapping = ragMapping ?? mapping ?? fallbackMapping;
+  // Fallback to code-based inference (no manual mapping)
+  if (!resolvedMapping) {
+    resolvedMapping = inferMappingFromCodes(intent, accounts, resolveByCode);
+  }
 
   if (!resolvedMapping) {
-    throw new Error(`No journal mapping available for intent "${intent}".`);
+    throw new Error(
+      `No journal mapping available for intent "${intent}". ` +
+      `AI should have selected accounts automatically. If this error persists, please ensure the chart of accounts has the required default accounts (e.g., 1100 for AR, 2000 for AP, 4000 for Revenue). ` +
+      `Draft created but blocked from posting until accounts are available.`
+    );
+  }
+
+  // Validate mapping against account type constraints (from feedback)
+  const { validateIntentMapping } = await import("./accounting/gl-mapping-validation");
+  const validation = validateIntentMapping(resolvedMapping, accounts, intent);
+  if (!validation.valid) {
+    throw new Error(
+      `Invalid account mapping for intent "${intent}": ${validation.errors.join("; ")}. ` +
+      `Please update the intent mapping in Accounts → Intent Mappings. ` +
+      `Draft created but blocked from posting until mapping is valid.`
+    );
   }
 
   const amount = Number(entities.amount);
@@ -300,7 +360,13 @@ function inferMappingFromCodes(
       };
     }
     case "reconcile_bank":
-      throw new Error("Bank reconciliation drafts must be resolved manually.");
+      // Bank reconciliation: AI should select accounts based on transaction type
+      // For loans: DR Bank (asset), CR Long-term Debt (liability)
+      // For deposits: DR Bank (asset), CR AR/AP (asset) or Capital (equity)
+      // For transfers: DR Bank (asset), CR Bank (asset)
+      // Since AI should handle account selection, we don't provide a fallback here
+      // If AI didn't select accounts, the error will be caught in buildDefaultJournalLines
+      return null;
     case "generate_report":
     default:
       return null;

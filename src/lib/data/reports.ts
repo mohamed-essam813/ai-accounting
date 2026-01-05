@@ -61,6 +61,7 @@ type CashFlow = { tenant_id: string; net_cash_flow: number | null };
 type JournalLedger = {
   tenant_id: string;
   entry_id: string;
+  line_id: string;
   date: string;
   description: string;
   status: string;

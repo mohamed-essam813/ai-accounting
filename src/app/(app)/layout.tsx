@@ -20,9 +20,9 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
     <div className="flex min-h-screen bg-background">
       <ProgressBar />
       <Sidebar tenant={user?.tenant ?? null} />
-      <div className="flex min-h-screen flex-1 flex-col">
+      <div className="flex min-h-screen flex-1 flex-col ml-64">
         <Topbar user={user} />
-        <main className="flex-1 overflow-y-auto bg-muted/10 p-6">{children}</main>
+        <main className="flex-1 overflow-y-auto overflow-x-auto bg-muted/10 p-6 pt-20">{children}</main>
       </div>
     </div>
   );

@@ -28,15 +28,17 @@ type Account = {
   name: string;
   code: string;
   type: string;
+  category: "current" | "non_current" | null;
   is_active: boolean;
 };
 
 type Props = {
   accounts: Account[];
   canManage: boolean;
+  showCategory?: boolean; // Show category column for assets/liabilities
 };
 
-export function AccountsTable({ accounts, canManage }: Props) {
+export function AccountsTable({ accounts, canManage, showCategory = false }: Props) {
   const [isPending, startTransition] = useTransition();
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [accountToDelete, setAccountToDelete] = useState<Account | null>(null);
@@ -107,6 +109,7 @@ export function AccountsTable({ accounts, canManage }: Props) {
             <TableHead>Code</TableHead>
             <TableHead>Name</TableHead>
             <TableHead>Type</TableHead>
+            {showCategory ? <TableHead>Category</TableHead> : null}
             <TableHead>Status</TableHead>
             {canManage ? <TableHead className="text-right">Actions</TableHead> : null}
           </TableRow>
@@ -114,8 +117,8 @@ export function AccountsTable({ accounts, canManage }: Props) {
         <TableBody>
           {accounts.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={canManage ? 5 : 4} className="py-6 text-center text-sm">
-                No accounts configured. Add your chart of accounts to begin posting entries.
+              <TableCell colSpan={canManage ? (showCategory ? 6 : 5) : (showCategory ? 5 : 4)} className="py-6 text-center text-sm">
+                No accounts found for the selected filter.
               </TableCell>
             </TableRow>
           ) : (
@@ -124,6 +127,17 @@ export function AccountsTable({ accounts, canManage }: Props) {
                 <TableCell className="font-mono text-sm">{account.code}</TableCell>
                 <TableCell>{account.name}</TableCell>
                 <TableCell className="capitalize">{account.type}</TableCell>
+                {showCategory ? (
+                  <TableCell>
+                    {account.category ? (
+                      <Badge variant="outline" className="capitalize">
+                        {account.category === "current" ? "Current" : "Non-Current"}
+                      </Badge>
+                    ) : (
+                      <span className="text-sm text-muted-foreground">-</span>
+                    )}
+                  </TableCell>
+                ) : null}
                 <TableCell>
                   <Badge variant={account.is_active ? "secondary" : "outline"}>
                     {account.is_active ? "Active" : "Inactive"}

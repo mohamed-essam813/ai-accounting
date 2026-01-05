@@ -21,6 +21,7 @@ type AuditLogsInsert = Database["public"]["Tables"]["audit_logs"]["Insert"];
 
 const SaveDraftSchema = DraftSchema.extend({
   rawPrompt: z.string().optional(),
+  contactId: z.string().uuid().optional().nullable(),
 });
 
 export async function saveDraftAction(input: z.infer<typeof SaveDraftSchema>) {
@@ -47,20 +48,23 @@ export async function saveDraftAction(input: z.infer<typeof SaveDraftSchema>) {
     entities.invoice_number = await generateInvoiceNumber(user.tenant.id);
   }
 
-  // Store original prompt in data_json for RAG-based account selection
+  // Store original prompt and AI-selected accounts in data_json
   const dataJson = {
     ...entities,
     original_prompt: (payload as { rawPrompt?: string }).rawPrompt ?? null,
+    ai_selected_accounts: payload.accounts ?? null, // Store AI account selections
   };
 
-  const insertData: DraftsInsert = {
+  // contact_id will be added by migration, using type assertion for now
+  const insertData = {
     tenant_id: user.tenant.id,
     intent: payload.intent,
     data_json: dataJson,
     status: "draft",
     created_by: user.id,
     confidence: payload.confidence,
-  };
+    contact_id: (payload as { contactId?: string | null }).contactId ?? null,
+  } as DraftsInsert & { contact_id?: string | null };
   // Use type assertion for insert to fix type inference
   // Type assertion to fix Supabase type inference - this is type-safe as we're using Database types
   const table = supabase.from("drafts") as unknown as {
@@ -286,6 +290,9 @@ export async function postDraftAction(input: z.infer<typeof PostDraftSchema>) {
     return draft.posted_entry_id;
   }
 
+  // Get all accounts for validation and journal line generation
+  const allAccounts = await listAccounts();
+
   // Ensure default accounts exist before posting
   const { ensureDefaultAccounts } = await import("@/lib/data/accounts");
   try {
@@ -294,7 +301,7 @@ export async function postDraftAction(input: z.infer<typeof PostDraftSchema>) {
     console.warn("Failed to ensure default accounts (continuing anyway):", error);
   }
 
-  const accounts = await listAccounts();
+  // Get accounts for validation and journal line generation (reuse allAccounts from above)
   
   // Check if draft has edited journal lines
   const draftData = draft.data_json as Record<string, unknown>;
@@ -309,10 +316,14 @@ export async function postDraftAction(input: z.infer<typeof PostDraftSchema>) {
   const editedDescription = draftData.edited_description as string | undefined;
 
   // Parse draft first (needed for date extraction)
+  // Extract AI-selected accounts from data_json if available
+  const aiSelectedAccounts = draftData.ai_selected_accounts as any;
+  
   const parsedDraft = DraftSchema.parse({
     intent: draft.intent,
     entities: draft.data_json,
     confidence: draft.confidence ? Number(draft.confidence) : 0,
+    accounts: aiSelectedAccounts, // Include AI-selected accounts if available
   });
 
   let description: string;
@@ -328,33 +339,10 @@ export async function postDraftAction(input: z.infer<typeof PostDraftSchema>) {
       memo: line.memo ?? null,
     }));
   } else {
-    // Generate journal lines from draft
-    type IntentMappingRow = Database["public"]["Tables"]["intent_account_mappings"]["Row"];
-    const { data: mapping } = await supabase
-      .from("intent_account_mappings")
-      .select<"*", IntentMappingRow>("*")
-      .eq("tenant_id", user.tenant.id)
-      .eq("intent", draft.intent)
-      .maybeSingle();
-
-    // Convert database mapping to IntentAccountMapping type, casting intent to the correct enum type
-    const intentMapping = mapping
-      ? ({
-          intent: mapping.intent as DraftPayload["intent"],
-          debit_account_id: mapping.debit_account_id,
-          credit_account_id: mapping.credit_account_id,
-          tax_debit_account_id: mapping.tax_debit_account_id,
-          tax_credit_account_id: mapping.tax_credit_account_id,
-        } as IntentAccountMapping)
-      : undefined;
-
-    // Try to get original prompt from draft data for RAG-based account selection
-    const originalPrompt = (draft.data_json as { original_prompt?: string })?.original_prompt;
-    
-    const result = await buildDefaultJournalLines(parsedDraft, accounts, intentMapping, {
-      prompt: originalPrompt,
+    // Generate journal lines from draft using AI-selected accounts or fallback
+    // No manual mapping needed - AI selects accounts automatically
+    const result = await buildDefaultJournalLines(parsedDraft, allAccounts, null, {
       tenantId: user.tenant.id,
-      useRAG: true, // Enable RAG-based dynamic account selection
     });
     description = result.description;
     lines = result.lines;
@@ -366,7 +354,11 @@ export async function postDraftAction(input: z.infer<typeof PostDraftSchema>) {
 
   ensureBalanced(lines);
 
-  const entryData: JournalEntriesInsert = {
+  // Get contact_id from draft if available (will be available after migration)
+  const draftContactId = (draft as { contact_id?: string | null }).contact_id;
+
+  // contact_id will be added by migration, using type assertion for now
+  const entryData = {
     tenant_id: user.tenant.id,
     date: (parsedDraft.entities.date as string) ?? new Date().toISOString().slice(0, 10),
     description,
@@ -374,7 +366,8 @@ export async function postDraftAction(input: z.infer<typeof PostDraftSchema>) {
     created_by: user.id,
     approved_by: user.id,
     posted_at: new Date().toISOString(),
-  };
+    contact_id: draftContactId ?? null,
+  } as JournalEntriesInsert & { contact_id?: string | null };
   // Use type assertion for insert to fix type inference
   // Type assertion to fix Supabase type inference - this is type-safe as we're using Database types
   const entryTable = supabase.from("journal_entries") as unknown as {
@@ -523,24 +516,21 @@ export async function getDraftJournalPreview(draftId: string) {
     throw new Error("Draft not found.");
   }
 
-  // Get accounts and mapping
+  // Get accounts (no manual mapping needed - AI selects accounts automatically)
   const accounts = await listAccounts();
-  type IntentMappingRow = Database["public"]["Tables"]["intent_account_mappings"]["Row"];
-  const { data: mapping } = await supabase
-    .from("intent_account_mappings")
-    .select<"*", IntentMappingRow>("*")
-    .eq("tenant_id", user.tenant.id)
-    .eq("intent", draft.intent)
-    .maybeSingle();
+
+  // Extract AI-selected accounts from data_json if available
+  const draftData = draft.data_json as Record<string, unknown>;
+  const aiSelectedAccounts = draftData.ai_selected_accounts as any;
 
   const parsedDraft = DraftSchema.parse({
     intent: draft.intent,
     entities: draft.data_json,
     confidence: draft.confidence ? Number(draft.confidence) : 0,
+    accounts: aiSelectedAccounts, // Include AI-selected accounts if available
   });
 
   // Check if draft has edited journal lines
-  const draftData = draft.data_json as Record<string, unknown>;
   const editedLines = draftData.edited_journal_lines as
     | Array<{
         account_id: string;
@@ -575,24 +565,10 @@ export async function getDraftJournalPreview(draftId: string) {
     };
   }
 
-  // Otherwise, generate journal lines from draft
-  const intentMapping = mapping
-    ? ({
-        intent: mapping.intent as DraftPayload["intent"],
-        debit_account_id: mapping.debit_account_id,
-        credit_account_id: mapping.credit_account_id,
-        tax_debit_account_id: mapping.tax_debit_account_id,
-        tax_credit_account_id: mapping.tax_credit_account_id,
-      } as IntentAccountMapping)
-    : undefined;
-
-  // Try to get original prompt from draft data for RAG-based account selection
-  const originalPrompt = (draft.data_json as { original_prompt?: string })?.original_prompt;
-  
-  const { description, lines } = await buildDefaultJournalLines(parsedDraft, accounts, intentMapping, {
-    prompt: originalPrompt,
+  // Otherwise, generate journal lines from draft using AI-selected accounts or fallback
+  // No manual mapping needed - AI selects accounts automatically
+  const { description, lines } = await buildDefaultJournalLines(parsedDraft, accounts, null, {
     tenantId: user.tenant.id,
-    useRAG: true, // Enable RAG-based dynamic account selection
   });
 
   // Map journal lines to include account details

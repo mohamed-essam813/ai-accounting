@@ -60,9 +60,8 @@ export function ReportsTabs({ defaultTab, children }: ReportsTabsProps) {
           </TabsTrigger>
         </TabsList>
         {isPending && (
-          <div className="absolute right-0 top-1/2 -translate-y-1/2 flex items-center gap-2 text-sm text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin" />
-            <span>Loading...</span>
+          <div className="absolute right-0 top-1/2 -translate-y-1/2">
+            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
           </div>
         )}
       </div>

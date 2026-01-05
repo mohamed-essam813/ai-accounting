@@ -5,6 +5,7 @@ import { z } from "zod";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { getCurrentUser } from "@/lib/data/users";
 import type { Database } from "@/lib/database.types";
+import { validateBankAccount } from "@/lib/accounting/is-bank-account";
 
 type BankTransactionsInsert = Database["public"]["Tables"]["bank_transactions"]["Insert"];
 type BankTransactionsUpdate = Database["public"]["Tables"]["bank_transactions"]["Update"];
@@ -34,15 +35,27 @@ export async function importBankTransactionsAction(input: z.infer<typeof ImportS
 
   const tenantId = user.tenant.id;
   
-  // If bankAccountId not provided, default to Cash account (1000)
+  // Validate that bankAccountId is a Cash/Bank account (backend enforcement)
+  // This is critical: bank reconciliation must only work with Cash/Bank accounts (codes 1000-1099)
+  const { listAccounts } = await import("@/lib/data/accounts");
+  const accounts = await listAccounts();
+  
   let bankAccountId = payload.bankAccountId;
   if (!bankAccountId) {
-    const { listAccounts } = await import("@/lib/data/accounts");
-    const accounts = await listAccounts();
+    // Default to Cash account (1000) if not provided
     const cashAccount = accounts.find((acc) => acc.code === "1000");
     if (cashAccount) {
       bankAccountId = cashAccount.id;
     }
+  }
+  
+  // CRITICAL: Validate that the selected account is actually a Cash/Bank account
+  if (bankAccountId) {
+    const selectedAccount = accounts.find((acc) => acc.id === bankAccountId);
+    if (!selectedAccount) {
+      throw new Error(`Bank account ${bankAccountId} not found in chart of accounts`);
+    }
+    validateBankAccount(selectedAccount, bankAccountId);
   }
   
   const rows: BankTransactionsInsert[] = payload.transactions.map((txn) => ({

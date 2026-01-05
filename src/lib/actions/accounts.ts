@@ -17,8 +17,9 @@ type IntentMappingRow = Database["public"]["Tables"]["intent_account_mappings"][
 
 const AccountSchema = z.object({
   name: z.string().min(3),
-  code: z.string().min(3),
+  code: z.string().min(3).optional(), // Optional - will be generated if not provided
   type: z.enum(["asset", "liability", "equity", "revenue", "expense"]),
+  category: z.enum(["current", "non_current"]).nullable().optional(), // Only for assets/liabilities
 });
 
 export async function createAccountAction(input: z.infer<typeof AccountSchema>) {
@@ -32,13 +33,44 @@ export async function createAccountAction(input: z.infer<typeof AccountSchema>) 
     throw new Error("You do not have permission to manage the chart of accounts.");
   }
 
+  // Determine category if not provided
+  let category: "current" | "non_current" | null = payload.category ?? null;
+  
+  // If code is provided but category is not, determine from code
+  if (payload.code && !category && (payload.type === "asset" || payload.type === "liability")) {
+    const { determineCategoryFromCode } = await import("@/lib/accounting/determine-category");
+    category = determineCategoryFromCode(payload.code, payload.type);
+  }
+
+  // Generate code if not provided
+  let code = payload.code;
+  if (!code) {
+    const { generateAccountCode } = await import("@/lib/accounting/generate-account-code");
+    code = await generateAccountCode(payload.type, user.tenant.id, category ?? undefined);
+  }
+
+  // Validate code and category match (warn but don't block)
+  if (code && category && (payload.type === "asset" || payload.type === "liability")) {
+    const { validateCodeCategoryMatch } = await import("@/lib/accounting/determine-category");
+    const validation = validateCodeCategoryMatch(code, payload.type, category);
+    if (!validation.valid && validation.expectedCategory) {
+      console.warn(
+        `Code ${code} and category ${category} don't match. Expected category: ${validation.expectedCategory}`,
+      );
+      // Auto-correct to match code range
+      category = validation.expectedCategory;
+    }
+  }
+
   const supabase = await createServerSupabaseClient();
-  const insertData: ChartOfAccountsInsert = {
+  // Use type assertion for category since it may not be in database types yet
+  const insertData = {
     tenant_id: user.tenant.id,
     name: payload.name,
-    code: payload.code,
+    code: code!, // Code is guaranteed to be defined at this point
     type: payload.type,
-  };
+    ...(category && { category }),
+  } as ChartOfAccountsInsert & { category?: "current" | "non_current" | null };
   // Use type assertion to fix Supabase type inference - type-safe using Database types
   const table = supabase.from("chart_of_accounts") as unknown as {
     insert: (values: ChartOfAccountsInsert[]) => {
@@ -84,6 +116,90 @@ export async function createAccountAction(input: z.infer<typeof AccountSchema>) 
   await auditTable.insert([auditData]);
 
   revalidatePath("/accounts");
+}
+
+/**
+ * Auto-create account with generated code (used by AI)
+ * This function is called when AI suggests creating a new account
+ */
+export async function autoCreateAccountAction(
+  name: string,
+  type: "asset" | "liability" | "equity" | "revenue" | "expense",
+  category?: "current" | "non_current" | null,
+) {
+  const user = await getCurrentUser();
+  if (!user?.tenant) {
+    throw new Error("Tenant not resolved.");
+  }
+
+  // Generate account code automatically based on type and category
+  const { generateAccountCode } = await import("@/lib/accounting/generate-account-code");
+  const code = await generateAccountCode(type, user.tenant.id, category ?? undefined);
+
+  // Create account
+  const supabase = await createServerSupabaseClient();
+  // Determine category if not provided (for assets/liabilities)
+  let finalCategory: "current" | "non_current" | null = category ?? null;
+  if (!finalCategory && (type === "asset" || type === "liability")) {
+    const { determineCategoryFromCode } = await import("@/lib/accounting/determine-category");
+    finalCategory = determineCategoryFromCode(code, type);
+  }
+
+  // Use type assertion for category since it may not be in database types yet
+  const insertData = {
+    tenant_id: user.tenant.id,
+    name: name.trim(),
+    code,
+    type,
+    ...(finalCategory && { category: finalCategory }),
+  } as ChartOfAccountsInsert & { category?: "current" | "non_current" | null };
+
+  const table = supabase.from("chart_of_accounts") as unknown as {
+    insert: (values: ChartOfAccountsInsert[]) => {
+      select: (columns?: string) => Promise<{ data: ChartOfAccountsRow[] | null; error: unknown }>;
+    };
+  };
+  const { data: accounts, error } = await table.insert([insertData]).select("*");
+  const account = accounts?.[0] ?? null;
+
+  if (error) {
+    console.error("Failed to auto-create account:", error);
+    throw error;
+  }
+
+  if (!account) {
+    throw new Error("Failed to create account");
+  }
+
+  // Populate embedding for RAG (async, don't wait)
+  const tenantId = user.tenant.id;
+  import("@/lib/ai/populate-embeddings")
+    .then(({ populateAccountEmbedding }) =>
+      populateAccountEmbedding({
+        tenantId,
+        accountId: account.id,
+        accountName: account.name,
+        accountCode: account.code,
+        accountType: account.type,
+      }),
+    )
+    .catch((err) => console.error("Failed to populate account embedding:", err));
+
+  // Log to audit trail
+  const auditData: AuditLogsInsert = {
+    tenant_id: user.tenant.id,
+    actor_id: user.id,
+    action: "account.auto_created",
+    entity: "chart_of_accounts",
+    changes: { name, code, type, source: "ai_suggestion" },
+  };
+  const auditTable = supabase.from("audit_logs") as unknown as {
+    insert: (values: AuditLogsInsert[]) => Promise<{ error: unknown }>;
+  };
+  await auditTable.insert([auditData]);
+
+  revalidatePath("/accounts");
+  return account;
 }
 
 const ToggleSchema = z.object({
@@ -266,6 +382,36 @@ export async function updateIntentMappingAction(input: z.infer<typeof IntentMapp
     throw new Error("You do not have permission to manage intent mappings.");
   }
 
+  // FEEDBACK: Validate account types before saving
+  const { listAccounts } = await import("@/lib/data/accounts");
+  const { validateIntentMapping } = await import("@/lib/accounting/gl-mapping-validation");
+  const allAccounts = await listAccounts();
+  
+  // Import type for validation
+  type IntentAccountMapping = {
+    intent: "create_invoice" | "create_bill" | "record_payment" | "reconcile_bank" | "generate_report" | "create_credit_note" | "create_debit_note";
+    debit_account_id: string;
+    credit_account_id: string;
+    tax_debit_account_id: string | null;
+    tax_credit_account_id: string | null;
+  };
+  
+  const intentMapping: IntentAccountMapping = {
+    intent: payload.intent,
+    debit_account_id: payload.debitAccountId,
+    credit_account_id: payload.creditAccountId,
+    tax_debit_account_id: payload.taxDebitAccountId ?? null,
+    tax_credit_account_id: payload.taxCreditAccountId ?? null,
+  };
+  
+  const validation = validateIntentMapping(intentMapping, allAccounts, payload.intent);
+  if (!validation.valid) {
+    throw new Error(
+      `Invalid account mapping: ${validation.errors.join("; ")}. ` +
+      `Please select accounts with compatible types.`
+    );
+  }
+
   const supabase = await createServerSupabaseClient();
   const upsertData: IntentMappingInsert = {
     tenant_id: user.tenant.id,
@@ -287,7 +433,7 @@ export async function updateIntentMappingAction(input: z.infer<typeof IntentMapp
   }
 
   // Get account names for embedding
-  const { data: accounts } = await supabase
+  const { data: accountData } = await supabase
     .from("chart_of_accounts")
     .select<"id, name", Pick<ChartOfAccountsRow, "id" | "name">>("id, name")
     .in("id", [
@@ -298,7 +444,7 @@ export async function updateIntentMappingAction(input: z.infer<typeof IntentMapp
     ].filter(Boolean) as string[])
     .eq("tenant_id", user.tenant.id);
 
-  const accountMap = new Map(accounts?.map((a) => [a.id, a.name]) ?? []);
+  const accountMap = new Map(accountData?.map((a: { id: string; name: string }) => [a.id, a.name]) ?? []);
 
   // Populate embedding for RAG (async, don't wait)
   const tenantId = user.tenant.id;
@@ -309,11 +455,11 @@ export async function updateIntentMappingAction(input: z.infer<typeof IntentMapp
         intent: payload.intent,
         debitAccountName: accountMap.get(payload.debitAccountId) ?? null,
         creditAccountName: accountMap.get(payload.creditAccountId) ?? null,
-        taxAccountName: payload.taxDebitAccountId
+        taxAccountName: (payload.taxDebitAccountId
           ? accountMap.get(payload.taxDebitAccountId) ?? null
           : payload.taxCreditAccountId
             ? accountMap.get(payload.taxCreditAccountId) ?? null
-            : null,
+            : null) as string | null,
       }),
     )
     .catch((err) => console.error("Failed to populate mapping embedding:", err));

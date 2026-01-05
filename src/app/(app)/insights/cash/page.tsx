@@ -201,16 +201,25 @@ export default async function CashInsightPage() {
         </CardContent>
       </Card>
 
-      {/* Section E: Optional Evidence */}
+      {/* Section E: Optional Evidence - Traceability (Excel Elimination Doctrine) */}
       <Card>
         <CardHeader>
           <CardTitle className="text-lg">Evidence & Details</CardTitle>
+          <p className="text-sm text-muted-foreground">
+            Trace numbers to source transactions (≤3 clicks)
+          </p>
         </CardHeader>
         <CardContent>
           <div className="flex flex-col gap-3">
             <Link href="/reports/pnl?tab=cashflow" className="block">
               <Button variant="outline" className="w-full justify-between group hover:bg-accent">
                 <span>View Cash Flow Statement</span>
+                <ArrowRight className="h-4 w-4 opacity-0 group-hover:opacity-100 transition-opacity" />
+              </Button>
+            </Link>
+            <Link href="/ledger?accountCode=1000" className="block">
+              <Button variant="outline" className="w-full justify-between group hover:bg-accent">
+                <span>View Cash Account Ledger</span>
                 <ArrowRight className="h-4 w-4 opacity-0 group-hover:opacity-100 transition-opacity" />
               </Button>
             </Link>

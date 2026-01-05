@@ -16,6 +16,7 @@ create or replace view v_journal_ledger as
   select
     je.tenant_id,
     je.id as entry_id,
+    jl.id as line_id,
     je.date,
     je.description,
     je.status,
