@@ -1,43 +1,88 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState, useTransition, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { toast } from "sonner";
-import { createInventoryItemAction } from "@/lib/actions/inventory";
+import { createInventoryItemAction, updateInventoryItemAction } from "@/lib/actions/inventory";
+import type { InventoryItem } from "@/lib/data/inventory";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Info } from "lucide-react";
+import { Info, Plus } from "lucide-react";
+import { listUnitsOfMeasure, type UnitOfMeasure } from "@/lib/data/units-of-measure";
 
 type Props = {
   valuationMethod: "fifo" | "weighted_average";
+  item?: InventoryItem | null; // For edit mode
+  onSuccess?: () => void;
 };
 
-export function InventoryItemForm({ valuationMethod }: Props) {
+export function InventoryItemForm({ valuationMethod, item, onSuccess }: Props) {
   const [isPending, startTransition] = useTransition();
+  const [uoms, setUOMs] = useState<UnitOfMeasure[]>([]);
+  const [loadingUOMs, setLoadingUOMs] = useState(true);
+  const isEditMode = !!item;
+  
   const [formData, setFormData] = useState({
-    name: "",
-    sku: "",
-    description: "",
-    unit: "unit",
+    name: item?.name || "",
+    sku: item?.sku || "",
+    description: item?.description || "",
+    uom_id: (item as any)?.uom_id || "",
   });
+
+  // Load UOMs on mount or when item changes
+  useEffect(() => {
+    listUnitsOfMeasure()
+      .then((data) => {
+        setUOMs(data);
+        // Set default to "unit" if available and not in edit mode
+        if (!isEditMode) {
+          const defaultUnit = data.find((uom) => uom.abbreviation === "unit");
+          if (defaultUnit && !formData.uom_id) {
+            setFormData((prev) => ({ ...prev, uom_id: defaultUnit.id }));
+          }
+        }
+      })
+      .catch((error) => {
+        console.error("Failed to load units of measure:", error);
+        toast.error("Failed to load units of measure");
+      })
+      .finally(() => {
+        setLoadingUOMs(false);
+      });
+  }, []);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     startTransition(async () => {
       try {
-        await createInventoryItemAction(formData);
-        toast.success("Inventory item created successfully");
-        // Reset form
-        setFormData({
-          name: "",
-          sku: "",
-          description: "",
-          unit: "unit",
-        });
+        if (isEditMode && item) {
+          await updateInventoryItemAction({ ...formData, id: item.id });
+          toast.success("Inventory item updated successfully");
+          onSuccess?.();
+        } else {
+          await createInventoryItemAction(formData);
+          toast.success("Inventory item created successfully");
+          // Reset form
+          const defaultUnit = uoms.find((uom) => uom.abbreviation === "unit");
+          setFormData({
+            name: "",
+            sku: "",
+            description: "",
+            uom_id: defaultUnit?.id || "",
+          });
+          onSuccess?.();
+        }
       } catch (error) {
         toast.error(
-          error instanceof Error ? error.message : "Failed to create inventory item",
+          error instanceof Error ? error.message : isEditMode ? "Failed to update inventory item" : "Failed to create inventory item",
         );
       }
     });
@@ -85,15 +130,47 @@ export function InventoryItemForm({ valuationMethod }: Props) {
       </div>
 
       <div className="space-y-2">
-        <label htmlFor="unit" className="text-sm font-medium">
-          Unit
-        </label>
-        <Input
-          id="unit"
-          value={formData.unit}
-          onChange={(e) => setFormData({ ...formData, unit: e.target.value })}
-          placeholder="e.g., piece, kg, liter"
-        />
+        <div className="flex items-center justify-between">
+          <label htmlFor="uom_id" className="text-sm font-medium">
+            Unit of Measure *
+          </label>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-6 text-xs"
+            onClick={() => {
+              // Navigate to settings page with UOM form open
+              window.location.href = "/settings/tenant#units-of-measure";
+            }}
+          >
+            <Plus className="h-3 w-3 mr-1" />
+            Add Unit
+          </Button>
+        </div>
+        {loadingUOMs ? (
+          <Input disabled placeholder="Loading units..." />
+        ) : (
+          <Select
+            value={formData.uom_id}
+            onValueChange={(value) => setFormData({ ...formData, uom_id: value })}
+            required
+          >
+            <SelectTrigger id="uom_id">
+              <SelectValue placeholder="Select unit of measure" />
+            </SelectTrigger>
+            <SelectContent>
+              {uoms.map((uom) => (
+                <SelectItem key={uom.id} value={uom.id}>
+                  {uom.name} ({uom.abbreviation})
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+        <p className="text-xs text-muted-foreground">
+          Select the unit of measure for this inventory item
+        </p>
       </div>
 
       {/* Read-only valuation method display */}
@@ -105,7 +182,7 @@ export function InventoryItemForm({ valuationMethod }: Props) {
       </Alert>
 
       <Button type="submit" disabled={isPending || !formData.name}>
-        {isPending ? "Creating..." : "Create Inventory Item"}
+        {isPending ? (isEditMode ? "Updating..." : "Creating...") : (isEditMode ? "Update Inventory Item" : "Create Inventory Item")}
       </Button>
     </form>
   );

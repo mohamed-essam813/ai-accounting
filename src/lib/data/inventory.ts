@@ -17,7 +17,8 @@ export interface InventoryItem {
   name: string;
   sku: string | null;
   description: string | null;
-  unit: string;
+  unit: string; // Deprecated - use uom_id instead, kept for backward compatibility
+  uom_id?: string | null; // New field - links to units_of_measure
   valuation_method: "fifo" | "weighted_average";
   is_active: boolean;
   created_at: string;

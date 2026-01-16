@@ -6,7 +6,7 @@
 
 "use client";
 
-import { useState, useTransition, useRef } from "react";
+import { useState, useTransition, useRef, useEffect, useCallback } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -14,7 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { toast } from "sonner";
-import { Upload, X, FileText } from "lucide-react";
+import { Upload, X, FileText, Check, Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { AccountConfirmationDialog } from "./account-confirmation-dialog";
 import { CashBankSelectionDialog } from "./cash-bank-selection-dialog";
@@ -58,6 +58,12 @@ export function UnifiedInput({ onDraftCreated }: Props) {
   const [pendingDraftData, setPendingDraftData] = useState<any>(null);
   // Use ref to track if we're transitioning to bank selection (prevents onClose from clearing state)
   const isTransitioningToBankSelection = useRef(false);
+  
+  // localStorage persistence state
+  const STORAGE_KEY = "prompt_draft_session";
+  const [saveStatus, setSaveStatus] = useState<"saved" | "saving" | "unsaved">("unsaved");
+  const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
+  const autoSaveTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const form = useForm<FormValues>({
     resolver: zodResolver(UnifiedInputSchema),
@@ -65,6 +71,91 @@ export function UnifiedInput({ onDraftCreated }: Props) {
       prompt: "",
     },
   });
+
+  // Load from localStorage on mount
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.prompt) {
+          form.reset({ prompt: parsed.prompt });
+          setSaveStatus("saved");
+          if (parsed.savedAt) {
+            setLastSavedAt(new Date(parsed.savedAt));
+          }
+        }
+        // Note: We don't restore uploaded files as File objects can't be serialized
+        // Users will need to re-upload files
+      }
+    } catch (error) {
+      console.error("Failed to load saved prompt:", error);
+    }
+  }, [form]);
+
+  // Auto-save to localStorage (debounced)
+  const saveToLocalStorage = useCallback((promptText: string) => {
+    if (typeof window === "undefined") return;
+    
+    setSaveStatus("saving");
+    
+    // Clear existing timer
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+    }
+    
+    // Debounce save (2 seconds after last keystroke)
+    autoSaveTimerRef.current = setTimeout(() => {
+      try {
+        const dataToSave = {
+          prompt: promptText,
+          savedAt: new Date().toISOString(),
+        };
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(dataToSave));
+        setSaveStatus("saved");
+        setLastSavedAt(new Date());
+      } catch (error) {
+        console.error("Failed to save prompt to localStorage:", error);
+        setSaveStatus("unsaved");
+      }
+    }, 2000);
+  }, []);
+
+  // Watch for prompt changes
+  const promptValue = form.watch("prompt");
+  useEffect(() => {
+    if (promptValue) {
+      setSaveStatus("unsaved");
+      saveToLocalStorage(promptValue);
+    } else {
+      // Clear localStorage if prompt is empty
+      if (typeof window !== "undefined") {
+        localStorage.removeItem(STORAGE_KEY);
+        setSaveStatus("unsaved");
+        setLastSavedAt(null);
+      }
+    }
+  }, [promptValue, saveToLocalStorage, form]);
+
+  // Cleanup timer on unmount
+  useEffect(() => {
+    return () => {
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current);
+      }
+    };
+  }, []);
+
+  // Clear localStorage after successful draft creation
+  const clearSavedPrompt = useCallback(() => {
+    if (typeof window !== "undefined") {
+      localStorage.removeItem(STORAGE_KEY);
+      setSaveStatus("unsaved");
+      setLastSavedAt(null);
+    }
+  }, []);
 
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files;
@@ -467,6 +558,8 @@ export function UnifiedInput({ onDraftCreated }: Props) {
         setDocumentIds(fileIds);
         form.reset();
         setUploadedFiles([]);
+        // Clear saved prompt from localStorage after successful draft creation
+        clearSavedPrompt();
         // Call onDraftCreated callback to trigger split view in parent component
         if (onDraftCreated) {
           onDraftCreated(savedDraft.id);
@@ -487,10 +580,33 @@ export function UnifiedInput({ onDraftCreated }: Props) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Tell us what happened</CardTitle>
-        <CardDescription>
-          You can type, upload documents, or do both.
-        </CardDescription>
+        <div className="flex items-center justify-between">
+          <div>
+            <CardTitle>Tell us what happened</CardTitle>
+            <CardDescription>
+              You can type, upload documents, or do both.
+            </CardDescription>
+          </div>
+          {/* Save Status Indicator */}
+          {promptValue && (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              {saveStatus === "saving" && (
+                <>
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  <span>Saving...</span>
+                </>
+              )}
+              {saveStatus === "saved" && lastSavedAt && (
+                <>
+                  <Check className="h-3 w-3 text-green-600" />
+                  <span>
+                    Saved {lastSavedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  </span>
+                </>
+              )}
+            </div>
+          )}
+        </div>
       </CardHeader>
       <CardContent className="space-y-4">
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">

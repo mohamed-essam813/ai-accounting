@@ -11,6 +11,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { formatCurrency, formatDate } from "@/lib/format";
 import { getJournalLedger } from "@/lib/data/reports";
 import { listAccounts } from "@/lib/data/accounts";
+import { ExportButtons } from "@/components/reports/export-buttons";
 import Link from "next/link";
 import { ArrowRight, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -133,10 +134,35 @@ export default async function LedgerPage({
       )}
 
       <Card>
-        <CardHeader>
-          <CardTitle>
-            {account ? `${account.name} Ledger` : "General Ledger"}
-          </CardTitle>
+        <CardHeader className="flex flex-row items-center justify-between">
+          <div>
+            <CardTitle>
+              {account ? `${account.name} Ledger` : "General Ledger"}
+            </CardTitle>
+            <p className="text-sm text-muted-foreground mt-1">
+              {account
+                ? `All transactions for ${account.name} (${account.code})`
+                : "All journal entries and transactions. Use filters to adjust date ranges."}
+            </p>
+          </div>
+          {ledgerWithBalance.length > 0 && (
+            <ExportButtons
+              data={{
+                title: account ? `Ledger-${account.code}-${account.name.replace(/\s+/g, "-")}` : "General-Ledger",
+                headers: ["Date", "Description", "Account Code", "Account Name", "Debit", "Credit", "Balance", "Memo"],
+                rows: ledgerWithBalance.map((entry) => [
+                  entry.date,
+                  entry.description,
+                  entry.account_code,
+                  entry.account_name,
+                  Number(entry.debit ?? 0),
+                  Number(entry.credit ?? 0),
+                  entry.runningBalance,
+                  entry.memo ?? "",
+                ]),
+              }}
+            />
+          )}
         </CardHeader>
         <CardContent>
           {ledgerWithBalance.length === 0 ? (

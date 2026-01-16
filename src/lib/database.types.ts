@@ -1011,6 +1011,7 @@ export type Database = {
           sku: string | null
           tenant_id: string
           unit: string
+          uom_id: string
           updated_at: string
           valuation_method: string
         }
@@ -1023,6 +1024,7 @@ export type Database = {
           sku?: string | null
           tenant_id: string
           unit?: string
+          uom_id: string
           updated_at?: string
           valuation_method: string
         }
@@ -1035,6 +1037,7 @@ export type Database = {
           sku?: string | null
           tenant_id?: string
           unit?: string
+          uom_id?: string
           updated_at?: string
           valuation_method?: string
         }
@@ -1044,6 +1047,13 @@ export type Database = {
             columns: ["tenant_id"]
             isOneToOne: false
             referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "inventory_items_uom_id_fkey"
+            columns: ["uom_id"]
+            isOneToOne: false
+            referencedRelation: "units_of_measure"
             referencedColumns: ["id"]
           },
         ]
@@ -1500,6 +1510,81 @@ export type Database = {
           },
         ]
       }
+      tax_rates: {
+        Row: {
+          created_at: string
+          id: string
+          input_vat_account_id: string | null
+          is_active: boolean
+          name: string
+          output_vat_account_id: string | null
+          percentage: number
+          tax_type: string
+          tenant_id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          input_vat_account_id?: string | null
+          is_active?: boolean
+          name: string
+          output_vat_account_id?: string | null
+          percentage: number
+          tax_type: string
+          tenant_id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          input_vat_account_id?: string | null
+          is_active?: boolean
+          name?: string
+          output_vat_account_id?: string | null
+          percentage?: number
+          tax_type?: string
+          tenant_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tax_rates_input_vat_account_id_fkey"
+            columns: ["input_vat_account_id"]
+            isOneToOne: false
+            referencedRelation: "chart_of_accounts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tax_rates_input_vat_account_id_fkey"
+            columns: ["input_vat_account_id"]
+            isOneToOne: false
+            referencedRelation: "v_trial_balance"
+            referencedColumns: ["account_id"]
+          },
+          {
+            foreignKeyName: "tax_rates_output_vat_account_id_fkey"
+            columns: ["output_vat_account_id"]
+            isOneToOne: false
+            referencedRelation: "chart_of_accounts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tax_rates_output_vat_account_id_fkey"
+            columns: ["output_vat_account_id"]
+            isOneToOne: false
+            referencedRelation: "v_trial_balance"
+            referencedColumns: ["account_id"]
+          },
+          {
+            foreignKeyName: "tax_rates_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       tenant_subscriptions: {
         Row: {
           cancel_at: string | null
@@ -1577,6 +1662,50 @@ export type Database = {
           name?: string
         }
         Relationships: []
+      }
+      units_of_measure: {
+        Row: {
+          abbreviation: string
+          category: string
+          created_at: string
+          id: string
+          is_active: boolean
+          is_system: boolean
+          name: string
+          tenant_id: string
+          updated_at: string
+        }
+        Insert: {
+          abbreviation: string
+          category: string
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          is_system?: boolean
+          name: string
+          tenant_id: string
+          updated_at?: string
+        }
+        Update: {
+          abbreviation?: string
+          category?: string
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          is_system?: boolean
+          name?: string
+          tenant_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "units_of_measure_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
       }
     }
     Views: {

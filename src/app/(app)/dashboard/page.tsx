@@ -38,22 +38,25 @@ import {
   getCurrentYear,
   getPreviousYear,
   getPreviousPeriodRange,
+  getSamePeriodLastYear,
   calculateComparison,
   type DateRange,
 } from "@/lib/utils/period-comparison";
 import { DashboardFilters } from "@/components/dashboard/dashboard-filters";
+import { AIRecommendations } from "@/components/dashboard/ai-recommendations";
 
 export const revalidate = 60;
 
 export default async function DashboardPage({
   searchParams,
 }: {
-  searchParams: Promise<{ period?: string; startDate?: string; endDate?: string }>;
+  searchParams: Promise<{ period?: string; startDate?: string; endDate?: string; compare?: "previous" | "lastYear" }>;
 }) {
   const params = await searchParams;
   const period = params.period || "month";
   const startDate = params.startDate;
   const endDate = params.endDate;
+  const comparisonType = params.compare || "previous";
 
   // Handle errors gracefully - if data fetching fails, show empty state
   let pulse: FinancialPulse;
@@ -63,9 +66,9 @@ export default async function DashboardPage({
   let previousPeriodData: PeriodFinancialData;
   
   try {
-    // Get current and previous period data based on filter
+    // Get current and comparison period data based on filter
     let currentPeriod: DateRange;
-    let previousPeriod: DateRange;
+    let comparisonPeriod: DateRange;
     
     if (startDate && endDate) {
       // Custom date range
@@ -73,30 +76,47 @@ export default async function DashboardPage({
         startDate,
         endDate,
       };
-      previousPeriod = getPreviousPeriodRange(startDate, endDate);
+      // Use comparison type to determine comparison period
+      if (comparisonType === "lastYear") {
+        comparisonPeriod = getSamePeriodLastYear(startDate, endDate);
+      } else {
+        comparisonPeriod = getPreviousPeriodRange(startDate, endDate);
+      }
     } else {
       // Preset periods
       switch (period) {
         case "quarter":
           currentPeriod = getCurrentQuarter();
-          previousPeriod = getPreviousQuarter();
+          if (comparisonType === "lastYear") {
+            comparisonPeriod = getSamePeriodLastYear(currentPeriod.startDate, currentPeriod.endDate);
+          } else {
+            comparisonPeriod = getPreviousQuarter();
+          }
           break;
         case "year":
           currentPeriod = getCurrentYear();
-          previousPeriod = getPreviousYear();
+          if (comparisonType === "lastYear") {
+            comparisonPeriod = getSamePeriodLastYear(currentPeriod.startDate, currentPeriod.endDate);
+          } else {
+            comparisonPeriod = getPreviousYear();
+          }
           break;
         default: // "month"
           currentPeriod = getCurrentMonth();
-          previousPeriod = getPreviousMonth();
+          if (comparisonType === "lastYear") {
+            comparisonPeriod = getSamePeriodLastYear(currentPeriod.startDate, currentPeriod.endDate);
+          } else {
+            comparisonPeriod = getPreviousMonth();
+          }
       }
     }
     
     [pulse, signals, events, currentPeriodData, previousPeriodData] = await Promise.all([
-    getFinancialPulse(),
-    getAttentionSignals(),
-    getRecentFinancialEvents(5),
+      getFinancialPulse(),
+      getAttentionSignals(),
+      getRecentFinancialEvents(5),
       getPeriodFinancialData(currentPeriod),
-      getPeriodFinancialData(previousPeriod),
+      getPeriodFinancialData(comparisonPeriod),
     ]);
   } catch (error) {
     console.error("Dashboard data fetch failed:", error);
@@ -160,6 +180,7 @@ export default async function DashboardPage({
         initialPeriod={period}
         initialStartDate={startDate}
         initialEndDate={endDate}
+        initialComparisonType={comparisonType}
       />
 
       {/* Section 1: Financial Pulse (Top Narrative) */}
@@ -428,7 +449,18 @@ export default async function DashboardPage({
           </div>
       </div>
 
-      {/* Section 3: Recent Financial Events (Optional) */}
+      {/* Section 3: AI Recommendations */}
+      <AIRecommendations
+        currentPeriodData={currentPeriodData}
+        revenueComparison={revenueComparison}
+        expenseComparison={expenseComparison}
+        cashFlowComparison={cashFlowComparison}
+        netIncomeComparison={netIncomeComparison}
+        arComparison={arComparison}
+        apComparison={apComparison}
+      />
+
+      {/* Section 4: Recent Financial Events (Optional) */}
       {events.length > 0 && (
         <div>
           <div className="mb-4">

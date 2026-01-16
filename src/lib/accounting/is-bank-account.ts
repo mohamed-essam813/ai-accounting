@@ -15,6 +15,11 @@ export function isBankAccount(account: Account): boolean {
     return false;
   }
 
+  // Must be active (if is_active field exists)
+  if ("is_active" in account && account.is_active === false) {
+    return false;
+  }
+
   // Parse code as number to check range
   const codeNum = parseInt(account.code, 10);
   

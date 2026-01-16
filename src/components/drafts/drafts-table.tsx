@@ -38,6 +38,7 @@ import { toast } from "sonner";
 import { JournalPreview } from "./journal-preview";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { Database } from "@/lib/database.types";
+import { listTaxRates, type TaxRate } from "@/lib/data/tax-rates";
 
 type Account = Database["public"]["Tables"]["chart_of_accounts"]["Row"];
 
@@ -203,11 +204,27 @@ const DraftIntentOptions = PromptIntentEnum.options;
 const DraftEditFormSchema = z
   .object({
     intent: z.enum(DraftIntentOptions),
-    amount: z.number().positive("Amount must be greater than zero"),
+    amount: z
+      .union([z.number(), z.string()])
+      .transform((val) => {
+        if (typeof val === "string") {
+          const parsed = parseFloat(val);
+          if (isNaN(parsed)) throw new Error("Amount must be a valid number");
+          return parsed;
+        }
+        return val;
+      })
+      .pipe(z.number().positive("Amount must be greater than zero")),
     currency: z.string().min(1, "Currency code is required"),
     date: z
       .string()
-      .regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD format for transaction date"),
+      .regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD format for transaction date")
+      .refine((dateStr) => {
+        const date = new Date(dateStr);
+        const today = new Date();
+        today.setHours(23, 59, 59, 999); // End of today
+        return date <= today;
+      }, "Transaction date cannot be in the future"),
     due_date: z
       .string()
       .regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD format for due date")
@@ -221,6 +238,19 @@ const DraftEditFormSchema = z
     tax_amount: z.string().optional(),
   })
   .superRefine((values, ctx) => {
+    // Validate due_date is not before transaction_date
+    if (values.due_date && values.due_date !== "" && values.due_date !== null && values.date) {
+      const transactionDate = new Date(values.date);
+      const dueDate = new Date(values.due_date);
+      if (dueDate < transactionDate) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["due_date"],
+          message: "Due date cannot be earlier than transaction date",
+        });
+      }
+    }
+
     if (values.tax_rate && Number.isNaN(Number(values.tax_rate))) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -240,11 +270,25 @@ const DraftEditFormSchema = z
 type DraftEditFormValues = z.infer<typeof DraftEditFormSchema>;
 
 function getDefaultValues(draft: DraftTableItem): DraftEditFormValues {
+  // Ensure date is valid - use today if invalid
+  let defaultDate = new Date().toISOString().slice(0, 10);
+  if (typeof draft.entities.date === "string") {
+    const dateStr = draft.entities.date;
+    // Validate date format and ensure it's not epoch (1970-01-01) or far past (before 2000)
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+      const date = new Date(dateStr);
+      const minDate = new Date("2000-01-01");
+      if (date >= minDate && date <= new Date()) {
+        defaultDate = dateStr;
+      }
+    }
+  }
+
   return {
     intent: (draft.intent as DraftEditFormValues["intent"]) ?? "create_invoice",
     amount: typeof draft.entities.amount === "number" ? draft.entities.amount : 0,
     currency: typeof draft.entities.currency === "string" ? draft.entities.currency : "AED",
-    date: typeof draft.entities.date === "string" ? draft.entities.date : new Date().toISOString().slice(0, 10),
+    date: defaultDate,
     due_date: typeof draft.entities.due_date === "string" ? draft.entities.due_date : "",
     counterparty: typeof draft.entities.counterparty === "string" ? draft.entities.counterparty : "",
     invoice_number: typeof draft.entities.invoice_number === "string" ? draft.entities.invoice_number : "",
@@ -262,13 +306,42 @@ function getDefaultValues(draft: DraftTableItem): DraftEditFormValues {
 
 function DraftEditorDialog({ draft, open, onOpenChange, accounts = [] }: DraftEditorDialogProps) {
   const [isSaving, startTransition] = useTransition();
+  const [taxRates, setTaxRates] = useState<TaxRate[]>([]);
+  const [taxAmountOverride, setTaxAmountOverride] = useState(false);
+  
   const defaultValues = useMemo(() => (draft ? getDefaultValues(draft) : undefined), [draft]);
   const form = useForm<DraftEditFormValues>({
-    resolver: zodResolver(DraftEditFormSchema),
+    resolver: zodResolver(DraftEditFormSchema) as any,
     defaultValues,
   });
 
   const intentValue = useWatch({ control: form.control, name: "intent" });
+  const amountValue = useWatch({ control: form.control, name: "amount" });
+  const taxRateValue = useWatch({ control: form.control, name: "tax_rate" });
+
+  // Load tax rates
+  useEffect(() => {
+    if (open) {
+      listTaxRates()
+        .then((rates) => setTaxRates(rates))
+        .catch((error) => {
+          console.error("Failed to load tax rates:", error);
+        });
+    }
+  }, [open]);
+
+  // Auto-calculate tax amount when tax rate or amount changes
+  useEffect(() => {
+    if (taxRateValue && !taxAmountOverride) {
+      const selectedRate = taxRates.find(
+        (rate) => rate.id === taxRateValue || String(rate.percentage) === taxRateValue
+      );
+      if (selectedRate && amountValue) {
+        const calculatedAmount = (amountValue * selectedRate.percentage) / 100;
+        form.setValue("tax_amount", calculatedAmount.toFixed(2));
+      }
+    }
+  }, [taxRateValue, amountValue, taxRates, taxAmountOverride, form]);
 
   useEffect(() => {
     if (draft) {
@@ -281,7 +354,19 @@ function DraftEditorDialog({ draft, open, onOpenChange, accounts = [] }: DraftEd
 
     startTransition(async () => {
       try {
-        const taxRate = values.tax_rate ? Number(values.tax_rate) : undefined;
+        // If tax_rate is a tax rate ID, get the percentage from the tax rate
+        let taxRatePercentage: number | undefined = undefined;
+        if (values.tax_rate) {
+          if (values.tax_rate === "manual") {
+            // Manual entry - use the value from form if it's a number string
+            const manualRate = form.getValues("tax_rate");
+            taxRatePercentage = manualRate && manualRate !== "manual" ? Number(manualRate) : undefined;
+          } else {
+            // It's a tax rate ID - find the percentage
+            const selectedRate = taxRates.find((rate) => rate.id === values.tax_rate);
+            taxRatePercentage = selectedRate ? selectedRate.percentage : Number(values.tax_rate);
+          }
+        }
         const taxAmount = values.tax_amount ? Number(values.tax_amount) : undefined;
 
         await updateDraftAction({
@@ -297,9 +382,9 @@ function DraftEditorDialog({ draft, open, onOpenChange, accounts = [] }: DraftEd
             due_date: values.due_date ? values.due_date : null,
             invoice_number: values.invoice_number ? values.invoice_number : null,
             tax:
-              taxRate !== undefined || taxAmount !== undefined
+              taxRatePercentage !== undefined || taxAmount !== undefined
                 ? {
-                    rate: taxRate ?? 0,
+                    rate: taxRatePercentage ?? 0,
                     amount: taxAmount ?? null,
                   }
                 : null,
@@ -430,15 +515,67 @@ function DraftEditorDialog({ draft, open, onOpenChange, accounts = [] }: DraftEd
 
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
-                <label className="text-sm font-medium">Tax Rate (%)</label>
-                <Input type="number" step="0.01" {...form.register("tax_rate")} />
+                <label className="text-sm font-medium">Tax Rate</label>
+                <Select
+                  value={taxRateValue || ""}
+                  onValueChange={(value) => {
+                    form.setValue("tax_rate", value);
+                    setTaxAmountOverride(false);
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select tax rate" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="">None</SelectItem>
+                    {taxRates.map((rate) => (
+                      <SelectItem key={rate.id} value={rate.id}>
+                        {rate.name} ({rate.percentage}%)
+                      </SelectItem>
+                    ))}
+                    {/* Fallback: allow manual entry by percentage */}
+                    <SelectItem value="manual">Enter percentage manually</SelectItem>
+                  </SelectContent>
+                </Select>
+                {taxRateValue === "manual" && (
+                  <Input
+                    type="number"
+                    step="0.01"
+                    placeholder="Enter percentage"
+                    {...form.register("tax_rate")}
+                  />
+                )}
                 {form.formState.errors.tax_rate ? (
                   <p className="text-xs text-destructive">{form.formState.errors.tax_rate.message}</p>
                 ) : null}
               </div>
               <div className="space-y-2">
-                <label className="text-sm font-medium">Tax Amount</label>
-                <Input type="number" step="0.01" {...form.register("tax_amount")} />
+                <div className="flex items-center justify-between">
+                  <label className="text-sm font-medium">Tax Amount</label>
+                  {!taxAmountOverride && taxRateValue && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 text-xs"
+                      onClick={() => setTaxAmountOverride(true)}
+                    >
+                      Override
+                    </Button>
+                  )}
+                </div>
+                <Input
+                  type="number"
+                  step="0.01"
+                  {...form.register("tax_amount")}
+                  readOnly={!taxAmountOverride && !!taxRateValue && taxRateValue !== "manual"}
+                  className={!taxAmountOverride && !!taxRateValue && taxRateValue !== "manual" ? "bg-muted cursor-not-allowed" : ""}
+                />
+                {!taxAmountOverride && taxRateValue && taxRateValue !== "manual" && (
+                  <p className="text-xs text-muted-foreground">
+                    Auto-calculated from amount and tax rate
+                  </p>
+                )}
                 {form.formState.errors.tax_amount ? (
                   <p className="text-xs text-destructive">
                     {form.formState.errors.tax_amount.message}

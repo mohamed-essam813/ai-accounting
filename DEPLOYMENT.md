@@ -181,7 +181,7 @@ supabase db push
 #### Option B: Using Supabase Dashboard (Easier)
 
 1. Go to Supabase Dashboard → **SQL Editor**
-2. Run each migration file from `supabase/migrations/` in order (all 17 files):
+2. Run each migration file from `supabase/migrations/` in order (all 22 files):
    - `202411080001_init.sql`
    - `202411080002_pending_invites.sql`
    - `202411080003_intent_mappings.sql`
@@ -199,6 +199,11 @@ supabase db push
    - `202411080015_inventory.sql`
    - `202411080016_fixed_assets.sql`
    - `202411080017_update_pnl_gain_loss.sql`
+   - `202411080018_subledgers.sql`
+   - `202411080019_account_categorization.sql`
+   - `202411080020_accounting_policies.sql`
+   - `202411080021_tax_rates.sql` ⬅️ **NEW**
+   - `202411080022_units_of_measure.sql` ⬅️ **NEW**
 3. After migrations, run `supabase/seed.sql` to create default accounts
 
 ### 3.4 Link Your First User
@@ -340,5 +345,5 @@ After first deployment, update `NEXT_PUBLIC_APP_URL` in Vercel to your actual Ve
 - **Invalid environment variables**: Check all required vars are set
 - **Cannot connect to Supabase**: Verify URL and keys are correct
 - **OpenAI API error**: Check API key and account credits
-- **Database error**: Ensure all 17 migrations ran successfully
+- **Database error**: Ensure all 22 migrations ran successfully
 

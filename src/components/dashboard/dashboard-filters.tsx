@@ -15,18 +15,21 @@ type Props = {
   initialPeriod?: string;
   initialStartDate?: string;
   initialEndDate?: string;
+  initialComparisonType?: "previous" | "lastYear";
 };
 
 export function DashboardFilters({
   initialPeriod,
   initialStartDate,
   initialEndDate,
+  initialComparisonType = "previous",
 }: Props) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [period, setPeriod] = useState(initialPeriod || "month");
   const [startDate, setStartDate] = useState(initialStartDate || "");
   const [endDate, setEndDate] = useState(initialEndDate || "");
+  const [comparisonType, setComparisonType] = useState<"previous" | "lastYear">(initialComparisonType);
   const [isPending, startTransition] = useTransition();
 
   const isCustomDate = startDate || endDate;
@@ -39,6 +42,25 @@ export function DashboardFilters({
       const params = new URLSearchParams();
       if (newPeriod !== "month") {
         params.set("period", newPeriod);
+      }
+      if (comparisonType !== "previous") {
+        params.set("compare", comparisonType);
+      }
+      router.push(`/dashboard?${params.toString()}`);
+    });
+  };
+
+  const handleComparisonChange = (newType: "previous" | "lastYear") => {
+    setComparisonType(newType);
+    startTransition(() => {
+      const params = new URLSearchParams();
+      if (period !== "month") {
+        params.set("period", period);
+      }
+      if (startDate) params.set("startDate", startDate);
+      if (endDate) params.set("endDate", endDate);
+      if (newType !== "previous") {
+        params.set("compare", newType);
       }
       router.push(`/dashboard?${params.toString()}`);
     });
@@ -68,7 +90,7 @@ export function DashboardFilters({
   return (
     <div className="space-y-3 rounded-lg border bg-card p-4">
       {/* Preset Period Buttons */}
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3 flex-wrap">
         <div className="flex items-center gap-2">
           <Calendar className="h-4 w-4 text-muted-foreground" />
           <span className="text-sm font-medium text-muted-foreground">Period:</span>
@@ -97,6 +119,27 @@ export function DashboardFilters({
             disabled={isPending}
           >
             This Year
+          </Button>
+        </div>
+        
+        {/* Comparison Type Toggle */}
+        <div className="flex items-center gap-2 ml-auto border-l pl-3">
+          <span className="text-xs text-muted-foreground">Compare with:</span>
+          <Button
+            variant={comparisonType === "previous" ? "default" : "outline"}
+            size="sm"
+            onClick={() => handleComparisonChange("previous")}
+            disabled={isPending}
+          >
+            Previous Period
+          </Button>
+          <Button
+            variant={comparisonType === "lastYear" ? "default" : "outline"}
+            size="sm"
+            onClick={() => handleComparisonChange("lastYear")}
+            disabled={isPending}
+          >
+            Same Period Last Year
           </Button>
         </div>
       </div>

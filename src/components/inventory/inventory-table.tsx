@@ -12,15 +12,16 @@ import { Badge } from "@/components/ui/badge";
 import { formatCurrency } from "@/lib/format";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { ArrowRight, Package } from "lucide-react";
+import { ArrowRight, Package, Edit } from "lucide-react";
 import type { InventoryItem, InventorySummary } from "@/lib/data/inventory";
 
 type Props = {
   items: InventoryItem[];
   summary: InventorySummary[];
+  onEdit?: (item: InventoryItem) => void;
 };
 
-export function InventoryTable({ items, summary }: Props) {
+export function InventoryTable({ items, summary, onEdit }: Props) {
   // Create a map of item_id to summary for quick lookup
   const summaryMap = new Map(summary.map((s) => [s.item_id, s]));
 
@@ -91,12 +92,19 @@ export function InventoryTable({ items, summary }: Props) {
                   )}
                 </TableCell>
                 <TableCell className="text-right" style={{ paddingRight: '1rem' }}>
-                  <Link href={`/inventory/${item.id}`}>
-                    <Button variant="ghost" size="sm">
-                      View
-                      <ArrowRight className="ml-2 h-3 w-3" />
-                    </Button>
-                  </Link>
+                  <div className="flex items-center justify-end gap-2">
+                    {onEdit && (
+                      <Button variant="ghost" size="sm" onClick={() => onEdit(item)}>
+                        <Edit className="h-4 w-4" />
+                      </Button>
+                    )}
+                    <Link href={`/inventory/${item.id}`}>
+                      <Button variant="ghost" size="sm">
+                        View
+                        <ArrowRight className="ml-2 h-3 w-3" />
+                      </Button>
+                    </Link>
+                  </div>
                 </TableCell>
               </TableRow>
             );

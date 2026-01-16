@@ -93,10 +93,21 @@ export async function getContactStatement(contactId: string): Promise<StatementT
 
   const supabase = await createServerSupabaseClient();
   
-  // Get all posted drafts and match by counterparty name
-  const { data: allDrafts } = await supabase
+  // First, try to get entries via contact_id (preferred method)
+  // Get journal entries linked to this contact
+  type JournalEntriesRow = Database["public"]["Tables"]["journal_entries"]["Row"];
+  const { data: entriesByContact } = await supabase
+    .from("journal_entries")
+    .select<"id, date, description", Pick<JournalEntriesRow, "id" | "date" | "description">>("id, date, description")
+    .eq("tenant_id", user.tenant.id)
+    .eq("status", "posted")
+    .eq("contact_id", contactId)
+    .order("date", { ascending: true });
+
+  // Also get drafts linked to this contact
+  const { data: draftsByContact } = await supabase
     .from("drafts")
-    .select("id, data_json, posted_entry_id")
+    .select("id, data_json, posted_entry_id, contact_id")
     .eq("tenant_id", user.tenant.id)
     .eq("status", "posted")
     .not("posted_entry_id", "is", null);
@@ -104,9 +115,20 @@ export async function getContactStatement(contactId: string): Promise<StatementT
   const entryIds = new Set<string>();
   const draftMap = new Map<string, { invoice_number?: string | null; counterparty?: string | null }>();
 
-  (allDrafts ?? []).forEach((draft) => {
+  // Add entries found by contact_id
+  if (entriesByContact) {
+    entriesByContact.forEach((entry) => {
+      entryIds.add(entry.id);
+    });
+  }
+
+  // Process drafts: prefer contact_id, fallback to name matching for backward compatibility
+  (draftsByContact ?? []).forEach((draft) => {
     const data = draft.data_json as { counterparty?: string | null; invoice_number?: string | null };
-    if (data.counterparty && data.counterparty.toLowerCase() === contact.name.toLowerCase()) {
+    const matchesByContactId = draft.contact_id === contactId;
+    const matchesByName = data.counterparty && data.counterparty.toLowerCase() === contact.name.toLowerCase();
+    
+    if (matchesByContactId || matchesByName) {
       if (draft.posted_entry_id) {
         entryIds.add(draft.posted_entry_id);
         draftMap.set(draft.posted_entry_id, {
@@ -117,20 +139,52 @@ export async function getContactStatement(contactId: string): Promise<StatementT
     }
   });
 
+  // If no entries found via contact_id or drafts, try legacy name matching as fallback
+  if (entryIds.size === 0) {
+    const { data: allDrafts } = await supabase
+      .from("drafts")
+      .select("id, data_json, posted_entry_id")
+      .eq("tenant_id", user.tenant.id)
+      .eq("status", "posted")
+      .not("posted_entry_id", "is", null);
+
+    (allDrafts ?? []).forEach((draft) => {
+      const data = draft.data_json as { counterparty?: string | null; invoice_number?: string | null };
+      if (data.counterparty && data.counterparty.toLowerCase() === contact.name.toLowerCase()) {
+        if (draft.posted_entry_id) {
+          entryIds.add(draft.posted_entry_id);
+          draftMap.set(draft.posted_entry_id, {
+            invoice_number: data.invoice_number,
+            counterparty: data.counterparty,
+          });
+        }
+      }
+    });
+  }
+
   if (entryIds.size === 0) {
     return [];
   }
 
   // Get journal entries and lines
-  type JournalEntriesRow = Database["public"]["Tables"]["journal_entries"]["Row"];
   type JournalLinesRow = Database["public"]["Tables"]["journal_lines"]["Row"];
   
-  const { data: entries } = await supabase
-    .from("journal_entries")
-    .select("id, date, description")
-    .in("id", Array.from(entryIds))
-    .eq("status", "posted")
-    .order("date", { ascending: true });
+  // Use entriesByContact if we found entries by contact_id, otherwise fetch by entryIds
+  // Type entries as array of objects with only id, date, description (we only need these fields)
+  type EntryBasic = { id: string; date: string; description: string };
+  let entries: EntryBasic[] = [];
+  if (entriesByContact && entriesByContact.length > 0) {
+    // Filter to only entries that are in our entryIds set
+    entries = entriesByContact.filter((e) => entryIds.has(e.id)) as EntryBasic[];
+  } else {
+    const { data: fetchedEntries } = await supabase
+      .from("journal_entries")
+      .select<"id, date, description", Pick<JournalEntriesRow, "id" | "date" | "description">>("id, date, description")
+      .in("id", Array.from(entryIds))
+      .eq("status", "posted")
+      .order("date", { ascending: true });
+    entries = (fetchedEntries ?? []) as EntryBasic[];
+  }
 
   if (!entries || entries.length === 0) {
     return [];

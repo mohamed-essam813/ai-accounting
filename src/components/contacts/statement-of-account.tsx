@@ -53,11 +53,12 @@ export function StatementOfAccount({ contact }: Props) {
     };
   }, [contact.id]);
 
-  const handleExport = () => {
+  const handleExportCSV = () => {
     // Create CSV content
-    const headers = ["Date", "Description", "Debit", "Credit", "Balance"];
+    const headers = ["Date", "Doc #", "Description", "Debit", "Credit", "Balance"];
     const rows = transactions.map((t) => [
       t.date,
+      t.document_number || "",
       t.description,
       t.debit.toFixed(2),
       t.credit.toFixed(2),
@@ -75,6 +76,91 @@ export function StatementOfAccount({ contact }: Props) {
     a.download = `Statement_${contact.code}_${new Date().toISOString().split("T")[0]}.csv`;
     a.click();
     URL.revokeObjectURL(url);
+  };
+
+  const handleExportExcel = async () => {
+    try {
+      // Dynamic import to avoid loading the library if not needed
+      const XLSX = await import("xlsx");
+      
+      const headers = ["Date", "Doc #", "Description", "Debit", "Credit", "Balance"];
+      const rows = transactions.map((t) => [
+        t.date,
+        t.document_number || "",
+        t.description,
+        t.debit,
+        t.credit,
+        t.balance,
+      ]);
+      
+      const worksheet = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, "Statement");
+      
+      XLSX.writeFile(
+        workbook,
+        `Statement_${contact.code}_${new Date().toISOString().split("T")[0]}.xlsx`
+      );
+    } catch (error) {
+      console.error(error);
+      alert("Failed to export Excel. Please ensure xlsx package is installed.");
+    }
+  };
+
+  const handleExportPDF = async () => {
+    try {
+      // Dynamic import to avoid loading the library if not needed
+      const { jsPDF } = await import("jspdf");
+      const { autoTable } = await import("jspdf-autotable");
+      
+      const doc = new jsPDF();
+      
+      // Add title
+      doc.setFontSize(16);
+      doc.text(`Statement of Account - ${contact.name}`, 14, 15);
+      doc.setFontSize(10);
+      doc.text(`Contact Code: ${contact.code}`, 14, 22);
+      doc.text(`Generated: ${new Date().toLocaleDateString()}`, 14, 28);
+      
+      // Prepare table data
+      const tableData = transactions.map((t) => [
+        t.date,
+        t.document_number || "",
+        t.description,
+        t.debit.toFixed(2),
+        t.credit.toFixed(2),
+        t.balance.toFixed(2),
+      ]);
+      
+      // Add total row
+      const currentBalance = transactions.length > 0 
+        ? transactions[transactions.length - 1].balance 
+        : 0;
+      tableData.push([
+        "",
+        "",
+        "Current Balance",
+        "",
+        "",
+        currentBalance.toFixed(2),
+      ]);
+      
+      // Add table using autoTable function
+      autoTable(doc, {
+        head: [["Date", "Doc #", "Description", "Debit", "Credit", "Balance"]],
+        body: tableData,
+        startY: 35,
+        styles: { fontSize: 8 },
+        headStyles: { fillColor: [66, 139, 202] },
+        alternateRowStyles: { fillColor: [245, 245, 245] },
+      });
+      
+      // Save PDF
+      doc.save(`Statement_${contact.code}_${new Date().toISOString().split("T")[0]}.pdf`);
+    } catch (error) {
+      console.error(error);
+      alert("Failed to export PDF. Please ensure jspdf and jspdf-autotable packages are installed.");
+    }
   };
 
   if (loading) {
@@ -117,10 +203,20 @@ export function StatementOfAccount({ contact }: Props) {
               {contact.name} ({contact.code})
             </p>
           </div>
-          <Button variant="outline" size="sm" onClick={handleExport}>
-            <Download className="h-4 w-4 mr-2" />
-            Export CSV
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={handleExportCSV}>
+              <Download className="h-4 w-4 mr-2" />
+              CSV
+            </Button>
+            <Button variant="outline" size="sm" onClick={handleExportExcel}>
+              <Download className="h-4 w-4 mr-2" />
+              Excel
+            </Button>
+            <Button variant="outline" size="sm" onClick={handleExportPDF}>
+              <Download className="h-4 w-4 mr-2" />
+              PDF
+            </Button>
+          </div>
         </div>
       </CardHeader>
       <CardContent>

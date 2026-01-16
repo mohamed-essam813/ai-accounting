@@ -28,17 +28,57 @@ import type { Database } from "@/lib/database.types";
 
 type Account = Database["public"]["Tables"]["chart_of_accounts"]["Row"];
 
-const DraftEditFormSchema = z.object({
-  counterparty: z.string().optional(),
-  date: z.string().min(1, "Date is required"),
-  amount: z.number().min(0.01, "Amount must be greater than 0"),
-  currency: z.string().min(1, "Currency is required"),
-  tax_rate: z.string().optional(),
-  tax_amount: z.string().optional(),
-  description: z.string().optional(),
-  due_date: z.string().optional(),
-  invoice_number: z.string().optional(),
-});
+const DraftEditFormSchema = z
+  .object({
+    counterparty: z.string().optional(),
+    date: z
+      .string()
+      .min(1, "Date is required")
+      .regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD format")
+      .refine((dateStr) => {
+        const date = new Date(dateStr);
+        const today = new Date();
+        today.setHours(23, 59, 59, 999); // End of today
+        return date <= today;
+      }, "Transaction date cannot be in the future"),
+    amount: z
+      .union([z.number(), z.string()])
+      .transform((val) => {
+        if (typeof val === "string") {
+          const parsed = parseFloat(val);
+          if (isNaN(parsed)) throw new Error("Amount must be a valid number");
+          return parsed;
+        }
+        return val;
+      })
+      .pipe(z.number().min(0.01, "Amount must be greater than 0")),
+    currency: z.string().min(1, "Currency is required"),
+    tax_rate: z.string().optional(),
+    tax_amount: z.string().optional(),
+    description: z.string().optional(),
+    due_date: z
+      .string()
+      .optional()
+      .refine(
+        (val) => !val || /^\d{4}-\d{2}-\d{2}$/.test(val),
+        "Use YYYY-MM-DD format for due date"
+      ),
+    invoice_number: z.string().optional(),
+  })
+  .superRefine((values, ctx) => {
+    // Validate due_date is not before transaction_date
+    if (values.due_date && values.due_date !== "" && values.date) {
+      const transactionDate = new Date(values.date);
+      const dueDate = new Date(values.due_date);
+      if (dueDate < transactionDate) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["due_date"],
+          message: "Due date cannot be earlier than transaction date",
+        });
+      }
+    }
+  });
 
 type DraftEditFormValues = z.infer<typeof DraftEditFormSchema>;
 
@@ -75,11 +115,26 @@ export function InlineDraftReviewPanel({
   const [isProcessing, startProcessing] = useTransition();
   const [showPostConfirm, setShowPostConfirm] = useState(false);
 
+  // Ensure date is valid - use today if invalid
+  const getValidDate = () => {
+    if (typeof draft.entities.date === "string") {
+      const dateStr = draft.entities.date;
+      if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+        const date = new Date(dateStr);
+        const minDate = new Date("2000-01-01");
+        if (date >= minDate && date <= new Date()) {
+          return dateStr;
+        }
+      }
+    }
+    return new Date().toISOString().slice(0, 10);
+  };
+
   const form = useForm<DraftEditFormValues>({
-    resolver: zodResolver(DraftEditFormSchema),
+    resolver: zodResolver(DraftEditFormSchema) as any,
     defaultValues: {
       counterparty: draft.entities.counterparty ?? "",
-      date: draft.entities.date ?? new Date().toISOString().slice(0, 10),
+      date: getValidDate(),
       amount: typeof draft.entities.amount === "number" ? draft.entities.amount : 0,
       currency: draft.entities.currency ?? "USD",
       tax_rate: draft.entities.tax?.rate ? String(draft.entities.tax.rate) : "",
