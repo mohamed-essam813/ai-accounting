@@ -34,7 +34,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { createTaxRateAction, updateTaxRateAction, deleteTaxRateAction, listTaxRatesAction, type TaxRate } from "@/lib/actions/tax-rates";
-import { listAccounts } from "@/lib/data/accounts";
+import { listAccountsAction } from "@/lib/actions/accounts";
 import type { Account } from "@/lib/accounting";
 
 const TaxRateFormSchema = z.object({
@@ -74,7 +74,7 @@ export function TaxRatesForm() {
     try {
       const [ratesData, accountsData] = await Promise.all([
         listTaxRatesAction(),
-        listAccounts(),
+        listAccountsAction(),
       ]);
       setTaxRates(ratesData);
       setAccounts(accountsData);

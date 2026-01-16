@@ -7,6 +7,7 @@ import { getCurrentUser } from "@/lib/data/users";
 import { canManageAccounts, type UserRole } from "@/lib/auth";
 import { PromptIntentEnum } from "@/lib/ai/schema";
 import type { Database } from "@/lib/database.types";
+import type { Account } from "@/lib/accounting";
 
 type ChartOfAccountsInsert = Database["public"]["Tables"]["chart_of_accounts"]["Insert"];
 type ChartOfAccountsRow = Database["public"]["Tables"]["chart_of_accounts"]["Row"];
@@ -14,6 +15,12 @@ type ChartOfAccountsUpdate = Database["public"]["Tables"]["chart_of_accounts"]["
 type AuditLogsInsert = Database["public"]["Tables"]["audit_logs"]["Insert"];
 type IntentMappingInsert = Database["public"]["Tables"]["intent_account_mappings"]["Insert"];
 type IntentMappingRow = Database["public"]["Tables"]["intent_account_mappings"]["Row"];
+
+// Server action to list accounts (for use in client components)
+export async function listAccountsAction(): Promise<Account[]> {
+  const { listAccounts } = await import("@/lib/data/accounts");
+  return await listAccounts();
+}
 
 const AccountSchema = z.object({
   name: z.string().min(3),
