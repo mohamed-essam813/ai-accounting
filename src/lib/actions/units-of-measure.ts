@@ -5,6 +5,19 @@ import { getCurrentUser } from "@/lib/data/users";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
+// Unit of measure type definition (moved from data file to avoid server imports in client components)
+export interface UnitOfMeasure {
+  id: string;
+  tenant_id: string;
+  name: string;
+  abbreviation: string;
+  category: "weight" | "volume" | "length" | "count" | "other";
+  is_active: boolean;
+  is_system: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
 const CreateUOMSchema = z.object({
   name: z.string().min(1, "Unit name is required"),
   abbreviation: z.string().min(1, "Abbreviation is required"),
@@ -15,6 +28,29 @@ const UpdateUOMSchema = CreateUOMSchema.extend({
   id: z.string().uuid(),
   is_active: z.boolean().optional(),
 });
+
+export async function listUnitsOfMeasureAction(): Promise<UnitOfMeasure[]> {
+  const user = await getCurrentUser();
+  if (!user?.tenant) {
+    return [];
+  }
+
+  const supabase = await createServerSupabaseClient();
+  // Use type assertion since units_of_measure table may not be in generated types yet
+  const { data, error } = await (supabase.from("units_of_measure" as any) as any)
+    .select("*")
+    .eq("tenant_id", user.tenant.id)
+    .eq("is_active", true)
+    .order("category", { ascending: true })
+    .order("name", { ascending: true });
+
+  if (error) {
+    console.error("Failed to load units of measure", error);
+    throw error;
+  }
+
+  return (data ?? []) as UnitOfMeasure[];
+}
 
 export async function createUnitOfMeasureAction(
   input: z.infer<typeof CreateUOMSchema>

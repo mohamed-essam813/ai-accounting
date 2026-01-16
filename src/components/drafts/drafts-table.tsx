@@ -38,7 +38,7 @@ import { toast } from "sonner";
 import { JournalPreview } from "./journal-preview";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { Database } from "@/lib/database.types";
-import { listTaxRates, type TaxRate } from "@/lib/data/tax-rates";
+import { listTaxRatesAction, type TaxRate } from "@/lib/actions/tax-rates";
 
 type Account = Database["public"]["Tables"]["chart_of_accounts"]["Row"];
 
@@ -322,7 +322,7 @@ function DraftEditorDialog({ draft, open, onOpenChange, accounts = [] }: DraftEd
   // Load tax rates
   useEffect(() => {
     if (open) {
-      listTaxRates()
+      listTaxRatesAction()
         .then((rates) => setTaxRates(rates))
         .catch((error) => {
           console.error("Failed to load tax rates:", error);

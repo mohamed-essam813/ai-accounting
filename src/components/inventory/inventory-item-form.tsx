@@ -16,7 +16,7 @@ import { createInventoryItemAction, updateInventoryItemAction } from "@/lib/acti
 import type { InventoryItem } from "@/lib/data/inventory";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Info, Plus } from "lucide-react";
-import { listUnitsOfMeasure, type UnitOfMeasure } from "@/lib/data/units-of-measure";
+import { listUnitsOfMeasureAction, type UnitOfMeasure } from "@/lib/actions/units-of-measure";
 
 type Props = {
   valuationMethod: "fifo" | "weighted_average";
@@ -39,7 +39,7 @@ export function InventoryItemForm({ valuationMethod, item, onSuccess }: Props) {
 
   // Load UOMs on mount or when item changes
   useEffect(() => {
-    listUnitsOfMeasure()
+    listUnitsOfMeasureAction()
       .then((data) => {
         setUOMs(data);
         // Set default to "unit" if available and not in edit mode

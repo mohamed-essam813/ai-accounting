@@ -33,8 +33,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { createTaxRateAction, updateTaxRateAction, deleteTaxRateAction } from "@/lib/actions/tax-rates";
-import { listTaxRates, type TaxRate } from "@/lib/data/tax-rates";
+import { createTaxRateAction, updateTaxRateAction, deleteTaxRateAction, listTaxRatesAction, type TaxRate } from "@/lib/actions/tax-rates";
 import { listAccounts } from "@/lib/data/accounts";
 import type { Account } from "@/lib/accounting";
 
@@ -74,7 +73,7 @@ export function TaxRatesForm() {
   const loadData = async () => {
     try {
       const [ratesData, accountsData] = await Promise.all([
-        listTaxRates(),
+        listTaxRatesAction(),
         listAccounts(),
       ]);
       setTaxRates(ratesData);

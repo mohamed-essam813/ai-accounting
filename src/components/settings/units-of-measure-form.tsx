@@ -33,8 +33,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { createUnitOfMeasureAction, updateUnitOfMeasureAction, deleteUnitOfMeasureAction } from "@/lib/actions/units-of-measure";
-import { listUnitsOfMeasure, type UnitOfMeasure } from "@/lib/data/units-of-measure";
+import { createUnitOfMeasureAction, updateUnitOfMeasureAction, deleteUnitOfMeasureAction, listUnitsOfMeasureAction, type UnitOfMeasure } from "@/lib/actions/units-of-measure";
 
 const UOMFormSchema = z.object({
   name: z.string().min(1, "Unit name is required"),
@@ -74,7 +73,7 @@ export function UnitsOfMeasureForm() {
 
   const loadData = async () => {
     try {
-      const data = await listUnitsOfMeasure();
+      const data = await listUnitsOfMeasureAction();
       setUOMs(data);
     } catch (error) {
       console.error("Failed to load units of measure:", error);

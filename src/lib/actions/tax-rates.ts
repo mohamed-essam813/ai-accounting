@@ -5,6 +5,20 @@ import { getCurrentUser } from "@/lib/data/users";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
+// Tax rate type definition (moved from data file to avoid server imports in client components)
+export interface TaxRate {
+  id: string;
+  tenant_id: string;
+  name: string;
+  percentage: number;
+  tax_type: "input" | "output";
+  output_vat_account_id: string | null;
+  input_vat_account_id: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
 const CreateTaxRateSchema = z.object({
   name: z.string().min(1, "Tax rate name is required"),
   percentage: z.number().min(0).max(100),
@@ -17,6 +31,31 @@ const UpdateTaxRateSchema = CreateTaxRateSchema.extend({
   id: z.string().uuid(),
   is_active: z.boolean().optional(),
 });
+
+export async function listTaxRatesAction(): Promise<TaxRate[]> {
+  const user = await getCurrentUser();
+  if (!user?.tenant) {
+    return [];
+  }
+
+  const supabase = await createServerSupabaseClient();
+  // Use type assertion since tax_rates table may not be in generated types yet
+  const { data, error } = await (supabase.from("tax_rates" as any) as any)
+    .select("*")
+    .eq("tenant_id", user.tenant.id)
+    .eq("is_active", true)
+    .order("name", { ascending: true });
+
+  if (error) {
+    console.error("Failed to load tax rates", error);
+    throw error;
+  }
+
+  return (data ?? []).map((rate: any) => ({
+    ...rate,
+    percentage: Number(rate.percentage),
+  }));
+}
 
 export async function createTaxRateAction(
   input: z.infer<typeof CreateTaxRateSchema>
