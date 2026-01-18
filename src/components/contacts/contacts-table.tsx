@@ -3,6 +3,8 @@
 import { useState, useTransition } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { usePagination } from "@/hooks/use-pagination";
+import { DataTablePagination } from "@/components/ui/data-table-pagination";
 import {
   Table,
   TableBody,
@@ -39,6 +41,16 @@ export function ContactsTable({ contacts }: Props) {
   const [isCreateMode, setIsCreateMode] = useState(false);
   const [statementContact, setStatementContact] = useState<Contact | null>(null);
   const [isStatementOpen, setIsStatementOpen] = useState(false);
+  
+  // Pagination
+  const {
+    currentItems: paginatedContacts,
+    currentPage,
+    totalPages,
+    goToPage,
+    itemsPerPage,
+    setItemsPerPage,
+  } = usePagination({ data: contacts, itemsPerPage: 20 });
 
   const handleEdit = (contact: Contact) => {
     setEditingContact(contact);
@@ -106,7 +118,7 @@ export function ContactsTable({ contacts }: Props) {
                 </TableCell>
               </TableRow>
             ) : (
-              contacts.map((contact) => (
+              paginatedContacts.map((contact) => (
                 <TableRow key={contact.id}>
                   <TableCell className="font-mono text-xs">{contact.code}</TableCell>
                   <TableCell className="font-medium">{contact.name}</TableCell>
@@ -157,6 +169,17 @@ export function ContactsTable({ contacts }: Props) {
           </TableBody>
         </Table>
       </div>
+      
+      {contacts.length > 0 && (
+        <DataTablePagination
+          currentPage={currentPage}
+          totalPages={totalPages}
+          totalItems={contacts.length}
+          itemsPerPage={itemsPerPage}
+          onPageChange={goToPage}
+          onItemsPerPageChange={setItemsPerPage}
+        />
+      )}
 
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
         <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">

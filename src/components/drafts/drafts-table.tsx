@@ -6,6 +6,8 @@ import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { usePagination } from "@/hooks/use-pagination";
+import { DataTablePagination } from "@/components/ui/data-table-pagination";
 import {
   Table,
   TableBody,
@@ -72,6 +74,16 @@ export function DraftsTable({ drafts, accounts = [] }: DraftTableProps) {
   const [isPending, startTransition] = useTransition();
   const [editorDraft, setEditorDraft] = useState<DraftTableItem | null>(null);
   const [isEditorOpen, setIsEditorOpen] = useState(false);
+  
+  // Pagination
+  const {
+    currentItems: paginatedDrafts,
+    currentPage,
+    totalPages,
+    goToPage,
+    itemsPerPage,
+    setItemsPerPage,
+  } = usePagination({ data: drafts, itemsPerPage: 20 });
 
   const handleOpenEditor = (draft: DraftTableItem) => {
     setEditorDraft(draft);
@@ -108,7 +120,7 @@ export function DraftsTable({ drafts, accounts = [] }: DraftTableProps) {
                 </TableCell>
               </TableRow>
             ) : (
-              drafts.map((draft) => (
+              paginatedDrafts.map((draft) => (
                 <TableRow key={draft.id}>
                   <TableCell className="text-sm text-muted-foreground">
                     {formatDate(draft.created_at)}
@@ -186,6 +198,17 @@ export function DraftsTable({ drafts, accounts = [] }: DraftTableProps) {
           </TableBody>
         </Table>
       </div>
+      
+      {drafts.length > 0 && (
+        <DataTablePagination
+          currentPage={currentPage}
+          totalPages={totalPages}
+          totalItems={drafts.length}
+          itemsPerPage={itemsPerPage}
+          onPageChange={goToPage}
+          onItemsPerPageChange={setItemsPerPage}
+        />
+      )}
 
       <DraftEditorDialog draft={editorDraft} open={isEditorOpen} onOpenChange={handleEditorChange} accounts={accounts} />
     </>

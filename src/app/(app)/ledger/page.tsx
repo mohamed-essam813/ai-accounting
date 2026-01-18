@@ -7,15 +7,14 @@
  */
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { getJournalLedger } from "@/lib/data/reports";
 import { listAccounts } from "@/lib/data/accounts";
 import { CurrencyFilter } from "@/components/filters/currency-filter";
 import { ExportButtons } from "@/components/reports/export-buttons";
+import { LedgerTableClient } from "@/components/ledger/ledger-table-client";
 import Link from "next/link";
-import { ArrowRight, ChevronRight } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { ChevronRight } from "lucide-react";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -169,66 +168,7 @@ export default async function LedgerPage({
           )}
         </CardHeader>
         <CardContent>
-          {ledgerWithBalance.length === 0 ? (
-            <p className="text-sm text-muted-foreground text-center py-8">
-              No transactions found for the selected criteria.
-            </p>
-          ) : (
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Date</TableHead>
-                    <TableHead>Description</TableHead>
-                    <TableHead>Account</TableHead>
-                    <TableHead className="text-right">Debit</TableHead>
-                    <TableHead className="text-right">Credit</TableHead>
-                    <TableHead className="text-right">Balance</TableHead>
-                    <TableHead>Memo</TableHead>
-                    <TableHead className="w-[100px]">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {ledgerWithBalance.map((entry) => (
-                    <TableRow key={entry.uniqueKey}>
-                      <TableCell className="font-mono text-sm">
-                        {formatDate(entry.date)}
-                      </TableCell>
-                      <TableCell>{entry.description}</TableCell>
-                      <TableCell>
-                        <div>
-                          <div className="font-medium">{entry.account_name}</div>
-                          <div className="text-xs text-muted-foreground font-mono">
-                            {entry.account_code}
-                          </div>
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-right font-mono">
-                        {Number(entry.debit) > 0 ? formatCurrency(Number(entry.debit)) : "-"}
-                      </TableCell>
-                      <TableCell className="text-right font-mono">
-                        {Number(entry.credit) > 0 ? formatCurrency(Number(entry.credit)) : "-"}
-                      </TableCell>
-                      <TableCell className="text-right font-mono font-medium">
-                        {formatCurrency(entry.runningBalance)}
-                      </TableCell>
-                      <TableCell className="text-sm text-muted-foreground">
-                        {entry.memo || "-"}
-                      </TableCell>
-                      <TableCell>
-                        <Link href={`/journals?entryId=${entry.entry_id}`}>
-                          <Button variant="ghost" size="sm" className="h-8">
-                            View
-                            <ArrowRight className="ml-1 h-3 w-3" />
-                          </Button>
-                        </Link>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          )}
+          <LedgerTableClient entries={ledgerWithBalance} />
         </CardContent>
       </Card>
     </div>

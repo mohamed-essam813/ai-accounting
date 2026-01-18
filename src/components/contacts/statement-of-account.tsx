@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { getContactStatementAction } from "@/lib/actions/contacts";
 import type { StatementTransaction } from "@/lib/data/contacts";
+import { usePagination } from "@/hooks/use-pagination";
+import { DataTablePagination } from "@/components/ui/data-table-pagination";
 import {
   Table,
   TableBody,
@@ -28,6 +30,16 @@ export function StatementOfAccount({ contact }: Props) {
   const [transactions, setTransactions] = useState<StatementTransaction[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  
+  // Pagination
+  const {
+    currentItems: paginatedTransactions,
+    currentPage,
+    totalPages,
+    goToPage,
+    itemsPerPage,
+    setItemsPerPage,
+  } = usePagination({ data: transactions, itemsPerPage: 50 });
 
   useEffect(() => {
     let cancelled = false;
@@ -54,7 +66,7 @@ export function StatementOfAccount({ contact }: Props) {
   }, [contact.id]);
 
   const handleExportCSV = () => {
-    // Create CSV content
+    // Create CSV content - export all transactions, not just current page
     const headers = ["Date", "Doc #", "Description", "Debit", "Credit", "Balance"];
     const rows = transactions.map((t) => [
       t.date,
@@ -238,43 +250,61 @@ export function StatementOfAccount({ contact }: Props) {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {transactions.map((transaction, idx) => (
-                    <TableRow key={idx}>
-                      <TableCell className="text-sm">
-                        {formatDate(transaction.date)}
+                  {paginatedTransactions.map((transaction, idx) => {
+                    // Calculate running balance for paginated items
+                    const prevTransactions = transactions.slice(0, (currentPage - 1) * itemsPerPage + idx);
+                    const runningBalance = prevTransactions.reduce((sum, t) => sum + t.debit - t.credit, 0) + transaction.debit - transaction.credit;
+                    
+                    return (
+                      <TableRow key={idx}>
+                        <TableCell className="text-sm">
+                          {formatDate(transaction.date)}
+                        </TableCell>
+                        <TableCell>
+                          <div>
+                            <div className="text-sm">{transaction.description}</div>
+                            {transaction.document_number && (
+                              <div className="text-xs text-muted-foreground font-mono">
+                                {transaction.document_number}
+                              </div>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-sm">
+                          {transaction.debit > 0 ? formatCurrency(transaction.debit) : "—"}
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-sm">
+                          {transaction.credit > 0 ? formatCurrency(transaction.credit) : "—"}
+                        </TableCell>
+                        <TableCell className="text-right font-mono font-semibold">
+                          {formatCurrency(runningBalance)}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                  {paginatedTransactions.length > 0 && currentPage === totalPages && (
+                    <TableRow className="bg-muted font-semibold">
+                      <TableCell colSpan={4} className="text-right">
+                        Current Balance
                       </TableCell>
-                      <TableCell>
-                        <div>
-                          <div className="text-sm">{transaction.description}</div>
-                          {transaction.document_number && (
-                            <div className="text-xs text-muted-foreground font-mono">
-                              {transaction.document_number}
-                            </div>
-                          )}
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-right font-mono text-sm">
-                        {transaction.debit > 0 ? formatCurrency(transaction.debit) : "—"}
-                      </TableCell>
-                      <TableCell className="text-right font-mono text-sm">
-                        {transaction.credit > 0 ? formatCurrency(transaction.credit) : "—"}
-                      </TableCell>
-                      <TableCell className="text-right font-mono font-semibold">
-                        {formatCurrency(transaction.balance)}
+                      <TableCell className="text-right font-mono">
+                        {formatCurrency(currentBalance)}
                       </TableCell>
                     </TableRow>
-                  ))}
-                  <TableRow className="bg-muted font-semibold">
-                    <TableCell colSpan={4} className="text-right">
-                      Current Balance
-                    </TableCell>
-                    <TableCell className="text-right font-mono">
-                      {formatCurrency(currentBalance)}
-                    </TableCell>
-                  </TableRow>
+                  )}
                 </TableBody>
               </Table>
             </div>
+            {transactions.length > 0 && (
+              <DataTablePagination
+                currentPage={currentPage}
+                totalPages={totalPages}
+                totalItems={transactions.length}
+                itemsPerPage={itemsPerPage}
+                onPageChange={goToPage}
+                onItemsPerPageChange={setItemsPerPage}
+              />
+            )}
           </>
         )}
       </CardContent>

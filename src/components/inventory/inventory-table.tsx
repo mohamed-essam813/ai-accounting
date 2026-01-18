@@ -14,6 +14,8 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { ArrowRight, Package, Edit } from "lucide-react";
 import type { InventoryItem, InventorySummary } from "@/lib/data/inventory";
+import { usePagination } from "@/hooks/use-pagination";
+import { DataTablePagination } from "@/components/ui/data-table-pagination";
 
 type Props = {
   items: InventoryItem[];
@@ -24,6 +26,16 @@ type Props = {
 export function InventoryTable({ items, summary, onEdit }: Props) {
   // Create a map of item_id to summary for quick lookup
   const summaryMap = new Map(summary.map((s) => [s.item_id, s]));
+
+  // Pagination
+  const {
+    currentItems: paginatedItems,
+    currentPage,
+    totalPages,
+    goToPage,
+    itemsPerPage,
+    setItemsPerPage,
+  } = usePagination({ data: items, itemsPerPage: 20 });
 
   if (items.length === 0) {
     return (
@@ -52,7 +64,7 @@ export function InventoryTable({ items, summary, onEdit }: Props) {
           </TableRow>
         </TableHeader>
         <TableBody>
-          {items.map((item) => {
+          {paginatedItems.map((item) => {
             const itemSummary = summaryMap.get(item.id);
             const hasAgeing = itemSummary && (
               itemSummary.quantity_31_60 > 0 ||
@@ -111,6 +123,16 @@ export function InventoryTable({ items, summary, onEdit }: Props) {
           })}
         </TableBody>
       </Table>
+      {items.length > 0 && (
+        <DataTablePagination
+          currentPage={currentPage}
+          totalPages={totalPages}
+          totalItems={items.length}
+          itemsPerPage={itemsPerPage}
+          onPageChange={goToPage}
+          onItemsPerPageChange={setItemsPerPage}
+        />
+      )}
     </div>
   );
 }
