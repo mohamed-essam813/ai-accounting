@@ -39,7 +39,7 @@ export function CurrencyFilter({ initialCurrency, currencies = [] }: Props) {
 
   return (
     <div className="flex items-center gap-2">
-      <Label htmlFor="currency-filter" className="text-sm font-medium text-muted-foreground">
+      <Label htmlFor="currency-filter" className="text-sm font-medium text-muted-foreground whitespace-nowrap">
         Currency:
       </Label>
       <Select
@@ -47,7 +47,7 @@ export function CurrencyFilter({ initialCurrency, currencies = [] }: Props) {
         onValueChange={handleCurrencyChange}
         disabled={isPending}
       >
-        <SelectTrigger id="currency-filter" className="w-32 h-9">
+        <SelectTrigger id="currency-filter" className="min-w-[140px] h-9">
           <SelectValue placeholder="All" />
         </SelectTrigger>
         <SelectContent>

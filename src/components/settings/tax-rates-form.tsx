@@ -318,16 +318,16 @@ export function TaxRatesForm() {
             <div className="space-y-2">
               <Label htmlFor="output_vat_account_id">Output VAT Account</Label>
               <Select
-                value={form.watch("output_vat_account_id") || ""}
+                value={form.watch("output_vat_account_id") || "none"}
                 onValueChange={(value) =>
-                  form.setValue("output_vat_account_id", value || null)
+                  form.setValue("output_vat_account_id", value === "none" ? null : value)
                 }
               >
                 <SelectTrigger>
                   <SelectValue placeholder="Select output VAT account" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">None</SelectItem>
+                  <SelectItem value="none">None</SelectItem>
                   {vatAccounts.map((acc) => (
                     <SelectItem key={acc.id} value={acc.id}>
                       {acc.code} - {acc.name}
@@ -340,16 +340,16 @@ export function TaxRatesForm() {
             <div className="space-y-2">
               <Label htmlFor="input_vat_account_id">Input VAT Account</Label>
               <Select
-                value={form.watch("input_vat_account_id") || ""}
+                value={form.watch("input_vat_account_id") || "none"}
                 onValueChange={(value) =>
-                  form.setValue("input_vat_account_id", value || null)
+                  form.setValue("input_vat_account_id", value === "none" ? null : value)
                 }
               >
                 <SelectTrigger>
                   <SelectValue placeholder="Select input VAT account" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">None</SelectItem>
+                  <SelectItem value="none">None</SelectItem>
                   {vatAccounts.map((acc) => (
                     <SelectItem key={acc.id} value={acc.id}>
                       {acc.code} - {acc.name}
