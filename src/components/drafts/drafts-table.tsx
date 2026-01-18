@@ -517,9 +517,9 @@ function DraftEditorDialog({ draft, open, onOpenChange, accounts = [] }: DraftEd
               <div className="space-y-2">
                 <label className="text-sm font-medium">Tax Rate</label>
                 <Select
-                  value={taxRateValue || ""}
+                  value={taxRateValue || "none"}
                   onValueChange={(value) => {
-                    form.setValue("tax_rate", value);
+                    form.setValue("tax_rate", value === "none" ? "" : value);
                     setTaxAmountOverride(false);
                   }}
                 >
@@ -527,7 +527,7 @@ function DraftEditorDialog({ draft, open, onOpenChange, accounts = [] }: DraftEd
                     <SelectValue placeholder="Select tax rate" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">None</SelectItem>
+                    <SelectItem value="none">None</SelectItem>
                     {taxRates.map((rate) => (
                       <SelectItem key={rate.id} value={rate.id}>
                         {rate.name} ({rate.percentage}%)

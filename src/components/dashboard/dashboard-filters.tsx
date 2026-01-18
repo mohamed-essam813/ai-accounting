@@ -10,12 +10,15 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { useState, useTransition } from "react";
 import { Filter, X, Calendar } from "lucide-react";
+import { CurrencyFilter } from "@/components/filters/currency-filter";
 
 type Props = {
   initialPeriod?: string;
   initialStartDate?: string;
   initialEndDate?: string;
   initialComparisonType?: "previous" | "lastYear";
+  initialCurrency?: string;
+  currencies?: string[];
 };
 
 export function DashboardFilters({
@@ -23,6 +26,8 @@ export function DashboardFilters({
   initialStartDate,
   initialEndDate,
   initialComparisonType = "previous",
+  initialCurrency,
+  currencies = [],
 }: Props) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -89,6 +94,9 @@ export function DashboardFilters({
 
   return (
     <div className="space-y-3 rounded-lg border bg-card p-4">
+      {/* Currency Filter - Top Level */}
+      <CurrencyFilter initialCurrency={initialCurrency} currencies={currencies} />
+      
       {/* Preset Period Buttons */}
       <div className="flex items-center gap-3 flex-wrap">
         <div className="flex items-center gap-2">

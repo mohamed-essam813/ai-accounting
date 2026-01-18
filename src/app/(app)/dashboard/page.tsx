@@ -50,13 +50,14 @@ export const revalidate = 60;
 export default async function DashboardPage({
   searchParams,
 }: {
-  searchParams: Promise<{ period?: string; startDate?: string; endDate?: string; compare?: "previous" | "lastYear" }>;
+  searchParams: Promise<{ period?: string; startDate?: string; endDate?: string; compare?: "previous" | "lastYear"; currency?: string }>;
 }) {
   const params = await searchParams;
   const period = params.period || "month";
   const startDate = params.startDate;
   const endDate = params.endDate;
   const comparisonType = params.compare || "previous";
+  const currency = params.currency;
 
   // Handle errors gracefully - if data fetching fails, show empty state
   let pulse: FinancialPulse;
@@ -181,6 +182,7 @@ export default async function DashboardPage({
         initialStartDate={startDate}
         initialEndDate={endDate}
         initialComparisonType={comparisonType}
+        initialCurrency={currency}
       />
 
       {/* Section 1: Financial Pulse (Top Narrative) */}

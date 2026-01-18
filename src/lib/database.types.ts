@@ -1147,40 +1147,55 @@ export type Database = {
       }
       journal_entries: {
         Row: {
+          amount_in_base_currency: number | null
+          amount_in_transaction_currency: number | null
           approved_by: string | null
+          base_currency: string | null
           contact_id: string | null
           created_at: string
           created_by: string
           date: string
           description: string
+          fx_rate: number | null
           id: string
           posted_at: string | null
           status: string
           tenant_id: string
+          transaction_currency: string | null
         }
         Insert: {
+          amount_in_base_currency?: number | null
+          amount_in_transaction_currency?: number | null
           approved_by?: string | null
+          base_currency?: string | null
           contact_id?: string | null
           created_at?: string
           created_by: string
           date: string
           description: string
+          fx_rate?: number | null
           id?: string
           posted_at?: string | null
           status: string
           tenant_id: string
+          transaction_currency?: string | null
         }
         Update: {
+          amount_in_base_currency?: number | null
+          amount_in_transaction_currency?: number | null
           approved_by?: string | null
+          base_currency?: string | null
           contact_id?: string | null
           created_at?: string
           created_by?: string
           date?: string
           description?: string
+          fx_rate?: number | null
           id?: string
           posted_at?: string | null
           status?: string
           tenant_id?: string
+          transaction_currency?: string | null
         }
         Relationships: [
           {

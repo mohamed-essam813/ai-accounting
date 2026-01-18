@@ -100,7 +100,7 @@ export async function getCashFlow(): Promise<CashFlow | null> {
   return data;
 }
 
-export async function getJournalLedger(startDate?: string, endDate?: string): Promise<JournalLedger[]> {
+export async function getJournalLedger(startDate?: string, endDate?: string, currency?: string): Promise<JournalLedger[]> {
   const user = await getCurrentUser();
   if (!user?.tenant) {
     return [];
@@ -113,11 +113,23 @@ export async function getJournalLedger(startDate?: string, endDate?: string): Pr
       eq: (column: string, value: string) => {
         gte?: (column: string, value: string) => {
           lte?: (column: string, value: string) => {
+            eq?: (column: string, value: string) => {
+              order: (column: string, options?: { ascending?: boolean }) => Promise<{ data: JournalLedger[] | null; error: unknown }>;
+            };
+            order: (column: string, options?: { ascending?: boolean }) => Promise<{ data: JournalLedger[] | null; error: unknown }>;
+          };
+          eq?: (column: string, value: string) => {
             order: (column: string, options?: { ascending?: boolean }) => Promise<{ data: JournalLedger[] | null; error: unknown }>;
           };
           order: (column: string, options?: { ascending?: boolean }) => Promise<{ data: JournalLedger[] | null; error: unknown }>;
         };
         lte?: (column: string, value: string) => {
+          eq?: (column: string, value: string) => {
+            order: (column: string, options?: { ascending?: boolean }) => Promise<{ data: JournalLedger[] | null; error: unknown }>;
+          };
+          order: (column: string, options?: { ascending?: boolean }) => Promise<{ data: JournalLedger[] | null; error: unknown }>;
+        };
+        eq?: (column: string, value: string) => {
           order: (column: string, options?: { ascending?: boolean }) => Promise<{ data: JournalLedger[] | null; error: unknown }>;
         };
         order: (column: string, options?: { ascending?: boolean }) => Promise<{ data: JournalLedger[] | null; error: unknown }>;
@@ -132,10 +144,41 @@ export async function getJournalLedger(startDate?: string, endDate?: string): Pr
   if (endDate && q.lte) {
     q = q.lte("date", endDate);
   }
+  // Note: Currency filtering will work once v_journal_ledger view includes transaction_currency
+  // For now, we filter in application layer if currency is provided
   const { data, error } = await q.order("date", { ascending: false });
 
   if (error) throw error;
-  return data ?? [];
+  
+  let result = data ?? [];
+  
+  // Filter by currency in application layer if provided
+  // TODO: Move this to database query once v_journal_ledger view includes transaction_currency
+  if (currency) {
+    // For now, we need to join with journal_entries to get currency
+    // This is a temporary solution until the view is updated
+    const entryIds = new Set(result.map((r: any) => r.entry_id).filter((id: any): id is string => typeof id === "string"));
+    if (entryIds.size > 0) {
+      const { data: entries } = await supabase
+        .from("journal_entries")
+        .select("id, transaction_currency")
+        .in("id", Array.from(entryIds) as string[])
+        .eq("tenant_id", user.tenant.id);
+      
+      const currencyMap = new Map(
+        (entries ?? []).map((e: any) => [e.id, e.transaction_currency])
+      );
+      
+      result = result.filter((r: any) => {
+        const entryCurrency = currencyMap.get(r.entry_id);
+        return entryCurrency && entryCurrency.toUpperCase() === currency.toUpperCase();
+      });
+    } else {
+      result = [];
+    }
+  }
+  
+  return result;
 }
 
 export async function getVATReport(): Promise<VATReport | null> {

@@ -352,12 +352,263 @@ export async function postDraftAction(input: z.infer<typeof PostDraftSchema>) {
     throw new Error("No journal lines generated for draft.");
   }
 
+  // Extract inventory line items from draft if present
+  const inventoryLineItems = draftData.inventory_line_items as
+    | Array<{
+        item_id: string;
+        item_name: string;
+        quantity: number;
+        rate: number;
+        discount: number;
+        tax_rate: number;
+        tax_amount: number;
+        total: number;
+      }>
+    | undefined;
+
+  // Process inventory items for invoices (sales) and bills (purchases)
+  const inventoryTransactionIds: string[] = [];
+  
+  if (inventoryLineItems && inventoryLineItems.length > 0) {
+    if (draft.intent === "create_invoice") {
+      // SALES: Process inventory items for sale
+      // For each item: Calculate COGS, create inventory transaction, add COGS journal line
+      const { calculateCOGSFIFO, calculateCOGSWeightedAverage } = await import("@/lib/inventory/valuation");
+      const { updateInventoryBalanceAfterSale } = await import("@/lib/inventory/valuation");
+      const { getInventoryBalance } = await import("@/lib/data/inventory");
+      const { getAccountByCode } = await import("@/lib/data/accounts");
+
+      // Get COGS account (code 5500)
+      const cogsAccount = await getAccountByCode("5500");
+      if (!cogsAccount) {
+        throw new Error("COGS account (5500) not found. Please create it in Chart of Accounts.");
+      }
+
+      // Get Inventory account (code 1200)
+      const inventoryAccount = await getAccountByCode("1200");
+      if (!inventoryAccount) {
+        throw new Error("Inventory account (1200) not found. Please create it in Chart of Accounts.");
+      }
+
+      const entryDate = (parsedDraft.entities.date as string) ?? new Date().toISOString().slice(0, 10);
+
+      for (const lineItem of inventoryLineItems) {
+        // Get inventory item to determine valuation method
+        const { getInventoryItem } = await import("@/lib/data/inventory");
+        const inventoryItem = await getInventoryItem(lineItem.item_id);
+        if (!inventoryItem) {
+          throw new Error(`Inventory item ${lineItem.item_id} not found`);
+        }
+
+        // Calculate COGS based on valuation method
+        let cogsAmount = 0;
+        if (inventoryItem.valuation_method === "fifo") {
+          cogsAmount = await calculateCOGSFIFO(
+            user.tenant.id,
+            lineItem.item_id,
+            lineItem.quantity,
+            entryDate
+          );
+        } else {
+          cogsAmount = await calculateCOGSWeightedAverage(
+            user.tenant.id,
+            lineItem.item_id,
+            lineItem.quantity
+          );
+        }
+
+        // Update inventory balance (reduces quantity and value)
+        await updateInventoryBalanceAfterSale(
+          user.tenant.id,
+          lineItem.item_id,
+          lineItem.quantity,
+          cogsAmount,
+          entryDate
+        );
+
+        // Create inventory transaction record
+        const invTransactionTable = supabase.from("inventory_transactions" as any) as unknown as {
+          insert: (values: any[]) => {
+            select: (columns: string) => {
+              single: () => Promise<{ data: { id: string } | null; error: unknown }>;
+            };
+          };
+        };
+        
+        const { data: invTransaction, error: invTxError } = await invTransactionTable.insert([
+          {
+            tenant_id: user.tenant.id,
+            item_id: lineItem.item_id,
+            transaction_type: "sale",
+            date: entryDate,
+            quantity: lineItem.quantity,
+            unit_cost: cogsAmount / lineItem.quantity, // Average cost per unit
+            total_cost: cogsAmount,
+            cogs_amount: cogsAmount,
+            journal_entry_id: null, // Will be set after journal entry is created
+            draft_id: payload.draftId,
+            notes: `Sale: ${lineItem.item_name}`,
+          },
+        ]).select("id").single();
+
+        if (invTxError) {
+          console.error("Failed to create inventory transaction:", invTxError);
+          throw new Error(`Failed to create inventory transaction for ${lineItem.item_name}`);
+        }
+
+        if (invTransaction && invTransaction.id) {
+          inventoryTransactionIds.push(invTransaction.id);
+
+          // Add COGS journal line: DR COGS, CR Inventory
+          lines.push({
+            account_id: cogsAccount.id,
+            debit: cogsAmount,
+            credit: 0,
+            memo: `COGS: ${lineItem.item_name} (${lineItem.quantity})`,
+          });
+
+          lines.push({
+            account_id: inventoryAccount.id,
+            debit: 0,
+            credit: cogsAmount,
+            memo: `Inventory: ${lineItem.item_name} (${lineItem.quantity})`,
+          });
+        }
+      }
+    } else if (draft.intent === "create_bill") {
+      // PURCHASES: Process inventory items for purchase
+      // For each item: Create inventory transaction, update balance, add inventory journal line
+      const { updateInventoryBalanceAfterPurchase } = await import("@/lib/inventory/valuation");
+      const { getInventoryItem } = await import("@/lib/data/inventory");
+      const { getAccountByCode } = await import("@/lib/data/accounts");
+
+      // Get Inventory account (code 1200)
+      const inventoryAccount = await getAccountByCode("1200");
+      if (!inventoryAccount) {
+        throw new Error("Inventory account (1200) not found. Please create it in Chart of Accounts.");
+      }
+
+      const entryDate = (parsedDraft.entities.date as string) ?? new Date().toISOString().slice(0, 10);
+
+      for (const lineItem of inventoryLineItems) {
+        // Get inventory item to determine valuation method and unit cost
+        const inventoryItem = await getInventoryItem(lineItem.item_id);
+        if (!inventoryItem) {
+          throw new Error(`Inventory item ${lineItem.item_id} not found`);
+        }
+
+        // For purchases, unit_cost is the rate (purchase price per unit)
+        const unitCost = lineItem.rate;
+        const totalCost = lineItem.quantity * unitCost;
+
+        // Update inventory balance (increases quantity and value)
+        await updateInventoryBalanceAfterPurchase(
+          user.tenant.id,
+          lineItem.item_id,
+          lineItem.quantity,
+          unitCost,
+          inventoryItem.valuation_method,
+          entryDate
+        );
+
+        // Create inventory transaction record
+        const invTransactionTable = supabase.from("inventory_transactions" as any) as unknown as {
+          insert: (values: any[]) => {
+            select: (columns: string) => {
+              single: () => Promise<{ data: { id: string } | null; error: unknown }>;
+            };
+          };
+        };
+        
+        const { data: invTransaction, error: invTxError } = await invTransactionTable.insert([
+          {
+            tenant_id: user.tenant.id,
+            item_id: lineItem.item_id,
+            transaction_type: "purchase",
+            date: entryDate,
+            quantity: lineItem.quantity,
+            unit_cost: unitCost,
+            total_cost: totalCost,
+            cogs_amount: null, // Not applicable for purchases
+            journal_entry_id: null, // Will be set after journal entry is created
+            draft_id: payload.draftId,
+            notes: `Purchase: ${lineItem.item_name}`,
+          },
+        ]).select("id").single();
+
+        if (invTxError) {
+          console.error("Failed to create inventory transaction:", invTxError);
+          throw new Error(`Failed to create inventory transaction for ${lineItem.item_name}`);
+        }
+
+        if (invTransaction && invTransaction.id) {
+          inventoryTransactionIds.push(invTransaction.id);
+
+          // Add Inventory journal line: DR Inventory
+          // Note: The CR side (AP) is already handled by the default bill journal lines
+          // We just need to modify the expense line to be inventory
+          // Find the expense line and replace it with inventory
+          const expenseLineIndex = lines.findIndex(
+            (line) => line.debit > 0 && line.credit === 0 && line.account_id !== inventoryAccount.id
+          );
+          
+          if (expenseLineIndex >= 0) {
+            // Replace expense line with inventory line for this item
+            lines[expenseLineIndex] = {
+              account_id: inventoryAccount.id,
+              debit: totalCost,
+              credit: 0,
+              memo: `Inventory Purchase: ${lineItem.item_name} (${lineItem.quantity})`,
+            };
+          } else {
+            // Add inventory line if no expense line found
+            lines.push({
+              account_id: inventoryAccount.id,
+              debit: totalCost,
+              credit: 0,
+              memo: `Inventory Purchase: ${lineItem.item_name} (${lineItem.quantity})`,
+            });
+          }
+        }
+      }
+
+      // Re-balance the journal entry (adjust credit side if needed)
+      // This handles cases where inventory purchase total differs from bill amount
+    }
+  }
+
   ensureBalanced(lines);
 
   // Get contact_id from draft if available (will be available after migration)
   const draftContactId = (draft as { contact_id?: string | null }).contact_id;
 
-  // contact_id will be added by migration, using type assertion for now
+  // Extract currency information from draft entities
+  const draftEntities = parsedDraft.entities as Record<string, unknown>;
+  const transactionCurrency = (draftEntities.currency as string) || null;
+  const transactionAmount = typeof draftEntities.amount === "number" ? draftEntities.amount : null;
+  
+  // Get tenant base currency (default to USD for MVP, should be configurable per tenant)
+  // TODO: Fetch from tenant settings when available
+  const baseCurrency = "USD"; // Default base currency
+  
+  // Calculate FX rate and base amount
+  let fxRate: number | null = null;
+  let amountInBaseCurrency: number | null = null;
+  
+  if (transactionCurrency && transactionAmount !== null) {
+    if (transactionCurrency.toUpperCase() === baseCurrency.toUpperCase()) {
+      // Same currency, no conversion needed
+      fxRate = 1.0;
+      amountInBaseCurrency = transactionAmount;
+    } else {
+      // Different currency - for MVP, default to 1.0 (should fetch from FX service)
+      // TODO: Integrate with FX rate service or tenant FX rate settings
+      fxRate = 1.0; // Default 1:1 for MVP
+      amountInBaseCurrency = transactionAmount * fxRate;
+    }
+  }
+
+  // contact_id and currency fields will be added by migration, using type assertion for now
   const entryData = {
     tenant_id: user.tenant.id,
     date: (parsedDraft.entities.date as string) ?? new Date().toISOString().slice(0, 10),
@@ -367,7 +618,19 @@ export async function postDraftAction(input: z.infer<typeof PostDraftSchema>) {
     approved_by: user.id,
     posted_at: new Date().toISOString(),
     contact_id: draftContactId ?? null,
-  } as JournalEntriesInsert & { contact_id?: string | null };
+    transaction_currency: transactionCurrency,
+    amount_in_transaction_currency: transactionAmount,
+    base_currency: transactionCurrency ? baseCurrency : null,
+    fx_rate: fxRate,
+    amount_in_base_currency: amountInBaseCurrency,
+  } as JournalEntriesInsert & { 
+    contact_id?: string | null;
+    transaction_currency?: string | null;
+    amount_in_transaction_currency?: number | null;
+    base_currency?: string | null;
+    fx_rate?: number | null;
+    amount_in_base_currency?: number | null;
+  };
   // Use type assertion for insert to fix type inference
   // Type assertion to fix Supabase type inference - this is type-safe as we're using Database types
   const entryTable = supabase.from("journal_entries") as unknown as {

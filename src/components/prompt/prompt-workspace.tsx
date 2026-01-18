@@ -12,6 +12,7 @@ import type { SourceDocument } from "@/lib/data/documents";
 import type { UserRole } from "@/lib/auth";
 import type { DraftPayload } from "@/lib/ai/schema";
 import type { Database } from "@/lib/database.types";
+import type { InventoryItem } from "@/lib/data/inventory";
 
 type Account = Database["public"]["Tables"]["chart_of_accounts"]["Row"];
 
@@ -28,6 +29,7 @@ type DraftResponse = {
   draft: DraftData;
   documents: SourceDocument[];
   accounts: Account[];
+  inventoryItems?: InventoryItem[];
   user: {
     role: UserRole;
   };
@@ -80,6 +82,7 @@ export function PromptWorkspace() {
             initialDraft={draftData.draft}
             documents={draftData.documents}
             accounts={draftData.accounts}
+            inventoryItems={draftData.inventoryItems || []}
             userRole={draftData.user.role}
             onClose={handleClosePanel}
             onDraftUpdated={handleDraftUpdated}

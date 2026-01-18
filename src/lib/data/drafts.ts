@@ -40,7 +40,17 @@ export async function getRecentDrafts(limit = 5) {
   }));
 }
 
-export async function listDrafts() {
-  return getRecentDrafts(50);
+export async function listDrafts(currency?: string) {
+  const drafts = await getRecentDrafts(50);
+  
+  // Filter by currency if provided
+  if (currency) {
+    return drafts.filter((draft) => {
+      const draftCurrency = (draft.entities as any)?.currency;
+      return draftCurrency && draftCurrency.toUpperCase() === currency.toUpperCase();
+    });
+  }
+  
+  return drafts;
 }
 

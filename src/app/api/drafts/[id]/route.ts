@@ -56,6 +56,17 @@ export async function GET(
     // Get accounts for journal preview
     const accounts = await listAccounts();
 
+    // Get inventory items for inventory picker (for invoices/bills)
+    let inventoryItems: Array<{ id: string; name: string; sku: string | null; unit: string; is_active: boolean }> = [];
+    if (draft.intent === "create_invoice" || draft.intent === "create_bill") {
+      try {
+        const { getInventoryItems } = await import("@/lib/data/inventory");
+        inventoryItems = await getInventoryItems();
+      } catch (error) {
+        console.error("Failed to fetch inventory items:", error);
+      }
+    }
+
     return NextResponse.json({
       draft: {
         ...draft,
@@ -64,6 +75,7 @@ export async function GET(
       },
       documents: documents ?? [],
       accounts: accounts,
+      inventoryItems: inventoryItems,
       user: {
         role: user.role,
       },

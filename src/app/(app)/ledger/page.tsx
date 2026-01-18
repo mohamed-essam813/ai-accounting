@@ -11,6 +11,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { formatCurrency, formatDate } from "@/lib/format";
 import { getJournalLedger } from "@/lib/data/reports";
 import { listAccounts } from "@/lib/data/accounts";
+import { CurrencyFilter } from "@/components/filters/currency-filter";
 import { ExportButtons } from "@/components/reports/export-buttons";
 import Link from "next/link";
 import { ArrowRight, ChevronRight } from "lucide-react";
@@ -29,11 +30,12 @@ export const revalidate = 60;
 export default async function LedgerPage({
   searchParams,
 }: {
-  searchParams: Promise<{ accountCode?: string; startDate?: string; endDate?: string }>;
+  searchParams: Promise<{ accountCode?: string; startDate?: string; endDate?: string; currency?: string }>;
 }) {
   const params = await searchParams;
+  const currency = params.currency;
   const [ledger, accounts] = await Promise.all([
-    getJournalLedger(params.startDate, params.endDate),
+    getJournalLedger(params.startDate, params.endDate, currency),
     listAccounts(),
   ]);
 
@@ -108,6 +110,8 @@ export default async function LedgerPage({
             : "All journal entries and transactions. Filter by account code to see specific account activity."}
         </p>
       </div>
+
+      <CurrencyFilter initialCurrency={currency} />
 
       {account && (
         <Card>

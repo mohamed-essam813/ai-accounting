@@ -31,6 +31,7 @@ type JournalLedgerRow = {
 import { formatCurrency, formatDate } from "@/lib/format";
 import Link from "next/link";
 import { ReportFilters } from "@/components/reports/report-filters";
+import { CurrencyFilter } from "@/components/filters/currency-filter";
 import { ExportButtons } from "@/components/reports/export-buttons";
 import { ARAgeingTable } from "@/components/reports/ar-ageing-table";
 import { APAgeingTable } from "@/components/reports/ap-ageing-table";
@@ -59,10 +60,11 @@ export const revalidate = 120;
 export default async function ReportsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ startDate?: string; endDate?: string; tab?: string }>;
+  searchParams: Promise<{ startDate?: string; endDate?: string; tab?: string; currency?: string }>;
 }) {
   const params = await searchParams;
   const defaultTab = params.tab || "pnl";
+  const currency = params.currency;
   
   // Get current and previous month data for period comparisons
   const currentMonth = getCurrentMonth();
@@ -89,7 +91,7 @@ export default async function ReportsPage({
     getBalanceSheet(),
     getTrialBalance(),
     getCashFlow(),
-    getJournalLedger(params.startDate, params.endDate),
+    getJournalLedger(params.startDate, params.endDate, params.currency),
     getVATReport(),
     getARAgeing(),
     getARAgeingSummary(),
@@ -127,11 +129,12 @@ export default async function ReportsPage({
       
       {/* Report Filters - Available for all tabs */}
       <Card>
-        <CardContent className="pt-6">
+        <CardContent className="pt-6 space-y-4">
           <ReportFilters
             initialStartDate={params.startDate}
             initialEndDate={params.endDate}
           />
+          <CurrencyFilter initialCurrency={currency} />
         </CardContent>
       </Card>
 

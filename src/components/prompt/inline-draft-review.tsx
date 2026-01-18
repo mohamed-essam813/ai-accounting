@@ -22,11 +22,25 @@ import { canApprove, canPost, type UserRole } from "@/lib/auth";
 import { formatCurrency } from "@/lib/format";
 import type { DraftPayload } from "@/lib/ai/schema";
 import type { SourceDocument } from "@/lib/data/documents";
+import type { InventoryItem } from "@/lib/data/inventory";
 import { JournalPreview } from "@/components/drafts/journal-preview";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { InventoryItemPicker } from "./inventory-item-picker";
 import type { Database } from "@/lib/database.types";
 
 type Account = Database["public"]["Tables"]["chart_of_accounts"]["Row"];
+
+type InventoryLineItem = {
+  item_id: string;
+  item_name: string;
+  item_sku: string | null;
+  quantity: number;
+  rate: number;
+  discount: number;
+  tax_rate: number;
+  tax_amount: number;
+  total: number;
+};
 
 const DraftEditFormSchema = z
   .object({
@@ -96,6 +110,7 @@ type Props = {
   initialDraft: DraftData;
   documents: SourceDocument[];
   accounts: Account[];
+  inventoryItems?: InventoryItem[];
   userRole: UserRole;
   onClose: () => void;
   onDraftUpdated?: () => void;
@@ -106,6 +121,7 @@ export function InlineDraftReviewPanel({
   initialDraft,
   documents,
   accounts,
+  inventoryItems = [],
   userRole,
   onClose,
   onDraftUpdated,
@@ -114,6 +130,14 @@ export function InlineDraftReviewPanel({
   const [isEditing, setIsEditing] = useState(false);
   const [isProcessing, startProcessing] = useTransition();
   const [showPostConfirm, setShowPostConfirm] = useState(false);
+  
+  // Extract inventory line items from draft entities
+  const getInitialInventoryItems = (): InventoryLineItem[] => {
+    const entities = draft.entities as any;
+    return entities.inventory_line_items || [];
+  };
+  
+  const [inventoryLineItems, setInventoryLineItems] = useState<InventoryLineItem[]>(getInitialInventoryItems());
 
   // Ensure date is valid - use today if invalid
   const getValidDate = () => {
@@ -153,6 +177,11 @@ export function InlineDraftReviewPanel({
         if (response.ok) {
           const data = await response.json();
           setDraft(data.draft);
+          // Reload inventory line items from draft
+          const entities = data.draft.entities as any;
+          if (entities.inventory_line_items) {
+            setInventoryLineItems(entities.inventory_line_items);
+          }
         }
       } catch (error) {
         console.error("Failed to refresh draft:", error);
@@ -193,12 +222,18 @@ export function InlineDraftReviewPanel({
         const taxRate = values.tax_rate ? Number(values.tax_rate) : undefined;
         const taxAmount = values.tax_amount ? Number(values.tax_amount) : undefined;
 
+        // Calculate total amount from inventory line items if present, otherwise use form amount
+        let finalAmount = values.amount;
+        if (inventoryLineItems.length > 0) {
+          finalAmount = inventoryLineItems.reduce((sum, item) => sum + item.total, 0);
+        }
+
         await updateDraftAction({
           draftId: draft.id,
           intent: draft.intent as DraftPayload["intent"],
           confidence: draft.confidence ?? 0.8,
           entities: {
-            amount: values.amount,
+            amount: finalAmount,
             currency: values.currency,
             date: values.date,
             counterparty: values.counterparty || null,
@@ -212,7 +247,9 @@ export function InlineDraftReviewPanel({
                     amount: taxAmount ?? null,
                   }
                 : null,
-          },
+            // Store inventory line items in data_json for future use
+            inventory_line_items: inventoryLineItems.length > 0 ? inventoryLineItems : undefined,
+          } as any, // Type assertion for inventory_line_items
         });
 
         toast.success("Draft updated");
@@ -391,6 +428,24 @@ export function InlineDraftReviewPanel({
               <label className="text-sm font-medium mb-1 block">Description</label>
               <Textarea {...form.register("description")} rows={3} />
             </div>
+            
+            {/* Inventory Item Picker for Invoices and Bills */}
+            {(draft.intent === "create_invoice" || draft.intent === "create_bill") && inventoryItems.length > 0 && (
+              <InventoryItemPicker
+                items={inventoryItems}
+                selectedItems={inventoryLineItems}
+                onItemsChange={(items) => {
+                  setInventoryLineItems(items);
+                  // Auto-update amount field if inventory items are present
+                  const totalAmount = items.reduce((sum, item) => sum + item.total, 0);
+                  if (totalAmount > 0) {
+                    form.setValue("amount", totalAmount);
+                  }
+                }}
+                disabled={isProcessing}
+              />
+            )}
+            
             <div className="flex gap-2">
               <Button type="submit" disabled={isProcessing} size="sm">
                 Save Changes

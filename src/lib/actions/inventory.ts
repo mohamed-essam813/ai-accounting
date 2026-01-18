@@ -178,6 +178,12 @@ export async function updateInventoryItemAction(
   return data;
 }
 
+// Server action to list inventory items (for use in client components)
+export async function listInventoryItemsAction() {
+  const { getInventoryItems } = await import("@/lib/data/inventory");
+  return await getInventoryItems();
+}
+
 export async function deactivateInventoryItemAction(itemId: string) {
   const user = await getCurrentUser();
   if (!user?.tenant) {
