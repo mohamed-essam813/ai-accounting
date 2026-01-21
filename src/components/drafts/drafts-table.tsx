@@ -41,6 +41,8 @@ import { JournalPreview } from "./journal-preview";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { Database } from "@/lib/database.types";
 import { listTaxRatesAction, type TaxRate } from "@/lib/actions/tax-rates";
+import { canEditPosted, type UserRole } from "@/lib/auth";
+import { Lock } from "lucide-react";
 
 type Account = Database["public"]["Tables"]["chart_of_accounts"]["Row"];
 
@@ -68,9 +70,11 @@ type DraftTableItem = {
 type DraftTableProps = {
   drafts: DraftTableItem[];
   accounts?: Account[];
+  userRole?: string | null;
+  displayCurrency?: string; // Currency to display amounts in
 };
 
-export function DraftsTable({ drafts, accounts = [] }: DraftTableProps) {
+export function DraftsTable({ drafts, accounts = [], userRole, displayCurrency }: DraftTableProps) {
   const [isPending, startTransition] = useTransition();
   const [editorDraft, setEditorDraft] = useState<DraftTableItem | null>(null);
   const [isEditorOpen, setIsEditorOpen] = useState(false);
@@ -121,7 +125,22 @@ export function DraftsTable({ drafts, accounts = [] }: DraftTableProps) {
               </TableRow>
             ) : (
               paginatedDrafts.map((draft) => (
-                <TableRow key={draft.id}>
+                <TableRow 
+                  key={draft.id}
+                  className="cursor-pointer hover:bg-muted/50 transition-colors"
+                  onClick={(e) => {
+                    // Don't open editor if clicking on action buttons
+                    const target = e.target as HTMLElement;
+                    if (target.closest('button') || target.closest('a')) {
+                      return;
+                    }
+                    // Check if user can edit this draft
+                    if (draft.status === "posted" && (!userRole || !canEditPosted(userRole as UserRole))) {
+                      return; // Don't open if posted and user can't edit
+                    }
+                    handleOpenEditor(draft);
+                  }}
+                >
                   <TableCell className="text-sm text-muted-foreground">
                     {formatDate(draft.created_at)}
                   </TableCell>
@@ -131,22 +150,38 @@ export function DraftsTable({ drafts, accounts = [] }: DraftTableProps) {
                     {draft.entities.description ?? "—"}
                   </TableCell>
                   <TableCell className="text-right font-mono text-sm">
-                    {formatCurrency(draft.entities.amount ?? 0, draft.entities.currency ?? "AED")}
+                    {formatCurrency(
+                      draft.entities.amount ?? 0,
+                      displayCurrency || draft.entities.currency || "AED"
+                    )}
+                    {(draft.entities as any)?._converted && (
+                      <span className="text-xs text-muted-foreground ml-1" title={`Converted from ${(draft.entities as any)._originalCurrency}`}>
+                        *
+                      </span>
+                    )}
                   </TableCell>
                   <TableCell>
-                    <Badge
-                      variant={
-                        draft.status === "posted"
-                          ? "default"
-                          : draft.status === "approved"
-                            ? "secondary"
-                            : "outline"
-                      }
-                    >
-                      {draft.status}
-                    </Badge>
+                    <div className="flex items-center gap-2">
+                      <Badge
+                        variant={
+                          draft.status === "posted"
+                            ? "default"
+                            : draft.status === "approved"
+                              ? "secondary"
+                              : "outline"
+                        }
+                      >
+                        {draft.status}
+                      </Badge>
+                      {draft.status === "posted" && (
+                        <Lock className="h-4 w-4 text-muted-foreground" />
+                      )}
+                    </div>
                   </TableCell>
-                  <TableCell className="flex flex-wrap items-center justify-end gap-2">
+                  <TableCell 
+                    className="flex flex-wrap items-center justify-end gap-2"
+                    onClick={(e) => e.stopPropagation()} // Prevent row click when clicking actions
+                  >
                     <Button
                       size="sm"
                       variant="outline"
@@ -168,7 +203,20 @@ export function DraftsTable({ drafts, accounts = [] }: DraftTableProps) {
                     >
                       Approve
                     </Button>
-                    <Button size="sm" variant="secondary" onClick={() => handleOpenEditor(draft)}>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => handleOpenEditor(draft)}
+                      disabled={
+                        draft.status === "posted" &&
+                        (!userRole || !canEditPosted(userRole as UserRole))
+                      }
+                      title={
+                        draft.status === "posted" && (!userRole || !canEditPosted(userRole as UserRole))
+                          ? "Posted entries can only be edited by administrators or auditors"
+                          : undefined
+                      }
+                    >
                       Edit
                     </Button>
                     <Button

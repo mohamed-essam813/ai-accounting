@@ -58,9 +58,6 @@ export function ProfitLossTable({ data, startDate, endDate }: Props) {
             </TableRow>
             {items.map((item) => (
               <TableRow key={item.account_code} className="hover:bg-muted/30">
-                <TableCell className="pl-8 text-muted-foreground">
-                  {item.account_code}
-                </TableCell>
                 <TableCell className="text-muted-foreground">
                   <Link
                     href={`/ledger?accountCode=${item.account_code}`}

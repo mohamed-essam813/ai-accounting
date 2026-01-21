@@ -7,7 +7,7 @@ import { SubscriptionManager } from "@/components/settings/subscription-manager"
 import { AccountingPoliciesForm } from "@/components/settings/accounting-policies-form";
 import { TaxRatesForm } from "@/components/settings/tax-rates-form";
 import { UnitsOfMeasureForm } from "@/components/settings/units-of-measure-form";
-import { getTenantProfile, getAccountingPolicy, listAccountingPolicyChanges } from "@/lib/data/tenant";
+import { getTenantProfile, getAccountingPolicy } from "@/lib/data/tenant";
 import { listTenantUsers, listPendingInvites } from "@/lib/data/tenant";
 import { getCurrentUser } from "@/lib/data/users";
 import { canManageAccounts, type UserRole } from "@/lib/auth";
@@ -21,7 +21,7 @@ import { createServerSupabaseClient } from "@/lib/supabase/server";
 export const revalidate = 60;
 
 export default async function TenantSettingsPage() {
-  const [tenant, users, invites, currentUser, plans, subscription, usage, policy, policyChanges] = await Promise.all([
+  const [tenant, users, invites, currentUser, plans, subscription, usage, policy] = await Promise.all([
     getTenantProfile(),
     listTenantUsers(),
     listPendingInvites(),
@@ -30,7 +30,6 @@ export default async function TenantSettingsPage() {
     getTenantSubscription(),
     getSubscriptionUsage(),
     getAccountingPolicy(),
-    listAccountingPolicyChanges(),
   ]);
 
   const canManage = currentUser ? canManageAccounts(currentUser.role as UserRole) : false;
@@ -41,7 +40,8 @@ export default async function TenantSettingsPage() {
     const supabase = await createServerSupabaseClient();
     // Using type assertion since table may not be in generated types yet
     const { data } = await supabase
-      .from("inventory_transactions" as any)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .from("inventory_transactions" as never)
       .select("id")
       .eq("tenant_id", currentUser.tenant.id)
       .limit(1)

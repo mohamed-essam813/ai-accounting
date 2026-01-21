@@ -152,29 +152,37 @@ export async function getJournalLedger(startDate?: string, endDate?: string, cur
   
   let result = data ?? [];
   
-  // Filter by currency in application layer if provided
-  // TODO: Move this to database query once v_journal_ledger view includes transaction_currency
-  if (currency) {
-    // For now, we need to join with journal_entries to get currency
-    // This is a temporary solution until the view is updated
-    const entryIds = new Set(result.map((r: any) => r.entry_id).filter((id: any): id is string => typeof id === "string"));
+  // Currency parameter is for conversion, not filtering
+  // All journal entries are returned - currency conversion happens at display layer
+  // We need to join with journal_entries to get currency info for conversion
+  if (currency && result.length > 0) {
+    const entryIds = new Set(
+      result.map((r: any) => r.entry_id).filter((id: any): id is string => typeof id === "string")
+    );
+    
     if (entryIds.size > 0) {
       const { data: entries } = await supabase
         .from("journal_entries")
-        .select("id, transaction_currency")
+        .select("id, transaction_currency, base_currency, date")
         .in("id", Array.from(entryIds) as string[])
         .eq("tenant_id", user.tenant.id);
       
       const currencyMap = new Map(
-        (entries ?? []).map((e: any) => [e.id, e.transaction_currency])
+        (entries ?? []).map((e: any) => [
+          e.id,
+          {
+            transactionCurrency: e.transaction_currency,
+            baseCurrency: e.base_currency,
+            date: e.date,
+          },
+        ])
       );
       
-      result = result.filter((r: any) => {
-        const entryCurrency = currencyMap.get(r.entry_id);
-        return entryCurrency && entryCurrency.toUpperCase() === currency.toUpperCase();
-      });
-    } else {
-      result = [];
+      // Attach currency info to each ledger entry for conversion
+      result = result.map((r: any) => ({
+        ...r,
+        _currencyInfo: currencyMap.get(r.entry_id),
+      }));
     }
   }
   

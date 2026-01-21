@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { getContactStatementAction } from "@/lib/actions/contacts";
 import type { StatementTransaction } from "@/lib/data/contacts";
 import { usePagination } from "@/hooks/use-pagination";
@@ -17,19 +17,26 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
-import { Download } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Download, Filter, X } from "lucide-react";
 import type { Database } from "@/lib/database.types";
 
 type Contact = Database["public"]["Tables"]["contacts"]["Row"];
 
 type Props = {
   contact: Contact;
+  initialStartDate?: string;
+  initialEndDate?: string;
 };
 
-export function StatementOfAccount({ contact }: Props) {
+export function StatementOfAccount({ contact, initialStartDate, initialEndDate }: Props) {
   const [transactions, setTransactions] = useState<StatementTransaction[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [startDate, setStartDate] = useState(initialStartDate ?? "");
+  const [endDate, setEndDate] = useState(initialEndDate ?? "");
+  const [isPending, startTransition] = useTransition();
   
   // Pagination
   const {
@@ -41,32 +48,41 @@ export function StatementOfAccount({ contact }: Props) {
     setItemsPerPage,
   } = usePagination({ data: transactions, itemsPerPage: 50 });
 
-  useEffect(() => {
-    let cancelled = false;
+  const loadStatement = (start?: string, end?: string) => {
     setLoading(true);
     setError(null);
 
-    getContactStatementAction(contact.id)
+    getContactStatementAction(contact.id, start, end)
       .then((data) => {
-        if (!cancelled) {
-          setTransactions(data);
-          setLoading(false);
-        }
+        setTransactions(data);
+        setLoading(false);
       })
       .catch((err) => {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : "Failed to load statement");
-          setLoading(false);
-        }
+        setError(err instanceof Error ? err.message : "Failed to load statement");
+        setLoading(false);
       });
+  };
 
-    return () => {
-      cancelled = true;
-    };
+  useEffect(() => {
+    loadStatement(startDate || undefined, endDate || undefined);
   }, [contact.id]);
 
+  const handleApplyFilters = () => {
+    startTransition(() => {
+      loadStatement(startDate || undefined, endDate || undefined);
+    });
+  };
+
+  const handleClearFilters = () => {
+    setStartDate("");
+    setEndDate("");
+    startTransition(() => {
+      loadStatement();
+    });
+  };
+
   const handleExportCSV = () => {
-    // Create CSV content - export all transactions, not just current page
+    // Create CSV content - export filtered transactions, not just current page
     const headers = ["Date", "Doc #", "Description", "Debit", "Credit", "Balance"];
     const rows = transactions.map((t) => [
       t.date,
@@ -81,11 +97,12 @@ export function StatementOfAccount({ contact }: Props) {
       .map((row) => row.map((cell) => `"${cell}"`).join(","))
       .join("\n");
     
+    const dateRange = startDate && endDate ? `_${startDate}_to_${endDate}` : "";
     const blob = new Blob([csvContent], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `Statement_${contact.code}_${new Date().toISOString().split("T")[0]}.csv`;
+    a.download = `Statement_${contact.code}${dateRange}_${new Date().toISOString().split("T")[0]}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -109,9 +126,10 @@ export function StatementOfAccount({ contact }: Props) {
       const workbook = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(workbook, worksheet, "Statement");
       
+      const dateRange = startDate && endDate ? `_${startDate}_to_${endDate}` : "";
       XLSX.writeFile(
         workbook,
-        `Statement_${contact.code}_${new Date().toISOString().split("T")[0]}.xlsx`
+        `Statement_${contact.code}${dateRange}_${new Date().toISOString().split("T")[0]}.xlsx`
       );
     } catch (error) {
       console.error(error);
@@ -168,7 +186,8 @@ export function StatementOfAccount({ contact }: Props) {
       });
       
       // Save PDF
-      doc.save(`Statement_${contact.code}_${new Date().toISOString().split("T")[0]}.pdf`);
+      const dateRange = startDate && endDate ? `_${startDate}_to_${endDate}` : "";
+      doc.save(`Statement_${contact.code}${dateRange}_${new Date().toISOString().split("T")[0]}.pdf`);
     } catch (error) {
       console.error(error);
       alert("Failed to export PDF. Please ensure jspdf and jspdf-autotable packages are installed.");
@@ -232,9 +251,56 @@ export function StatementOfAccount({ contact }: Props) {
         </div>
       </CardHeader>
       <CardContent>
+        {/* Date Filters */}
+        <div className="mb-4 space-y-3 rounded-lg border bg-card p-4">
+          <div className="flex flex-wrap items-end gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="start-date" className="text-xs text-muted-foreground">Start Date</Label>
+              <Input
+                id="start-date"
+                type="date"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+                className="w-40"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="end-date" className="text-xs text-muted-foreground">End Date</Label>
+              <Input
+                id="end-date"
+                type="date"
+                value={endDate}
+                onChange={(e) => setEndDate(e.target.value)}
+                className="w-40"
+              />
+            </div>
+            <Button 
+              onClick={handleApplyFilters} 
+              disabled={isPending} 
+              size="sm"
+            >
+              <Filter className="h-4 w-4 mr-2" />
+              Apply Filters
+            </Button>
+            {(startDate || endDate) && (
+              <Button 
+                onClick={handleClearFilters} 
+                variant="outline" 
+                size="sm" 
+                disabled={isPending}
+              >
+                <X className="h-4 w-4 mr-2" />
+                Clear
+              </Button>
+            )}
+          </div>
+        </div>
+
         {transactions.length === 0 ? (
           <p className="text-sm text-muted-foreground text-center py-8">
-            No transactions found for this contact.
+            {startDate || endDate 
+              ? "No transactions found for the selected date range."
+              : "No transactions found for this contact."}
           </p>
         ) : (
           <>

@@ -7,7 +7,7 @@ import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { getCurrentUser } from "@/lib/data/users";
 import { listAccounts } from "@/lib/data/accounts";
 import { buildDefaultJournalLines, ensureBalanced, type IntentAccountMapping, type JournalLine } from "@/lib/accounting";
-import { canApprove, type UserRole } from "@/lib/auth";
+import { canApprove, canEditPosted, type UserRole } from "@/lib/auth";
 import type { Database } from "@/lib/database.types";
 import type { DraftPayload } from "@/lib/ai/schema";
 
@@ -130,8 +130,30 @@ export async function updateDraftAction(input: z.infer<typeof UpdateDraftSchema>
     throw new Error("Draft not found.");
   }
 
+  // Allow admin/auditor to edit posted entries with audit log
   if (existing.status === "posted") {
-    throw new Error("Posted drafts cannot be edited.");
+    if (!canEditPosted(user.role as UserRole)) {
+      throw new Error("Posted drafts cannot be edited. Only administrators and auditors can edit posted entries.");
+    }
+    
+    // Log the edit to audit log
+    const auditData: AuditLogsInsert = {
+      tenant_id: user.tenant.id,
+      actor_id: user.id,
+      action: "edit_posted_draft",
+      entity: "draft",
+      entity_id: payload.draftId,
+      changes: {
+        previous_status: existing.status,
+        edited_fields: Object.keys(payload).filter(key => key !== "draftId"),
+        reason: "Admin/Auditor edit of posted draft",
+      },
+    };
+
+    const auditTable = supabase.from("audit_logs") as unknown as {
+      insert: (values: AuditLogsInsert[]) => Promise<{ error: unknown }>;
+    };
+    await auditTable.insert([auditData]);
   }
 
   const nextStatus = existing.status === "approved" ? "draft" : existing.status;
@@ -375,29 +397,31 @@ export async function postDraftAction(input: z.infer<typeof PostDraftSchema>) {
       // For each item: Calculate COGS, create inventory transaction, add COGS journal line
       const { calculateCOGSFIFO, calculateCOGSWeightedAverage } = await import("@/lib/inventory/valuation");
       const { updateInventoryBalanceAfterSale } = await import("@/lib/inventory/valuation");
-      const { getInventoryBalance } = await import("@/lib/data/inventory");
-      const { getAccountByCode } = await import("@/lib/data/accounts");
-
-      // Get COGS account (code 5500)
-      const cogsAccount = await getAccountByCode("5500");
-      if (!cogsAccount) {
-        throw new Error("COGS account (5500) not found. Please create it in Chart of Accounts.");
-      }
-
-      // Get Inventory account (code 1200)
-      const inventoryAccount = await getAccountByCode("1200");
-      if (!inventoryAccount) {
-        throw new Error("Inventory account (1200) not found. Please create it in Chart of Accounts.");
-      }
+      const { getInventoryBalance, getInventoryItem } = await import("@/lib/data/inventory");
 
       const entryDate = (parsedDraft.entities.date as string) ?? new Date().toISOString().slice(0, 10);
 
       for (const lineItem of inventoryLineItems) {
-        // Get inventory item to determine valuation method
-        const { getInventoryItem } = await import("@/lib/data/inventory");
+        // Get inventory item to determine accounts and valuation method
         const inventoryItem = await getInventoryItem(lineItem.item_id);
         if (!inventoryItem) {
           throw new Error(`Inventory item ${lineItem.item_id} not found`);
+        }
+
+        // Use item-level accounts (from inventory_item table)
+        // Type assertion needed since these fields may not be in types yet
+        const inventoryItemWithAccounts = inventoryItem as any;
+        const inventoryAccountId = inventoryItemWithAccounts.inventory_account_id;
+        const cogsAccountId = inventoryItemWithAccounts.cogs_account_id;
+
+        if (!inventoryAccountId || !cogsAccountId) {
+          throw new Error(`Inventory item ${inventoryItem.name} is missing inventory_account_id or cogs_account_id. Please update the item or run the migration.`);
+        }
+
+        // Get current balance to check quantity
+        const currentBalance = await getInventoryBalance(lineItem.item_id);
+        if (!currentBalance || Number(currentBalance.quantity) < lineItem.quantity) {
+          throw new Error(`Insufficient inventory for ${inventoryItem.name}. Available: ${currentBalance?.quantity || 0}, Required: ${lineItem.quantity}`);
         }
 
         // Calculate COGS based on valuation method
@@ -427,7 +451,8 @@ export async function postDraftAction(input: z.infer<typeof PostDraftSchema>) {
         );
 
         // Create inventory transaction record
-        const invTransactionTable = supabase.from("inventory_transactions" as any) as unknown as {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const invTransactionTable = supabase.from("inventory_transactions" as never) as unknown as {
           insert: (values: any[]) => {
             select: (columns: string) => {
               single: () => Promise<{ data: { id: string } | null; error: unknown }>;
@@ -459,20 +484,33 @@ export async function postDraftAction(input: z.infer<typeof PostDraftSchema>) {
         if (invTransaction && invTransaction.id) {
           inventoryTransactionIds.push(invTransaction.id);
 
-          // Add COGS journal line: DR COGS, CR Inventory
+          // Add COGS journal line: DR COGS (using item-level COGS account)
           lines.push({
-            account_id: cogsAccount.id,
+            account_id: cogsAccountId, // Use item-level COGS account
             debit: cogsAmount,
             credit: 0,
             memo: `COGS: ${lineItem.item_name} (${lineItem.quantity})`,
           });
 
-          lines.push({
-            account_id: inventoryAccount.id,
-            debit: 0,
-            credit: cogsAmount,
-            memo: `Inventory: ${lineItem.item_name} (${lineItem.quantity})`,
-          });
+          // Add inventory reduction journal line: CR Inventory (using item-level inventory account)
+          // Find and update the existing inventory credit line, or add new one
+          const inventoryLineIndex = lines.findIndex(
+            (line) => line.account_id === inventoryAccountId && line.credit > 0
+          );
+
+          if (inventoryLineIndex >= 0) {
+            // Add to existing inventory credit line
+            lines[inventoryLineIndex].credit += cogsAmount;
+            lines[inventoryLineIndex].memo = `${lines[inventoryLineIndex].memo || ""}; Sale: ${lineItem.item_name}`;
+          } else {
+            // Add new inventory credit line
+            lines.push({
+              account_id: inventoryAccountId, // Use item-level inventory account
+              debit: 0,
+              credit: cogsAmount,
+              memo: `Inventory Sale: ${lineItem.item_name} (${lineItem.quantity})`,
+            });
+          }
         }
       }
     } else if (draft.intent === "create_bill") {
@@ -480,21 +518,23 @@ export async function postDraftAction(input: z.infer<typeof PostDraftSchema>) {
       // For each item: Create inventory transaction, update balance, add inventory journal line
       const { updateInventoryBalanceAfterPurchase } = await import("@/lib/inventory/valuation");
       const { getInventoryItem } = await import("@/lib/data/inventory");
-      const { getAccountByCode } = await import("@/lib/data/accounts");
-
-      // Get Inventory account (code 1200)
-      const inventoryAccount = await getAccountByCode("1200");
-      if (!inventoryAccount) {
-        throw new Error("Inventory account (1200) not found. Please create it in Chart of Accounts.");
-      }
 
       const entryDate = (parsedDraft.entities.date as string) ?? new Date().toISOString().slice(0, 10);
 
       for (const lineItem of inventoryLineItems) {
-        // Get inventory item to determine valuation method and unit cost
+        // Get inventory item to determine valuation method, unit cost, and accounts
         const inventoryItem = await getInventoryItem(lineItem.item_id);
         if (!inventoryItem) {
           throw new Error(`Inventory item ${lineItem.item_id} not found`);
+        }
+
+        // Use item-level inventory account (from inventory_item table)
+        // Type assertion needed since these fields may not be in types yet
+        const inventoryItemWithAccounts = inventoryItem as any;
+        const inventoryAccountId = inventoryItemWithAccounts.inventory_account_id;
+
+        if (!inventoryAccountId) {
+          throw new Error(`Inventory item ${inventoryItem.name} is missing inventory_account_id. Please update the item or run the migration.`);
         }
 
         // For purchases, unit_cost is the rate (purchase price per unit)
@@ -512,7 +552,8 @@ export async function postDraftAction(input: z.infer<typeof PostDraftSchema>) {
         );
 
         // Create inventory transaction record
-        const invTransactionTable = supabase.from("inventory_transactions" as any) as unknown as {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const invTransactionTable = supabase.from("inventory_transactions" as never) as unknown as {
           insert: (values: any[]) => {
             select: (columns: string) => {
               single: () => Promise<{ data: { id: string } | null; error: unknown }>;
@@ -544,18 +585,18 @@ export async function postDraftAction(input: z.infer<typeof PostDraftSchema>) {
         if (invTransaction && invTransaction.id) {
           inventoryTransactionIds.push(invTransaction.id);
 
-          // Add Inventory journal line: DR Inventory
+          // Add Inventory journal line: DR Inventory (using item-level inventory account)
           // Note: The CR side (AP) is already handled by the default bill journal lines
           // We just need to modify the expense line to be inventory
           // Find the expense line and replace it with inventory
           const expenseLineIndex = lines.findIndex(
-            (line) => line.debit > 0 && line.credit === 0 && line.account_id !== inventoryAccount.id
+            (line) => line.debit > 0 && line.credit === 0 && line.account_id !== inventoryAccountId
           );
           
           if (expenseLineIndex >= 0) {
             // Replace expense line with inventory line for this item
             lines[expenseLineIndex] = {
-              account_id: inventoryAccount.id,
+              account_id: inventoryAccountId, // Use item-level inventory account
               debit: totalCost,
               credit: 0,
               memo: `Inventory Purchase: ${lineItem.item_name} (${lineItem.quantity})`,
@@ -563,7 +604,7 @@ export async function postDraftAction(input: z.infer<typeof PostDraftSchema>) {
           } else {
             // Add inventory line if no expense line found
             lines.push({
-              account_id: inventoryAccount.id,
+              account_id: inventoryAccountId, // Use item-level inventory account
               debit: totalCost,
               credit: 0,
               memo: `Inventory Purchase: ${lineItem.item_name} (${lineItem.quantity})`,
@@ -894,8 +935,30 @@ export async function updateDraftJournalLines(input: z.infer<typeof UpdateJourna
     throw new Error("Draft not found.");
   }
 
+  // Allow admin/auditor to edit posted entries with audit log
   if (existing.status === "posted") {
-    throw new Error("Posted drafts cannot be edited.");
+    if (!canEditPosted(user.role as UserRole)) {
+      throw new Error("Posted drafts cannot be edited. Only administrators and auditors can edit posted entries.");
+    }
+    
+    // Log the edit to audit log
+    const auditData: AuditLogsInsert = {
+      tenant_id: user.tenant.id,
+      actor_id: user.id,
+      action: "edit_posted_journal_lines",
+      entity: "draft",
+      entity_id: payload.draftId,
+      changes: {
+        previous_status: existing.status,
+        journal_lines_count: payload.journalLines.length,
+        reason: "Admin/Auditor edit of posted draft journal lines",
+      },
+    };
+
+    const auditTable = supabase.from("audit_logs") as unknown as {
+      insert: (values: AuditLogsInsert[]) => Promise<{ error: unknown }>;
+    };
+    await auditTable.insert([auditData]);
   }
 
   // Validate journal lines are balanced

@@ -15,7 +15,7 @@ import { RevenueExpenseChart } from "@/components/dashboard/revenue-expense-char
 import { ARAPAgeingChart } from "@/components/dashboard/ar-ap-ageing-chart";
 import { ProfitabilityChart } from "@/components/dashboard/profitability-chart";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Banknote, Link2, TrendingUp, TrendingDown, DollarSign } from "lucide-react";
+import { Banknote, Link2, TrendingUp, TrendingDown } from "lucide-react";
 import Link from "next/link";
 import { formatCurrency } from "@/lib/format";
 import {
@@ -44,13 +44,25 @@ import {
 } from "@/lib/utils/period-comparison";
 import { DashboardFilters } from "@/components/dashboard/dashboard-filters";
 import { AIRecommendations } from "@/components/dashboard/ai-recommendations";
+import { getDashboardRecommendations } from "@/lib/insights/recommendations";
+import { MultiPeriodSelector } from "@/components/dashboard/multi-period-selector";
+import { getMultiPeriodData, getLastNMonths, getLastNQuarters, getLastNYears } from "@/lib/data/multi-period-comparison";
+import { RevenueExpenseChartMulti } from "@/components/dashboard/revenue-expense-chart-multi";
 
 export const revalidate = 60;
 
 export default async function DashboardPage({
   searchParams,
 }: {
-  searchParams: Promise<{ period?: string; startDate?: string; endDate?: string; compare?: "previous" | "lastYear"; currency?: string }>;
+  searchParams: Promise<{ 
+    period?: string; 
+    startDate?: string; 
+    endDate?: string; 
+    compare?: "previous" | "lastYear"; 
+    currency?: string;
+    periodCount?: string;
+    periodType?: "months" | "quarters" | "years";
+  }>;
 }) {
   const params = await searchParams;
   const period = params.period || "month";
@@ -58,13 +70,29 @@ export default async function DashboardPage({
   const endDate = params.endDate;
   const comparisonType = params.compare || "previous";
   const currency = params.currency;
+  const periodCount = params.periodCount;
+  const periodType = params.periodType || "months";
+  
+  // Determine if multi-period mode is enabled
+  const isMultiPeriodMode = !!periodCount;
 
   // Handle errors gracefully - if data fetching fails, show empty state
+  const defaultPeriodData: PeriodFinancialData = {
+    revenue: 0,
+    expenses: 0,
+    netIncome: 0,
+    cashBalance: 0,
+    receivables: 0,
+    payables: 0,
+    cashFlow: 0,
+  };
+
   let pulse: FinancialPulse;
   let signals: AttentionSignal[];
   let events: RecentFinancialEvent[];
-  let currentPeriodData: PeriodFinancialData;
-  let previousPeriodData: PeriodFinancialData;
+  let currentPeriodData: PeriodFinancialData = defaultPeriodData;
+  let previousPeriodData: PeriodFinancialData = defaultPeriodData;
+  let multiPeriodData: Awaited<ReturnType<typeof getMultiPeriodData>> | null = null;
   
   try {
     // Get current and comparison period data based on filter
@@ -112,13 +140,63 @@ export default async function DashboardPage({
       }
     }
     
-    [pulse, signals, events, currentPeriodData, previousPeriodData] = await Promise.all([
-      getFinancialPulse(),
-      getAttentionSignals(),
-      getRecentFinancialEvents(5),
-      getPeriodFinancialData(currentPeriod),
-      getPeriodFinancialData(comparisonPeriod),
-    ]);
+    // Fetch data based on mode
+    
+    if (isMultiPeriodMode) {
+      // Multi-period mode: fetch data for N periods
+      const count = parseInt(periodCount || "3", 10);
+      let dateRanges: Array<{ label: string; dateRange: DateRange }>;
+      
+      if (periodType === "quarters") {
+        dateRanges = getLastNQuarters(count);
+      } else if (periodType === "years") {
+        dateRanges = getLastNYears(count);
+      } else {
+        dateRanges = getLastNMonths(count);
+      }
+      
+      const [pulseResult, signalsResult, eventsResult, multiPeriodResult] = await Promise.all([
+        getFinancialPulse(currency),
+        getAttentionSignals(currency),
+        getRecentFinancialEvents(5, currency),
+        getMultiPeriodData(dateRanges, currency),
+      ]);
+      
+      pulse = pulseResult;
+      signals = signalsResult;
+      events = eventsResult;
+      const updatedMultiPeriodData = multiPeriodResult;
+      multiPeriodData = updatedMultiPeriodData;
+      
+      // Use last period as current, second-to-last as previous for comparisons
+      if (multiPeriodResult.periods.length > 0) {
+        currentPeriodData = multiPeriodResult.periods[multiPeriodResult.periods.length - 1].data;
+        previousPeriodData = multiPeriodResult.periods.length > 1 
+          ? multiPeriodResult.periods[multiPeriodResult.periods.length - 2].data
+          : currentPeriodData;
+      } else {
+        // Fallback if no periods
+        currentPeriodData = {
+          revenue: 0,
+          expenses: 0,
+          netIncome: 0,
+          cashBalance: 0,
+          receivables: 0,
+          payables: 0,
+          cashFlow: 0,
+        };
+        previousPeriodData = currentPeriodData;
+      }
+    } else {
+      // Standard 2-period mode
+      [pulse, signals, events, currentPeriodData, previousPeriodData] = await Promise.all([
+        getFinancialPulse(currency),
+        getAttentionSignals(currency),
+        getRecentFinancialEvents(5, currency),
+        getPeriodFinancialData(currentPeriod, currency),
+        getPeriodFinancialData(comparisonPeriod, currency),
+      ]);
+    }
   } catch (error) {
     console.error("Dashboard data fetch failed:", error);
     // Return default values on error
@@ -137,18 +215,10 @@ export default async function DashboardPage({
       payables: 0,
       cashFlow: 0,
     };
-    previousPeriodData = {
-      revenue: 0,
-      expenses: 0,
-      netIncome: 0,
-      cashBalance: 0,
-      receivables: 0,
-      payables: 0,
-      cashFlow: 0,
-    };
+    previousPeriodData = defaultPeriodData;
   }
 
-  // Calculate comparisons for charts
+  // Calculate comparisons for charts (needed even if not used in multi-period mode)
   const revenueComparison = calculateComparison(
     currentPeriodData.revenue,
     previousPeriodData.revenue,
@@ -174,6 +244,28 @@ export default async function DashboardPage({
     previousPeriodData.payables,
   );
 
+  // Get structured recommendations
+  let structuredRecommendations: Awaited<ReturnType<typeof getDashboardRecommendations>> = [];
+  try {
+    const daysInPeriod = startDate && endDate
+      ? Math.ceil((new Date(endDate).getTime() - new Date(startDate).getTime()) / (1000 * 60 * 60 * 24))
+      : period === "quarter" ? 90 : period === "year" ? 365 : 30;
+    
+    structuredRecommendations = await getDashboardRecommendations(
+      currentPeriodData,
+      previousPeriodData,
+      revenueComparison,
+      expenseComparison,
+      cashFlowComparison,
+      netIncomeComparison,
+      arComparison,
+      apComparison,
+      daysInPeriod,
+    );
+  } catch (error) {
+    console.error("Failed to generate recommendations:", error);
+  }
+
   return (
     <div className="space-y-6 pb-6">
       {/* Dashboard Filters */}
@@ -184,6 +276,14 @@ export default async function DashboardPage({
         initialComparisonType={comparisonType}
         initialCurrency={currency}
       />
+      
+      {/* Multi-Period Selector (optional) */}
+      {!startDate && !endDate && (
+        <MultiPeriodSelector 
+          initialPeriodCount={periodCount || "3"}
+          initialPeriodType={periodType}
+        />
+      )}
 
       {/* Section 1: Financial Pulse (Top Narrative) */}
       <FinancialPulseCard pulse={pulse} />
@@ -197,14 +297,18 @@ export default async function DashboardPage({
               <p className="text-sm text-muted-foreground">Revenue and expense trends with profitability analysis</p>
             </div>
             <div className="grid gap-4 sm:grid-cols-2 items-stretch">
-            <RevenueExpenseChart
-              currentRevenue={currentPeriodData.revenue}
-              previousRevenue={previousPeriodData.revenue}
-              currentExpenses={currentPeriodData.expenses}
-              previousExpenses={previousPeriodData.expenses}
-              revenueComparison={revenueComparison}
-              expenseComparison={expenseComparison}
-            />
+            {isMultiPeriodMode && multiPeriodData ? (
+              <RevenueExpenseChartMulti multiPeriodData={multiPeriodData} />
+            ) : (
+              <RevenueExpenseChart
+                currentRevenue={currentPeriodData.revenue}
+                previousRevenue={previousPeriodData.revenue}
+                currentExpenses={currentPeriodData.expenses}
+                previousExpenses={previousPeriodData.expenses}
+                revenueComparison={revenueComparison}
+                expenseComparison={expenseComparison}
+              />
+            )}
             <div className="flex flex-col gap-4 h-full">
               <Card className="flex-1">
                 <CardHeader>
@@ -452,15 +556,7 @@ export default async function DashboardPage({
       </div>
 
       {/* Section 3: AI Recommendations */}
-      <AIRecommendations
-        currentPeriodData={currentPeriodData}
-        revenueComparison={revenueComparison}
-        expenseComparison={expenseComparison}
-        cashFlowComparison={cashFlowComparison}
-        netIncomeComparison={netIncomeComparison}
-        arComparison={arComparison}
-        apComparison={apComparison}
-      />
+      <AIRecommendations recommendations={structuredRecommendations} />
 
       {/* Section 4: Recent Financial Events (Optional) */}
       {events.length > 0 && (

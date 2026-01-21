@@ -19,3 +19,7 @@ export function canManageAccounts(role: UserRole) {
   return role === "admin";
 }
 
+export function canEditPosted(role: UserRole) {
+  return role === "admin" || role === "auditor";
+}
+

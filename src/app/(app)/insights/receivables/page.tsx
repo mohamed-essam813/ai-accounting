@@ -28,16 +28,37 @@ export default async function ReceivablesInsightPage() {
   const overdueTotal = total31_60 + total61_90 + total90Plus;
   const overduePercentage = totalOutstanding > 0 ? (overdueTotal / totalOutstanding) * 100 : 0;
 
-  // Generate insight summary (UX Composition Section 3, Screen 2, Section A)
+  // Calculate overdue amounts by customer (for specific recommendations)
+  const customersWithOverdue = ageingSummary
+    .map((customer) => ({
+      ...customer,
+      totalOverdue: customer.total_31_60 + customer.total_61_90 + customer.total_90_plus,
+    }))
+    .filter((c) => c.totalOverdue > 0)
+    .sort((a, b) => b.totalOverdue - a.totalOverdue);
+
+  // Top customers with overdue amounts
+  const topOverdueCustomers = customersWithOverdue.slice(0, 5);
+  const top2OverdueTotal = topOverdueCustomers.slice(0, 2).reduce((sum, c) => sum + c.totalOverdue, 0);
+  const top2Percentage = overdueTotal > 0 ? (top2OverdueTotal / overdueTotal) * 100 : 0;
+
+  // Generate specific actionable insight summary
   let insightSummary = "";
   if (overdueTotal === 0 && totalOutstanding > 0) {
     insightSummary = "All receivables are current. Customer payments are on time, maintaining healthy cash flow.";
-  } else if (overduePercentage < 10) {
-    insightSummary = "Most receivables are current. A small portion is overdue, with minimal impact on cash availability.";
-  } else if (overduePercentage < 30) {
-    insightSummary = "Customer payments are slowing compared to normal. Some receivables are overdue, increasing pressure on cash.";
+  } else if (overdueTotal > 0) {
+    const topCustomer = topOverdueCustomers[0];
+    if (topCustomer && top2Percentage >= 70) {
+      // High concentration - specific recommendation
+      insightSummary = `${formatCurrency(overdueTotal)} overdue >30 days. ${topOverdueCustomers.slice(0, 2).length} customer${topOverdueCustomers.slice(0, 2).length > 1 ? "s" : ""} account for ${Math.round(top2Percentage)}%. Follow up ${topCustomer.customer_name} first (${formatCurrency(topCustomer.totalOverdue)} overdue). Expected cash recovery: 2-3 weeks with active follow-up.`;
+    } else if (topCustomer) {
+      // Moderate concentration
+      insightSummary = `${formatCurrency(overdueTotal)} overdue >30 days. ${topOverdueCustomers.length} customer${topOverdueCustomers.length > 1 ? "s" : ""} have overdue amounts. Focus on ${topCustomer.customer_name} first (${formatCurrency(topCustomer.totalOverdue)} overdue). This is slowing cash inflow by ~${formatCurrency(overdueTotal)}. Expected cash recovery: 2-4 weeks.`;
+    } else {
+      insightSummary = `${formatCurrency(overdueTotal)} overdue >30 days. This is slowing cash inflow. Review overdue invoices and follow up with customers.`;
+    }
   } else {
-    insightSummary = "A significant portion of receivables are overdue. This delay is significantly slowing cash availability and increasing collection risk.";
+    insightSummary = "All receivables are current, maintaining healthy cash flow.";
   }
 
   // Top customers contributing to receivables (UX Composition Section 3, Screen 2, Section D)
@@ -94,6 +115,94 @@ export default async function ReceivablesInsightPage() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Section C: Actionable Recommendations (NEW - Specific Recommendations) */}
+      {overdueTotal > 0 && topOverdueCustomers.length > 0 && (
+        <Card className="border-orange-200 bg-orange-50/50">
+          <CardHeader>
+            <CardTitle className="text-lg text-orange-900">Actionable Recommendations</CardTitle>
+            <p className="text-sm text-orange-700">
+              Specific actions to improve cash collection
+            </p>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {/* Priority 1: Top Overdue Customer */}
+            {topOverdueCustomers[0] && (
+              <div className="p-4 rounded-lg border border-orange-200 bg-white">
+                <div className="flex items-start gap-3">
+                  <div className="shrink-0 w-8 h-8 rounded-full bg-orange-500 text-white flex items-center justify-center font-bold text-sm">
+                    1
+                  </div>
+                  <div className="flex-1">
+                    <h4 className="font-semibold text-sm mb-1">
+                      Follow up: {topOverdueCustomers[0].customer_name}
+                    </h4>
+                    <p className="text-sm text-muted-foreground mb-2">
+                      {formatCurrency(topOverdueCustomers[0].totalOverdue)} overdue ({Math.round((topOverdueCustomers[0].totalOverdue / overdueTotal) * 100)}% of total overdue)
+                    </p>
+                    <div className="text-xs text-muted-foreground space-y-1">
+                      <p>• 31-60 days: {formatCurrency(topOverdueCustomers[0].total_31_60)}</p>
+                      <p>• 61-90 days: {formatCurrency(topOverdueCustomers[0].total_61_90)}</p>
+                      <p>• 90+ days: {formatCurrency(topOverdueCustomers[0].total_90_plus)}</p>
+                      <p className="mt-2 font-medium text-orange-700">
+                        Expected cash recovery: 2-3 weeks with active follow-up
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Priority 2: Second Overdue Customer */}
+            {topOverdueCustomers[1] && (
+              <div className="p-4 rounded-lg border border-orange-200 bg-white">
+                <div className="flex items-start gap-3">
+                  <div className="shrink-0 w-8 h-8 rounded-full bg-orange-400 text-white flex items-center justify-center font-bold text-sm">
+                    2
+                  </div>
+                  <div className="flex-1">
+                    <h4 className="font-semibold text-sm mb-1">
+                      Follow up: {topOverdueCustomers[1].customer_name}
+                    </h4>
+                    <p className="text-sm text-muted-foreground mb-2">
+                      {formatCurrency(topOverdueCustomers[1].totalOverdue)} overdue ({Math.round((topOverdueCustomers[1].totalOverdue / overdueTotal) * 100)}% of total overdue)
+                    </p>
+                    <div className="text-xs text-muted-foreground space-y-1">
+                      <p>• 31-60 days: {formatCurrency(topOverdueCustomers[1].total_31_60)}</p>
+                      <p>• 61-90 days: {formatCurrency(topOverdueCustomers[1].total_61_90)}</p>
+                      <p>• 90+ days: {formatCurrency(topOverdueCustomers[1].total_90_plus)}</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Summary Stats */}
+            <div className="pt-3 border-t border-orange-200">
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                <div>
+                  <p className="text-muted-foreground">Total Overdue</p>
+                  <p className="font-semibold text-lg">{formatCurrency(overdueTotal)}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground">Customers with Overdue</p>
+                  <p className="font-semibold text-lg">{customersWithOverdue.length}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground">Cash Impact</p>
+                  <p className="font-semibold text-lg text-orange-700">
+                    -{formatCurrency(overdueTotal)}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground">Expected Recovery</p>
+                  <p className="font-semibold text-lg">2-4 weeks</p>
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Section C: Business Impact (UX Composition Section 3, Screen 2, Section C) */}
       <Card>

@@ -254,7 +254,11 @@ export async function deleteContactAction(contactId: string) {
   return { success: true };
 }
 
-export async function getContactStatementAction(contactId: string) {
+export async function getContactStatementAction(
+  contactId: string,
+  startDate?: string,
+  endDate?: string,
+) {
   const { getContactStatement } = await import("@/lib/data/contacts");
-  return await getContactStatement(contactId);
+  return await getContactStatement(contactId, startDate, endDate);
 }

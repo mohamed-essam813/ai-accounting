@@ -20,6 +20,8 @@ export interface InventoryItem {
   unit: string; // Deprecated - use uom_id instead, kept for backward compatibility
   uom_id?: string | null; // New field - links to units_of_measure
   valuation_method: "fifo" | "weighted_average";
+  inventory_account_id?: string | null; // Account ID for inventory asset (default: code 1200)
+  cogs_account_id?: string | null; // Account ID for cost of goods sold (default: code 5500)
   is_active: boolean;
   created_at: string;
   updated_at: string;
@@ -107,6 +109,8 @@ export async function getInventoryItems(): Promise<InventoryItem[]> {
     description: row.description,
     unit: row.unit,
     valuation_method: row.valuation_method as "fifo" | "weighted_average",
+    inventory_account_id: (row as any).inventory_account_id || null,
+    cogs_account_id: (row as any).cogs_account_id || null,
     is_active: row.is_active,
     created_at: row.created_at,
     updated_at: row.updated_at,
@@ -391,6 +395,8 @@ export async function getInventoryItem(itemId: string): Promise<InventoryItem | 
     description: data.description,
     unit: data.unit,
     valuation_method: data.valuation_method as "fifo" | "weighted_average",
+    inventory_account_id: (data as any).inventory_account_id || null,
+    cogs_account_id: (data as any).cogs_account_id || null,
     is_active: data.is_active,
     created_at: data.created_at,
     updated_at: data.updated_at,

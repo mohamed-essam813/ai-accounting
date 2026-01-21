@@ -46,10 +46,31 @@ export interface RecentFinancialEvent {
 }
 
 /**
+ * Helper function to convert amount if targetCurrency is provided
+ */
+async function convertAmountIfNeeded(
+  amount: number,
+  targetCurrency: string | undefined,
+  tenantId: string,
+  date: string,
+): Promise<number> {
+  if (!targetCurrency) return amount;
+  
+  const { convertCurrency, getTenantBaseCurrency } = await import("@/lib/utils/currency-conversion");
+  const baseCurrency = await getTenantBaseCurrency(tenantId);
+  
+  if (baseCurrency.toUpperCase() === targetCurrency.toUpperCase()) {
+    return amount;
+  }
+  
+  return await convertCurrency(amount, baseCurrency, targetCurrency, date, tenantId);
+}
+
+/**
  * Generate Financial Pulse narrative
  * PRD: "One short system-generated sentence"
  */
-export async function getFinancialPulse(): Promise<FinancialPulse> {
+export async function getFinancialPulse(targetCurrency?: string): Promise<FinancialPulse> {
   const user = await getCurrentUser();
   if (!user?.tenant) {
     return {
@@ -67,11 +88,21 @@ export async function getFinancialPulse(): Promise<FinancialPulse> {
     getCashBalance(),
   ]);
 
-  const revenue = Number(pnl?.total_revenue ?? 0);
-  const expenses = Number(pnl?.total_expense ?? 0);
-  const netIncome = Number(pnl?.net_income ?? 0);
-  const totalReceivables = receivables;
-  const totalPayables = payables;
+  let revenue = Number(pnl?.total_revenue ?? 0);
+  let expenses = Number(pnl?.total_expense ?? 0);
+  let netIncome = Number(pnl?.net_income ?? 0);
+  let totalReceivables = receivables;
+  let totalPayables = payables;
+  
+  // Convert amounts if targetCurrency is provided
+  if (targetCurrency && user.tenant) {
+    const today = new Date().toISOString().split("T")[0];
+    revenue = await convertAmountIfNeeded(revenue, targetCurrency, user.tenant.id, today);
+    expenses = await convertAmountIfNeeded(expenses, targetCurrency, user.tenant.id, today);
+    netIncome = await convertAmountIfNeeded(netIncome, targetCurrency, user.tenant.id, today);
+    totalReceivables = await convertAmountIfNeeded(totalReceivables, targetCurrency, user.tenant.id, today);
+    totalPayables = await convertAmountIfNeeded(totalPayables, targetCurrency, user.tenant.id, today);
+  }
 
   const issues: string[] = [];
   let severity: FinancialPulse["severity"] = "calm";
@@ -132,7 +163,7 @@ export async function getFinancialPulse(): Promise<FinancialPulse> {
  * Get Attention Signals (4-6 tiles)
  * PRD Section 5.4: Cash Flow, Receivables, Payables, Tax Exposure, Revenue Momentum, Expense Control
  */
-export async function getAttentionSignals(): Promise<AttentionSignal[]> {
+export async function getAttentionSignals(targetCurrency?: string): Promise<AttentionSignal[]> {
   const user = await getCurrentUser();
   if (!user?.tenant) {
     return [];
@@ -140,12 +171,12 @@ export async function getAttentionSignals(): Promise<AttentionSignal[]> {
 
   const [cashFlow, receivablesHealth, payablesPressure, taxExposure, revenueMomentum, expenseControl] =
     await Promise.all([
-      getCashFlowSignal(),
-      getReceivablesHealthSignal(),
-      getPayablesPressureSignal(),
-      getTaxExposureSignal(),
-      getRevenueMomentumSignal(),
-      getExpenseControlSignal(),
+      getCashFlowSignal(targetCurrency),
+      getReceivablesHealthSignal(targetCurrency),
+      getPayablesPressureSignal(targetCurrency),
+      getTaxExposureSignal(targetCurrency),
+      getRevenueMomentumSignal(targetCurrency),
+      getExpenseControlSignal(targetCurrency),
     ]);
 
   const signals: AttentionSignal[] = [];
@@ -166,7 +197,8 @@ export async function getAttentionSignals(): Promise<AttentionSignal[]> {
   return signals.slice(0, 6); // Max 6 signals
 }
 
-async function getCashFlowSignal(): Promise<AttentionSignal | null> {
+async function getCashFlowSignal(targetCurrency?: string): Promise<AttentionSignal | null> {
+  const user = await getCurrentUser();
   const [cashBalance, cashFlow, receivables, payables] = await Promise.all([
     getCashBalance(),
     getCashFlow(),
@@ -174,28 +206,40 @@ async function getCashFlowSignal(): Promise<AttentionSignal | null> {
     getPayablesBalance(),
   ]);
   
-  const netCashFlow = Number(cashFlow?.net_cash_flow ?? 0);
+  let netCashFlow = Number(cashFlow?.net_cash_flow ?? 0);
+  let cashBalanceForLogic = cashBalance;
+  let receivablesForLogic = receivables;
+  let payablesForLogic = payables;
+  
+  // Convert amounts if needed
+  if (targetCurrency && user?.tenant) {
+    const today = new Date().toISOString().split("T")[0];
+    cashBalanceForLogic = await convertAmountIfNeeded(cashBalance, targetCurrency, user.tenant.id, today);
+    receivablesForLogic = await convertAmountIfNeeded(receivables, targetCurrency, user.tenant.id, today);
+    payablesForLogic = await convertAmountIfNeeded(payables, targetCurrency, user.tenant.id, today);
+    netCashFlow = await convertAmountIfNeeded(netCashFlow, targetCurrency, user.tenant.id, today);
+  }
 
   let status: AttentionSignalStatus = "stable";
   let explanation = "";
 
   // Cash signals must always reference cause, not balance alone (Feedback Section 3.1)
-  if (cashBalance < 0) {
+  if (cashBalanceForLogic < 0) {
     status = "worsening";
     // Explain why cash is negative (cause) and impact
-    if (receivables > Math.abs(cashBalance) * 0.5) {
+    if (receivablesForLogic > Math.abs(cashBalanceForLogic) * 0.5) {
       explanation = "Cash balance is negative because a high portion of revenue is still unpaid. Collection timing is currently affecting liquidity.";
-    } else if (payables > Math.abs(cashBalance)) {
+    } else if (payablesForLogic > Math.abs(cashBalanceForLogic)) {
       explanation = "Cash balance is negative due to upcoming supplier payments exceeding available funds. Immediate action required.";
     } else {
       explanation = "Cash balance is negative. Expenses or payments have exceeded available funds. Immediate action required.";
     }
-  } else if (cashBalance < 5000) {
+  } else if (cashBalanceForLogic < 5000) {
     status = "worsening";
     // Explain why cash is low (cause) and impact
-    if (receivables > cashBalance * 2) {
+    if (receivablesForLogic > cashBalanceForLogic * 2) {
       explanation = "Cash is low because a high portion of revenue is still unpaid. Collection timing is currently affecting liquidity.";
-    } else if (payables > cashBalance) {
+    } else if (payablesForLogic > cashBalanceForLogic) {
       explanation = "Cash is low relative to upcoming supplier payments. Plan payment schedule carefully.";
     } else {
       explanation = "Cash balance is low. Monitor closely and ensure collections are on track.";
@@ -229,7 +273,7 @@ async function getCashFlowSignal(): Promise<AttentionSignal | null> {
  * Receivables Health Signal (Feedback Section 4.1)
  * Must be ageing-based, not total-based
  */
-async function getReceivablesHealthSignal(): Promise<AttentionSignal | null> {
+async function getReceivablesHealthSignal(targetCurrency?: string): Promise<AttentionSignal | null> {
   const ageingSummary = await getARAgeingSummary();
   
   if (ageingSummary.length === 0) {
@@ -277,11 +321,20 @@ async function getReceivablesHealthSignal(): Promise<AttentionSignal | null> {
  * Payables Pressure Signal (Feedback Section 4.2)
  * Must show upcoming payment context, not just totals
  */
-async function getPayablesPressureSignal(): Promise<AttentionSignal | null> {
+async function getPayablesPressureSignal(targetCurrency?: string): Promise<AttentionSignal | null> {
+  const user = await getCurrentUser();
   const [ageingSummary, cashBalance] = await Promise.all([
     getAPAgeingSummary(),
     getCashBalance(),
   ]);
+  
+  let cashBalanceForLogic = cashBalance;
+  
+  // Convert if needed
+  if (targetCurrency && user?.tenant) {
+    const today = new Date().toISOString().split("T")[0];
+    cashBalanceForLogic = await convertAmountIfNeeded(cashBalance, targetCurrency, user.tenant.id, today);
+  }
 
   if (ageingSummary.length === 0) {
     return null; // Don't show if no payables
@@ -296,7 +349,7 @@ async function getPayablesPressureSignal(): Promise<AttentionSignal | null> {
   
   // Near-term payables (due in next 30 days)
   const nearTermPayables = totalCurrent + total31_60;
-  const cashComfortThreshold = cashBalance * 0.3; // 30% of cash as comfort buffer
+  const cashComfortThreshold = cashBalanceForLogic * 0.3; // 30% of cash as comfort buffer
 
   let status: AttentionSignalStatus = "stable";
   let explanation = "";
@@ -308,7 +361,7 @@ async function getPayablesPressureSignal(): Promise<AttentionSignal | null> {
   } else if (nearTermPayables > 0 && nearTermPayables < cashComfortThreshold) {
     status = "stable";
     explanation = "Upcoming payables are manageable relative to available cash.";
-  } else if (nearTermPayables > cashBalance) {
+  } else if (nearTermPayables > cashBalanceForLogic) {
     status = "worsening";
     explanation = "Upcoming payables may pressure cash if collections do not improve. Plan payment schedule carefully.";
   } else if (nearTermPayables > cashComfortThreshold) {
@@ -328,12 +381,21 @@ async function getPayablesPressureSignal(): Promise<AttentionSignal | null> {
   };
 }
 
-async function getTaxExposureSignal(): Promise<AttentionSignal | null> {
+async function getTaxExposureSignal(targetCurrency?: string): Promise<AttentionSignal | null> {
   const [supabase, user, cashBalance] = await Promise.all([
     createServerSupabaseClient(),
     getCurrentUser(),
     getCashBalance(),
   ]);
+  
+  let cashBalanceForLogic = cashBalance;
+  let vatPayable = 0;
+  
+  // Convert if needed
+  if (targetCurrency && user?.tenant) {
+    const today = new Date().toISOString().split("T")[0];
+    cashBalanceForLogic = await convertAmountIfNeeded(cashBalance, targetCurrency, user.tenant.id, today);
+  }
   
   if (!user?.tenant) return null;
 
@@ -351,7 +413,13 @@ async function getTaxExposureSignal(): Promise<AttentionSignal | null> {
 
   const { data: vat } = await vatView.select("*").eq("tenant_id", user.tenant.id).maybeSingle();
 
-  const vatPayable = vat?.vat_payable ? Number(vat.vat_payable) : 0;
+  vatPayable = vat?.vat_payable ? Number(vat.vat_payable) : 0;
+  
+  // Convert VAT payable if needed
+  if (targetCurrency && user?.tenant && vatPayable > 0) {
+    const today = new Date().toISOString().split("T")[0];
+    vatPayable = await convertAmountIfNeeded(vatPayable, targetCurrency, user.tenant.id, today);
+  }
 
   if (vatPayable === 0) {
     return null;
@@ -363,12 +431,12 @@ async function getTaxExposureSignal(): Promise<AttentionSignal | null> {
   // Add cash context (Feedback Section 3.4)
   if (vatPayable > 10000) {
     status = "worsening";
-    if (vatPayable > cashBalance) {
-      explanation = `Tax liability is ${formatCurrency(vatPayable)} and exceeds available cash. Ensure funds are set aside before the due date.`;
-    } else if (vatPayable > cashBalance * 0.5) {
-      explanation = `Tax liability is ${formatCurrency(vatPayable)} and represents a significant portion of available cash. Plan accordingly.`;
+    if (vatPayable > cashBalanceForLogic) {
+      explanation = `Tax liability is ${formatCurrency(vatPayable, targetCurrency || "USD")} and exceeds available cash. Ensure funds are set aside before the due date.`;
+    } else if (vatPayable > cashBalanceForLogic * 0.5) {
+      explanation = `Tax liability is ${formatCurrency(vatPayable, targetCurrency || "USD")} and represents a significant portion of available cash. Plan accordingly.`;
     } else {
-      explanation = `Tax liability is ${formatCurrency(vatPayable)}. Ensure funds are set aside, but it does not significantly affect short-term cash.`;
+      explanation = `Tax liability is ${formatCurrency(vatPayable, targetCurrency || "USD")}. Ensure funds are set aside, but it does not significantly affect short-term cash.`;
     }
   } else {
     status = "stable";
@@ -389,16 +457,26 @@ async function getTaxExposureSignal(): Promise<AttentionSignal | null> {
  * Must be relative/comparative, not absolute totals
  * Excel Elimination Doctrine: Native Comparisons
  */
-async function getRevenueMomentumSignal(): Promise<AttentionSignal | null> {
+async function getRevenueMomentumSignal(targetCurrency?: string): Promise<AttentionSignal | null> {
   // Get current and previous month data for comparison
   const currentMonth = getCurrentMonth();
   const previousMonth = getPreviousMonth();
 
   const [currentData, previousData, receivables] = await Promise.all([
-    getPeriodFinancialData(currentMonth),
-    getPeriodFinancialData(previousMonth),
+    getPeriodFinancialData(currentMonth, targetCurrency),
+    getPeriodFinancialData(previousMonth, targetCurrency),
     getReceivablesBalance(),
   ]);
+  
+  // Convert receivables if needed
+  let receivablesForLogic = receivables;
+  if (targetCurrency) {
+    const user = await getCurrentUser();
+    if (user?.tenant) {
+      const today = new Date().toISOString().split("T")[0];
+      receivablesForLogic = await convertAmountIfNeeded(receivables, targetCurrency, user.tenant.id, today);
+    }
+  }
 
   const currentRevenue = currentData.revenue;
   const previousRevenue = previousData.revenue;
@@ -423,8 +501,8 @@ async function getRevenueMomentumSignal(): Promise<AttentionSignal | null> {
     explanation = `Revenue for this period is ${Math.abs(comparison.percentageChange).toFixed(1)}% lower than the previous period. ${comparisonText}`;
   } else {
     // Stable revenue, but check collection timing
-    if (receivables > 0) {
-      const collectionRatio = receivables / currentRevenue;
+    if (receivablesForLogic > 0) {
+      const collectionRatio = receivablesForLogic / currentRevenue;
       if (collectionRatio > 0.5) {
         status = "worsening";
         explanation = `Revenue is stable compared to last month, but collections are slower. A high portion of revenue (${(collectionRatio * 100).toFixed(0)}%) is still unpaid.`;
@@ -454,10 +532,18 @@ async function getRevenueMomentumSignal(): Promise<AttentionSignal | null> {
  * Expense Control Signal (Feedback Section 3.3)
  * Must NOT calculate ratios when revenue is near zero
  */
-async function getExpenseControlSignal(): Promise<AttentionSignal | null> {
+async function getExpenseControlSignal(targetCurrency?: string): Promise<AttentionSignal | null> {
+  const user = await getCurrentUser();
   const pnl = await getProfitAndLoss();
-  const revenue = Number(pnl?.total_revenue ?? 0);
-  const expenses = Number(pnl?.total_expense ?? 0);
+  let revenue = Number(pnl?.total_revenue ?? 0);
+  let expenses = Number(pnl?.total_expense ?? 0);
+  
+  // Convert if needed
+  if (targetCurrency && user?.tenant) {
+    const today = new Date().toISOString().split("T")[0];
+    revenue = await convertAmountIfNeeded(revenue, targetCurrency, user.tenant.id, today);
+    expenses = await convertAmountIfNeeded(expenses, targetCurrency, user.tenant.id, today);
+  }
 
   if (expenses === 0) {
     return null;
@@ -506,7 +592,7 @@ async function getExpenseControlSignal(): Promise<AttentionSignal | null> {
 /**
  * Get Recent Financial Events (meaningful events, not raw transactions)
  */
-export async function getRecentFinancialEvents(limit: number = 5): Promise<RecentFinancialEvent[]> {
+export async function getRecentFinancialEvents(limit: number = 5, targetCurrency?: string): Promise<RecentFinancialEvent[]> {
   const insights = await getRecentPrimaryInsights(limit * 2); // Get more to filter
 
   const events: RecentFinancialEvent[] = [];

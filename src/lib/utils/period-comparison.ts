@@ -13,6 +13,7 @@ export interface PeriodComparison {
   current: number;
   previous: number;
   difference: number;
+  absoluteChange?: number; // Added for metrics engine
   percentageChange: number;
   direction: "up" | "down" | "stable";
 }
@@ -176,6 +177,7 @@ export function calculateComparison(
     current,
     previous,
     difference,
+    absoluteChange: Math.abs(difference),
     percentageChange,
     direction,
   };

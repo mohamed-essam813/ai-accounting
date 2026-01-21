@@ -43,6 +43,15 @@ export async function createInventoryItemAction(
 
   const valuationMethod = ((policy as any)?.inventory_valuation_method || "fifo") as "fifo" | "weighted_average";
 
+  // Get default inventory and COGS accounts
+  const { getAccountByCode } = await import("@/lib/data/accounts");
+  const inventoryAccount = await getAccountByCode("1200");
+  const cogsAccount = await getAccountByCode("5500");
+
+  if (!inventoryAccount || !cogsAccount) {
+    throw new Error("Default inventory (1200) or COGS (5500) accounts not found. Please create them in Chart of Accounts.");
+  }
+
   // Check if SKU already exists (if provided)
   if (payload.sku) {
     const { data: existing } = await supabase
@@ -82,6 +91,8 @@ export async function createInventoryItemAction(
       // Keep unit as fallback for backward compatibility (migration will handle it)
       unit: "unit", // Placeholder, will be migrated by migration script
       valuation_method: valuationMethod, // Inherited from tenant policy
+      inventory_account_id: inventoryAccount.id, // Set default inventory account
+      cogs_account_id: cogsAccount.id, // Set default COGS account
     } as any)
     .select()
     .single();

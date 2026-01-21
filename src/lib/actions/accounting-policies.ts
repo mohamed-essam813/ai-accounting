@@ -23,7 +23,8 @@ const UpdateInventoryValuationSchema = z.object({
 async function hasInventoryTransactions(tenantId: string): Promise<boolean> {
   const supabase = await createServerSupabaseClient();
   const { data, error } = await supabase
-    .from("inventory_transactions" as any)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    .from("inventory_transactions" as never)
     .select("id")
     .eq("tenant_id", tenantId)
     .limit(1)

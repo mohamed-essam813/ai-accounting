@@ -1,8 +1,9 @@
 /**
- * Cash Flow Trend Chart for Dashboard
+ * Cash Flow Waterfall Chart for Dashboard
  * Excel Elimination Doctrine: Charts must answer business questions with context
  * 
- * Shows cash flow trend with period comparison, delta, and interpretation
+ * Shows cash flow trend with period comparison
+ * Uses Recharts for waterfall visualization
  */
 
 "use client";
@@ -11,6 +12,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatCurrency } from "@/lib/format";
 import { ArrowUp, ArrowDown, Minus } from "lucide-react";
 import type { PeriodComparison } from "@/lib/utils/period-comparison";
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, LabelList } from "recharts";
+import { ChipTooltip } from "./chip-tooltip";
 
 interface Props {
   currentCashFlow: number;
@@ -50,10 +53,85 @@ export function CashFlowChart({ currentCashFlow, previousCashFlow, comparison }:
   const config = directionConfig[direction];
   const Icon = config.icon;
 
-  // Simple bar chart visualization
-  const maxValue = Math.max(Math.abs(currentCashFlow), Math.abs(previousCashFlow), 1);
-  const currentHeight = (Math.abs(currentCashFlow) / maxValue) * 100;
-  const previousHeight = (Math.abs(previousCashFlow) / maxValue) * 100;
+  // Waterfall chart data with color coding
+  const changeValue = currentCashFlow - previousCashFlow;
+  // Always show all three bars for waterfall visualization
+  const waterfallData: Array<{ name: string; value: number; fill: string }> = [
+    { 
+      name: "Starting", 
+      value: previousCashFlow, 
+      fill: "#3b82f6",
+    },
+    { 
+      name: "Change", 
+      value: changeValue, 
+      fill: changeValue >= 0 ? "#10b981" : changeValue < 0 ? "#ef4444" : "#94a3b8",
+    },
+    { 
+      name: "Ending", 
+      value: currentCashFlow, 
+      fill: "#6366f1",
+    },
+  ];
+
+  // Custom label renderer with dark grey text and background for maximum contrast
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const renderBarLabel = (props: any) => {
+    const { x = 0, y = 0, width = 0, value } = props;
+    if (value === undefined || Math.abs(value || 0) < 0.01 || !width) return null;
+    
+    const textX = x + width / 2;
+    const textY = y - 8;
+    const textValue = formatCurrency(value);
+    
+    return (
+      <g>
+        {/* Background rectangle for better contrast */}
+        <rect
+          x={textX - (textValue.length * 3.5)}
+          y={textY - 8}
+          width={textValue.length * 7}
+          height={16}
+          fill="rgba(255, 255, 255, 0.9)"
+          rx={4}
+          stroke="rgba(0, 0, 0, 0.1)"
+          strokeWidth={1}
+        />
+        {/* Dark grey text for readability on all bar colors */}
+        <text
+          x={textX}
+          y={textY}
+          fill="#1f2937"
+          textAnchor="middle"
+          dominantBaseline="middle"
+          style={{
+            fontSize: "11px",
+            fontWeight: "600",
+            letterSpacing: "0.2px",
+          }}
+        >
+          {textValue}
+        </text>
+      </g>
+    );
+  };
+
+  // Empty state handling
+  if (currentCashFlow === 0 && previousCashFlow === 0) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Cash Flow Trend</CardTitle>
+          <p className="text-xs text-muted-foreground">
+            Current vs previous period
+          </p>
+        </CardHeader>
+        <CardContent className="flex items-center justify-center h-64">
+          <p className="text-muted-foreground">No data available for this period</p>
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
     <Card>
@@ -64,40 +142,45 @@ export function CashFlowChart({ currentCashFlow, previousCashFlow, comparison }:
         </p>
       </CardHeader>
       <CardContent className="space-y-3">
-        {/* Chart Visualization */}
-        <div className="flex items-end gap-6 h-40">
-          {/* Previous Period Bar */}
-          <div className="flex-1 flex flex-col items-center gap-2">
-            <div className="w-full flex flex-col items-center justify-end h-full">
-              <div
-                className="w-full bg-muted rounded-t-md transition-all shadow-sm hover:shadow-md"
-                style={{ height: `${Math.max(previousHeight, 5)}%` }}
-              >
-                <div className={`h-full ${previousCashFlow >= 0 ? "bg-blue-400" : "bg-red-400"} rounded-t-md`} />
-              </div>
-            </div>
-            <div className="text-center mt-2">
-              <p className="text-xs font-medium text-muted-foreground">Previous</p>
-              <p className="text-xs font-medium mt-0.5">{formatCurrency(previousCashFlow)}</p>
-            </div>
-          </div>
-
-          {/* Current Period Bar */}
-          <div className="flex-1 flex flex-col items-center gap-2">
-            <div className="w-full flex flex-col items-center justify-end h-full">
-              <div
-                className={`w-full rounded-t-md transition-all shadow-md hover:shadow-lg border-2 ${config.bgColor} ${config.borderColor}`}
-                style={{ height: `${Math.max(currentHeight, 5)}%` }}
-              >
-                <div className={`h-full rounded-t-md ${currentCashFlow >= 0 ? (direction === "up" ? "bg-green-500" : "bg-green-400") : (direction === "down" ? "bg-red-500" : "bg-red-400")}`} />
-              </div>
-            </div>
-            <div className="text-center mt-2">
-              <p className="text-xs font-semibold">Current</p>
-              <p className="text-xs font-semibold mt-0.5">{formatCurrency(currentCashFlow)}</p>
-            </div>
-          </div>
-        </div>
+        {/* Waterfall Chart Visualization */}
+        <ResponsiveContainer width="100%" height={320}>
+          <BarChart 
+            data={waterfallData}
+            margin={{ top: 30, right: 10, left: 10, bottom: 10 }}
+          >
+            <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" opacity={0.3} />
+            <XAxis 
+              dataKey="name" 
+              tick={{ fill: "#6b7280", fontSize: 12 }}
+              axisLine={{ stroke: "#d1d5db" }}
+            />
+            <YAxis 
+              tickFormatter={(value: number) => formatCurrency(value)}
+              tick={{ fill: "#6b7280", fontSize: 11 }}
+              axisLine={{ stroke: "#d1d5db" }}
+              width={80}
+            />
+            <Tooltip 
+              content={<ChipTooltip />}
+              cursor={{ fill: "rgba(0, 0, 0, 0.05)" }}
+            />
+            <Bar 
+              dataKey="value" 
+              radius={[6, 6, 0, 0]}
+              barSize={60}
+            >
+              {waterfallData.map((entry, index) => (
+                <Cell 
+                  key={`cell-${index}`} 
+                  fill={entry.fill}
+                  stroke={entry.fill}
+                  strokeWidth={1}
+                />
+              ))}
+              <LabelList dataKey="value" content={renderBarLabel} />
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
 
         {/* Comparison Metrics */}
         <div className={`p-2 rounded-md ${config.bgColor} ${config.borderColor} border`}>
@@ -123,4 +206,3 @@ export function CashFlowChart({ currentCashFlow, previousCashFlow, comparison }:
     </Card>
   );
 }
-

@@ -34,7 +34,7 @@ export default async function RootLayout({
   try {
     const sessionResult = await supabase.auth.getSession();
     session = sessionResult.data?.session;
-  } catch (error) {
+  } catch {
     // Silently handle auth errors - user is simply not logged in
     // This is expected behavior when accessing the app without authentication
     if (process.env.NODE_ENV === "development") {

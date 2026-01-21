@@ -14,7 +14,7 @@ A SaaS accounting platform that converts natural language prompts into structure
 
 - **[SETUP_GUIDE.md](./SETUP_GUIDE.md)** - Setup instructions and configuration
 - **[DEPLOYMENT.md](./DEPLOYMENT.md)** - Deployment guide for Vercel, Supabase, and OpenAI
-- **[IMPLEMENTATION_SUMMARY.md](./IMPLEMENTATION_SUMMARY.md)** - Implementation summary
+- **[FX_RATES_SETUP.md](./FX_RATES_SETUP.md)** - Currency conversion and FX rates setup
 
 ## 🛠 Tech Stack
 

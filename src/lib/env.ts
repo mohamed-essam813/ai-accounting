@@ -9,6 +9,10 @@ const envSchema = z.object({
   OPENAI_API_KEY: z.string().min(1),
   GOOGLE_APPLICATION_CREDENTIALS: z.string().optional(), // File path (local dev)
   GOOGLE_CLOUD_CREDENTIALS_JSON: z.string().optional(), // JSON string (serverless/Vercel)
+  // FX Rate API Keys (optional - at least one recommended for production)
+  EXCHANGERATE_API_KEY: z.string().optional(), // ExchangeRate-API key (free tier: 1,500 req/month)
+  FIXER_API_KEY: z.string().optional(), // Fixer.io API key (paid, more reliable)
+  CURRENCYAPI_KEY: z.string().optional(), // CurrencyAPI key (free tier: 300 req/month)
 });
 
 const clientEnvSchema = envSchema.pick({
@@ -46,6 +50,9 @@ function getEnv(): ServerEnv {
     OPENAI_API_KEY: process.env.OPENAI_API_KEY,
     GOOGLE_APPLICATION_CREDENTIALS: process.env.GOOGLE_APPLICATION_CREDENTIALS,
     GOOGLE_CLOUD_CREDENTIALS_JSON: process.env.GOOGLE_CLOUD_CREDENTIALS_JSON,
+    EXCHANGERATE_API_KEY: process.env.EXCHANGERATE_API_KEY,
+    FIXER_API_KEY: process.env.FIXER_API_KEY,
+    CURRENCYAPI_KEY: process.env.CURRENCYAPI_KEY,
   });
 
   if (!parsed.success) {

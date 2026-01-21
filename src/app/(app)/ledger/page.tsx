@@ -7,13 +7,14 @@
  */
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { formatCurrency, formatDate } from "@/lib/format";
 import { getJournalLedger } from "@/lib/data/reports";
 import { listAccounts } from "@/lib/data/accounts";
 import { CurrencyFilter } from "@/components/filters/currency-filter";
 import { ExportButtons } from "@/components/reports/export-buttons";
 import { LedgerTableClient } from "@/components/ledger/ledger-table-client";
-import Link from "next/link";
+import { AccountSelector } from "@/components/ledger/account-selector";
+import { convertCurrency, getTenantBaseCurrency } from "@/lib/utils/currency-conversion";
+import { getCurrentUser } from "@/lib/data/users";
 import { ChevronRight } from "lucide-react";
 import {
   Breadcrumb,
@@ -32,9 +33,11 @@ export default async function LedgerPage({
   searchParams: Promise<{ accountCode?: string; startDate?: string; endDate?: string; currency?: string }>;
 }) {
   const params = await searchParams;
-  const currency = params.currency;
+  const targetCurrency = params.currency;
+  const user = await getCurrentUser();
+  
   const [ledger, accounts] = await Promise.all([
-    getJournalLedger(params.startDate, params.endDate, currency),
+    getJournalLedger(params.startDate, params.endDate, targetCurrency),
     listAccounts(),
   ]);
 
@@ -48,19 +51,67 @@ export default async function LedgerPage({
     ? accounts.find((acc) => acc.code === params.accountCode)
     : null;
 
-  // Calculate running balance
-  let runningBalance = 0;
-  const ledgerWithBalance = filteredLedger.map((entry, index) => {
-    const amount = Number(entry.debit) - Number(entry.credit);
-    runningBalance += amount;
-    return {
+  // Convert amounts if targetCurrency is provided
+  const convertedLedger = targetCurrency && user?.tenant
+    ? await Promise.all(
+        filteredLedger.map(async (entry) => {
+          const currencyInfo = (entry as { _currencyInfo?: { baseCurrency?: string; date?: string } })._currencyInfo;
+          const baseCurrency = currencyInfo?.baseCurrency || await getTenantBaseCurrency(user.tenant!.id);
+          const transactionDate = currencyInfo?.date || entry.date;
+          
+          const originalDebit = Number(entry.debit ?? 0);
+          const originalCredit = Number(entry.credit ?? 0);
+          
+          // If same currency, no conversion needed
+          if (baseCurrency.toUpperCase() === targetCurrency.toUpperCase()) {
+            return {
+              ...entry,
+              debit: originalDebit,
+              credit: originalCredit,
+            };
+          }
+          
+          // Convert debit and credit amounts
+          try {
+            const [convertedDebit, convertedCredit] = await Promise.all([
+              originalDebit > 0
+                ? convertCurrency(originalDebit, baseCurrency, targetCurrency, transactionDate, user.tenant!.id)
+                : 0,
+              originalCredit > 0
+                ? convertCurrency(originalCredit, baseCurrency, targetCurrency, transactionDate, user.tenant!.id)
+                : 0,
+            ]);
+            
+            return {
+              ...entry,
+              debit: convertedDebit,
+              credit: convertedCredit,
+              _converted: true,
+            } as typeof entry & { _converted: boolean };
+          } catch (error) {
+            console.error(`Failed to convert ledger entry ${entry.entry_id} amounts:`, error);
+            return entry;
+          }
+        }),
+      )
+    : filteredLedger;
+
+  // Calculate running balance - use reduce to avoid reassignment in map
+  const ledgerWithBalance = convertedLedger.reduce((acc, entry, index) => {
+    const amount = Number(entry.debit ?? 0) - Number(entry.credit ?? 0);
+    const previousBalance = acc.length > 0 ? acc[acc.length - 1].runningBalance : 0;
+    const runningBalance = previousBalance + amount;
+    
+    acc.push({
       ...entry,
       amount,
       runningBalance,
       // Create unique key: use line_id if available, otherwise use composite key with index
-      uniqueKey: (entry as any).line_id || `${entry.entry_id}-${entry.account_code}-${index}`,
-    };
-  });
+      uniqueKey: (entry as { line_id?: string }).line_id || `${entry.entry_id}-${entry.account_code}-${index}`,
+    });
+    
+    return acc;
+  }, [] as Array<typeof convertedLedger[0] & { amount: number; runningBalance: number; uniqueKey: string }>);
 
   // Build breadcrumb based on context
   const breadcrumbItems = [
@@ -110,7 +161,12 @@ export default async function LedgerPage({
         </p>
       </div>
 
-      <CurrencyFilter initialCurrency={currency} />
+      <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center">
+        <AccountSelector accounts={accounts} selectedAccountCode={params.accountCode} />
+        <div className="ml-auto">
+          <CurrencyFilter initialCurrency={targetCurrency} />
+        </div>
+      </div>
 
       {account && (
         <Card>
@@ -167,8 +223,8 @@ export default async function LedgerPage({
             />
           )}
         </CardHeader>
-        <CardContent>
-          <LedgerTableClient entries={ledgerWithBalance} />
+          <CardContent>
+          <LedgerTableClient entries={ledgerWithBalance} displayCurrency={targetCurrency} />
         </CardContent>
       </Card>
     </div>

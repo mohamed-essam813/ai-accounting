@@ -29,7 +29,7 @@ const AccountSchema = z.object({
   category: z.enum(["current", "non_current"]).nullable().optional(), // Only for assets/liabilities
 });
 
-export async function createAccountAction(input: z.infer<typeof AccountSchema>) {
+export async function createAccountAction(input: z.infer<typeof AccountSchema>): Promise<ChartOfAccountsRow> {
   const payload = AccountSchema.parse(input);
   const user = await getCurrentUser();
   if (!user?.tenant) {
@@ -123,6 +123,8 @@ export async function createAccountAction(input: z.infer<typeof AccountSchema>) 
   await auditTable.insert([auditData]);
 
   revalidatePath("/accounts");
+  
+  return account;
 }
 
 /**

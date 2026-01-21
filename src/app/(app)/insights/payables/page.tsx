@@ -63,10 +63,35 @@ export default async function PayablesInsightPage() {
   const nearTermPayables = totalCurrent + total31_60; // Due in next 30 days
   const cashComfortThreshold = cashBalance * 0.3; // 30% of cash as comfort buffer
 
-  // Generate insight summary (UX Composition Section 3, Screen 2, Section A)
+  // Calculate overdue amounts by supplier (for specific recommendations)
+  const suppliersWithOverdue = ageingSummary
+    .map((supplier) => ({
+      ...supplier,
+      totalOverdue: supplier.total_31_60 + supplier.total_61_90 + supplier.total_90_plus,
+    }))
+    .filter((s) => s.totalOverdue > 0)
+    .sort((a, b) => b.totalOverdue - a.totalOverdue);
+
+  // Top suppliers with overdue amounts
+  const topOverdueSuppliers = suppliersWithOverdue.slice(0, 5);
+  const top2OverdueTotal = topOverdueSuppliers.slice(0, 2).reduce((sum, s) => sum + s.totalOverdue, 0);
+  const top2Percentage = overdueTotal > 0 ? (top2OverdueTotal / overdueTotal) * 100 : 0;
+
+  // Generate specific actionable insight summary
   let insightSummary = "";
   if (totalOutstanding === 0) {
     insightSummary = "No outstanding payables. All supplier bills have been paid.";
+  } else if (overdueTotal > 0) {
+    const topSupplier = topOverdueSuppliers[0];
+    if (topSupplier && top2Percentage >= 70) {
+      // High concentration - specific recommendation
+      insightSummary = `${formatCurrency(overdueTotal)} overdue >30 days. ${topOverdueSuppliers.slice(0, 2).length} supplier${topOverdueSuppliers.slice(0, 2).length > 1 ? "s" : ""} account for ${Math.round(top2Percentage)}%. Prioritize payment to ${topSupplier.vendor_name} first (${formatCurrency(topSupplier.totalOverdue)} overdue) to maintain relationship. Risk: Supplier may restrict credit terms if not addressed within 1-2 weeks.`;
+    } else if (topSupplier) {
+      // Moderate concentration
+      insightSummary = `${formatCurrency(overdueTotal)} overdue >30 days. ${topOverdueSuppliers.length} supplier${topOverdueSuppliers.length > 1 ? "s" : ""} have overdue amounts. Prioritize ${topSupplier.vendor_name} first (${formatCurrency(topSupplier.totalOverdue)} overdue). This may impact supplier relationships if not addressed within 2-3 weeks.`;
+    } else {
+      insightSummary = `${formatCurrency(overdueTotal)} overdue >30 days. This may impact supplier relationships if not addressed.`;
+    }
   } else if (nearTermPayables <= cashComfortThreshold && overdueTotal === 0) {
     insightSummary = `You owe ${formatCurrency(totalOutstanding)} to suppliers, but only ${formatCurrency(
       nearTermPayables,
@@ -75,8 +100,6 @@ export default async function PayablesInsightPage() {
     insightSummary = `You owe ${formatCurrency(totalOutstanding)} to suppliers, with ${formatCurrency(
       nearTermPayables,
     )} due in the next 30 days. This may create cash pressure if not managed carefully.`;
-  } else if (overdueTotal > 0) {
-    insightSummary = `You have ${formatCurrency(overdueTotal)} in overdue payables. This may impact supplier relationships if not addressed.`;
   } else {
     insightSummary = `You owe ${formatCurrency(totalOutstanding)} to suppliers. Manage payment timing to maintain cash flexibility.`;
   }
@@ -135,6 +158,94 @@ export default async function PayablesInsightPage() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Section C: Actionable Recommendations (NEW - Specific Recommendations) */}
+      {overdueTotal > 0 && topOverdueSuppliers.length > 0 && (
+        <Card className="border-orange-200 bg-orange-50/50">
+          <CardHeader>
+            <CardTitle className="text-lg text-orange-900">Actionable Recommendations</CardTitle>
+            <p className="text-sm text-orange-700">
+              Specific actions to manage supplier relationships
+            </p>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {/* Priority 1: Top Overdue Supplier */}
+            {topOverdueSuppliers[0] && (
+              <div className="p-4 rounded-lg border border-orange-200 bg-white">
+                <div className="flex items-start gap-3">
+                  <div className="shrink-0 w-8 h-8 rounded-full bg-orange-500 text-white flex items-center justify-center font-bold text-sm">
+                    1
+                  </div>
+                  <div className="flex-1">
+                    <h4 className="font-semibold text-sm mb-1">
+                      Prioritize Payment: {topOverdueSuppliers[0].vendor_name}
+                    </h4>
+                    <p className="text-sm text-muted-foreground mb-2">
+                      {formatCurrency(topOverdueSuppliers[0].totalOverdue)} overdue ({Math.round((topOverdueSuppliers[0].totalOverdue / overdueTotal) * 100)}% of total overdue)
+                    </p>
+                    <div className="text-xs text-muted-foreground space-y-1">
+                      <p>• 31-60 days: {formatCurrency(topOverdueSuppliers[0].total_31_60)}</p>
+                      <p>• 61-90 days: {formatCurrency(topOverdueSuppliers[0].total_61_90)}</p>
+                      <p>• 90+ days: {formatCurrency(topOverdueSuppliers[0].total_90_plus)}</p>
+                      <p className="mt-2 font-medium text-orange-700">
+                        Risk: Supplier may restrict credit terms if not paid within 1-2 weeks
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Priority 2: Second Overdue Supplier */}
+            {topOverdueSuppliers[1] && (
+              <div className="p-4 rounded-lg border border-orange-200 bg-white">
+                <div className="flex items-start gap-3">
+                  <div className="shrink-0 w-8 h-8 rounded-full bg-orange-400 text-white flex items-center justify-center font-bold text-sm">
+                    2
+                  </div>
+                  <div className="flex-1">
+                    <h4 className="font-semibold text-sm mb-1">
+                      Prioritize Payment: {topOverdueSuppliers[1].vendor_name}
+                    </h4>
+                    <p className="text-sm text-muted-foreground mb-2">
+                      {formatCurrency(topOverdueSuppliers[1].totalOverdue)} overdue ({Math.round((topOverdueSuppliers[1].totalOverdue / overdueTotal) * 100)}% of total overdue)
+                    </p>
+                    <div className="text-xs text-muted-foreground space-y-1">
+                      <p>• 31-60 days: {formatCurrency(topOverdueSuppliers[1].total_31_60)}</p>
+                      <p>• 61-90 days: {formatCurrency(topOverdueSuppliers[1].total_61_90)}</p>
+                      <p>• 90+ days: {formatCurrency(topOverdueSuppliers[1].total_90_plus)}</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Summary Stats */}
+            <div className="pt-3 border-t border-orange-200">
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                <div>
+                  <p className="text-muted-foreground">Total Overdue</p>
+                  <p className="font-semibold text-lg">{formatCurrency(overdueTotal)}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground">Suppliers with Overdue</p>
+                  <p className="font-semibold text-lg">{suppliersWithOverdue.length}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground">Relationship Risk</p>
+                  <p className="font-semibold text-lg text-orange-700">
+                    {overdueTotal > totalOutstanding * 0.2 ? "High" : "Moderate"}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground">Action Timeline</p>
+                  <p className="font-semibold text-lg">1-2 weeks</p>
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Section C: Business Impact */}
       <Card>

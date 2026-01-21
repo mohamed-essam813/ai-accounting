@@ -28,7 +28,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Check file type
-    const allowedMimeTypes = [
+    const _allowedMimeTypes = [
       "application/pdf",
       "image/jpeg",
       "image/jpg",

@@ -1,12 +1,8 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { TabsContent, TabsTrigger } from "@/components/ui/tabs";
+import { TabsContent } from "@/components/ui/tabs";
 import { ReportsTabs } from "@/components/reports/reports-tabs";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
-  getProfitAndLoss,
-  getBalanceSheet,
   getTrialBalance,
-  getCashFlow,
   getJournalLedger,
   getVATReport,
 } from "@/lib/data/reports";
@@ -15,6 +11,7 @@ import {
   getDetailedBalanceSheet,
   getDetailedCashFlow,
 } from "@/lib/data/reports-detailed";
+import { validateBalanceSheet } from "@/lib/accounting/balance-validation";
 type JournalLedgerRow = {
   tenant_id: string;
   entry_id: string;
@@ -28,17 +25,13 @@ type JournalLedgerRow = {
   credit: number | null;
   memo: string | null;
 };
-import { formatCurrency, formatDate } from "@/lib/format";
+import { formatCurrency } from "@/lib/format";
 import Link from "next/link";
 import { ReportFilters } from "@/components/reports/report-filters";
 import { CurrencyFilter } from "@/components/filters/currency-filter";
 import { ExportButtons } from "@/components/reports/export-buttons";
-import { ARAgeingTable } from "@/components/reports/ar-ageing-table";
-import { APAgeingTable } from "@/components/reports/ap-ageing-table";
 import { GroupedARAgeingTable } from "@/components/reports/grouped-ar-ageing-table";
 import { GroupedAPAgeingTable } from "@/components/reports/grouped-ap-ageing-table";
-import { PeriodComparisonDisplay } from "@/components/reports/period-comparison";
-import { RevenueChart } from "@/components/reports/revenue-chart";
 import { TrialBalanceTable } from "@/components/reports/trial-balance-table";
 import { GroupedLedgerTable } from "@/components/reports/grouped-ledger-table";
 import { ProfitLossTable } from "@/components/reports/profit-loss-table";
@@ -47,7 +40,6 @@ import { CashFlowTable } from "@/components/reports/cash-flow-table";
 import { getARAgeing, getARAgeingSummary, getAPAgeing, getAPAgeingSummary } from "@/lib/data/ageing";
 import {
   getPeriodFinancialData,
-  type PeriodFinancialData,
 } from "@/lib/data/period-comparison";
 import {
   getCurrentMonth,
@@ -71,10 +63,7 @@ export default async function ReportsPage({
   const previousMonth = getPreviousMonth();
   
   const [
-    pnl,
-    balanceSheet,
     trialBalance,
-    cashFlow,
     journalLedger,
     vatReport,
     arAgeing,
@@ -86,11 +75,9 @@ export default async function ReportsPage({
     detailedPnl,
     detailedBalanceSheet,
     detailedCashFlow,
+    balanceValidation,
   ] = await Promise.all([
-    getProfitAndLoss(),
-    getBalanceSheet(),
     getTrialBalance(),
-    getCashFlow(),
     getJournalLedger(params.startDate, params.endDate, params.currency),
     getVATReport(),
     getARAgeing(),
@@ -102,18 +89,21 @@ export default async function ReportsPage({
     getDetailedProfitAndLoss(),
     getDetailedBalanceSheet(),
     getDetailedCashFlow(),
+    validateBalanceSheet(),
   ]);
 
-  // Calculate period comparisons
-  const revenueComparison = calculateComparison(
+  // Calculate period comparisons (for potential future use)
+  // Note: These are calculated but not currently used in the UI
+  // Keeping for potential future enhancements
+  const _revenueComparison = calculateComparison(
     currentPeriodData.revenue,
     previousPeriodData.revenue,
   );
-  const expenseComparison = calculateComparison(
+  const _expenseComparison = calculateComparison(
     currentPeriodData.expenses,
     previousPeriodData.expenses,
   );
-  const netIncomeComparison = calculateComparison(
+  const _netIncomeComparison = calculateComparison(
     currentPeriodData.netIncome,
     previousPeriodData.netIncome,
   );
@@ -212,11 +202,57 @@ export default async function ReportsPage({
               />
             </CardHeader>
             <CardContent className="overflow-x-auto p-0">
+              {/* Balance Sheet Validation Alert */}
+              {!balanceValidation.isBalanced && (
+                <div className="p-4 bg-destructive/10 border-b border-destructive/20">
+                  <div className="flex items-start gap-3">
+                    <div className="shrink-0 mt-0.5">
+                      <span className="text-2xl">⚠️</span>
+                    </div>
+                    <div className="flex-1 space-y-2">
+                      <h4 className="font-semibold text-destructive">
+                        Balance Sheet Imbalance Detected
+                      </h4>
+                      <p className="text-sm text-muted-foreground">
+                        Assets ({formatCurrency(balanceValidation.assets)}) ≠ Liabilities + Equity ({formatCurrency(balanceValidation.liabilitiesAndEquity)})
+                      </p>
+                      <p className="text-sm font-medium">
+                        Difference: <span className="text-destructive">{formatCurrency(balanceValidation.difference)}</span>
+                      </p>
+                      {balanceValidation.suggestions && balanceValidation.suggestions.length > 0 && (
+                        <div className="mt-3 space-y-1">
+                          <p className="text-xs font-semibold text-muted-foreground uppercase">AI Suggestions:</p>
+                          <ul className="text-xs text-muted-foreground space-y-1 list-disc list-inside">
+                            {balanceValidation.suggestions.map((suggestion, idx) => (
+                              <li key={idx}>{suggestion}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                      {balanceValidation.offendingEntries && balanceValidation.offendingEntries.length > 0 && (
+                        <div className="mt-3">
+                          <p className="text-xs font-semibold text-muted-foreground uppercase mb-2">Accounts to Review:</p>
+                          <div className="space-y-1">
+                            {balanceValidation.offendingEntries.slice(0, 5).map((entry, idx) => (
+                              <div key={idx} className="text-xs text-muted-foreground flex items-center gap-2">
+                                <span className="font-mono">{entry.accountCode}</span>
+                                <span>{entry.accountName}</span>
+                                <span className="ml-auto">{formatCurrency(entry.balance)}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
               <div className="p-6">
                 <BalanceSheetTable 
                   data={detailedBalanceSheet} 
                   startDate={params.startDate}
                   endDate={params.endDate}
+                  validation={balanceValidation}
                 />
               </div>
             </CardContent>
@@ -271,7 +307,7 @@ export default async function ReportsPage({
                 data={{
                   title: "Journal-Ledger",
                   headers: ["Date", "Description", "Account Code", "Account Name", "Debit", "Credit", "Memo"],
-                  rows: journalLedger.map((entry: JournalLedgerRow, idx: number) => [
+                  rows: journalLedger.map((entry: JournalLedgerRow) => [
                     entry.date,
                     entry.description,
                     entry.account_code,
@@ -303,18 +339,31 @@ export default async function ReportsPage({
                   title: "VAT-Report",
                   headers: ["Metric", "Amount"],
                   rows: [
-                    ["VAT Output Tax", Number(vatReport?.vat_output_tax ?? 0)],
-                    ["VAT Input Tax", Number(vatReport?.vat_input_tax ?? 0)],
-                    ["VAT Payable", Number(vatReport?.vat_payable ?? 0)],
+                    ["VAT Output Tax", Math.abs(Number(vatReport?.vat_output_tax ?? 0))],
+                    ["VAT Input Tax", Math.abs(Number(vatReport?.vat_input_tax ?? 0))],
+                    [
+                      vatReport?.vat_payable && Number(vatReport.vat_payable) < 0 ? "VAT Receivable" : "VAT Payable",
+                      Math.abs(Number(vatReport?.vat_payable ?? 0))
+                    ],
                   ],
                 }}
               />
             </CardHeader>
             <CardContent className="space-y-4">
-              <ReportRow label="VAT Output Tax" value={vatReport?.vat_output_tax} />
-              <ReportRow label="VAT Input Tax" value={vatReport?.vat_input_tax} />
+              <ReportRow 
+                label="VAT Output Tax" 
+                value={vatReport?.vat_output_tax ? Math.abs(Number(vatReport.vat_output_tax)) : 0} 
+              />
+              <ReportRow 
+                label="VAT Input Tax" 
+                value={vatReport?.vat_input_tax ? Math.abs(Number(vatReport.vat_input_tax)) : 0} 
+              />
               <div className="border-t pt-4">
-                <ReportRow label="VAT Payable" value={vatReport?.vat_payable} highlight />
+                <ReportRow 
+                  label={vatReport?.vat_payable && Number(vatReport.vat_payable) < 0 ? "VAT Receivable" : "VAT Payable"} 
+                  value={vatReport?.vat_payable ? Math.abs(Number(vatReport.vat_payable)) : 0} 
+                  highlight 
+                />
               </div>
             </CardContent>
           </Card>

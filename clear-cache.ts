@@ -16,11 +16,10 @@ async function clearCache() {
 
     const supabase = await createServerSupabaseClient();
     
-    const { data, error, count } = await supabase
+    const { error } = await supabase
       .from("ai_prompt_cache")
       .delete()
-      .eq("tenant_id", user.tenant.id)
-      .select();
+      .eq("tenant_id", user.tenant.id);
 
     if (error) {
       console.error("Failed to clear cache:", error);
@@ -28,7 +27,6 @@ async function clearCache() {
     }
 
     console.log(`✅ Successfully cleared prompt cache for tenant: ${user.tenant.id}`);
-    console.log(`   Deleted ${count ?? 0} cache entries`);
   } catch (error) {
     console.error("Error:", error);
     process.exit(1);

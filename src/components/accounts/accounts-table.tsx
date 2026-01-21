@@ -77,7 +77,7 @@ export function AccountsTable({ accounts, canManage, showCategory = false }: Pro
           <DialogHeader>
             <DialogTitle>Delete Account</DialogTitle>
             <DialogDescription>
-              Are you sure you want to delete &quot;{accountToDelete?.name}&quot; ({accountToDelete?.code})?
+              Are you sure you want to delete &ldquo;{accountToDelete?.name}&rdquo; ({accountToDelete?.code})?
               {accountToDelete && (
                 <span className="mt-2 block text-destructive">
                   This action cannot be undone. The account will be permanently removed.

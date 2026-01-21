@@ -130,9 +130,6 @@ export function GroupedLedgerTable({ data }: Props) {
                       )}
                     </Button>
                   </TableCell>
-                  <TableCell className="font-mono text-xs">
-                    {group.accountCode}
-                  </TableCell>
                   <TableCell className="font-medium">{group.accountName}</TableCell>
                   <TableCell></TableCell>
                   <TableCell className="text-right font-mono font-semibold">

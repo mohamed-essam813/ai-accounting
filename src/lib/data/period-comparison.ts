@@ -28,6 +28,7 @@ export interface PeriodFinancialData {
  */
 export async function getPeriodFinancialData(
   dateRange?: DateRange,
+  targetCurrency?: string,
 ): Promise<PeriodFinancialData> {
   const user = await getCurrentUser();
   if (!user?.tenant) {
@@ -69,14 +70,41 @@ export async function getPeriodFinancialData(
     : Number(pnl?.total_expense ?? 0);
   const netIncome = revenue - expenses;
 
+  let finalRevenue = revenue;
+  let finalExpenses = expenses;
+  let finalNetIncome = netIncome;
+  let finalCashBalance = cashBalance;
+  let finalReceivables = receivables;
+  let finalPayables = payables;
+  let finalCashFlow = Number(cashFlowData?.net_cash_flow ?? 0);
+  
+  // Convert amounts if targetCurrency is provided
+  if (targetCurrency && user?.tenant) {
+    const { convertCurrency, getTenantBaseCurrency } = await import("@/lib/utils/currency-conversion");
+    const baseCurrency = await getTenantBaseCurrency(user.tenant.id);
+    const conversionDate = dateRange?.endDate || new Date().toISOString().split("T")[0];
+    
+    if (baseCurrency.toUpperCase() !== targetCurrency.toUpperCase()) {
+      [finalRevenue, finalExpenses, finalNetIncome, finalCashBalance, finalReceivables, finalPayables, finalCashFlow] = await Promise.all([
+        convertCurrency(revenue, baseCurrency, targetCurrency, conversionDate, user.tenant.id),
+        convertCurrency(expenses, baseCurrency, targetCurrency, conversionDate, user.tenant.id),
+        convertCurrency(netIncome, baseCurrency, targetCurrency, conversionDate, user.tenant.id),
+        convertCurrency(cashBalance, baseCurrency, targetCurrency, conversionDate, user.tenant.id),
+        convertCurrency(receivables, baseCurrency, targetCurrency, conversionDate, user.tenant.id),
+        convertCurrency(payables, baseCurrency, targetCurrency, conversionDate, user.tenant.id),
+        convertCurrency(finalCashFlow, baseCurrency, targetCurrency, conversionDate, user.tenant.id),
+      ]);
+    }
+  }
+  
   return {
-    revenue,
-    expenses,
-    netIncome,
-    cashBalance,
-    receivables,
-    payables,
-    cashFlow: Number(cashFlowData?.net_cash_flow ?? 0),
+    revenue: finalRevenue,
+    expenses: finalExpenses,
+    netIncome: finalNetIncome,
+    cashBalance: finalCashBalance,
+    receivables: finalReceivables,
+    payables: finalPayables,
+    cashFlow: finalCashFlow,
   };
 }
 

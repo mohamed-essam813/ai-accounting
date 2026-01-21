@@ -4,6 +4,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { formatCurrency } from "@/lib/format";
 import Link from "next/link";
 import type { BalanceSheetLineItem } from "@/lib/data/reports-detailed";
+import type { BalanceSheetValidationResult } from "@/lib/accounting/balance-validation";
 
 type Props = {
   data: {
@@ -25,9 +26,10 @@ type Props = {
   };
   startDate?: string;
   endDate?: string;
+  validation?: BalanceSheetValidationResult;
 };
 
-export function BalanceSheetTable({ data, startDate, endDate }: Props) {
+export function BalanceSheetTable({ data, startDate, endDate, validation }: Props) {
   const {
     currentAssets,
     nonCurrentAssets,
@@ -57,9 +59,6 @@ export function BalanceSheetTable({ data, startDate, endDate }: Props) {
             </TableRow>
             {items.map((item) => (
               <TableRow key={item.account_code} className="hover:bg-muted/30">
-                <TableCell className="pl-8 text-muted-foreground">
-                  {item.account_code}
-                </TableCell>
                 <TableCell className="text-muted-foreground">
                   <Link
                     href={`/ledger?accountCode=${item.account_code}${startDate ? `&startDate=${startDate}` : ""}${endDate ? `&endDate=${endDate}` : ""}`}
@@ -163,10 +162,22 @@ export function BalanceSheetTable({ data, startDate, endDate }: Props) {
           </TableRow>
 
           {/* Balance Check */}
-          {totals.totalAssets !== totals.totalLiabilitiesAndEquity && (
-            <TableRow className="bg-destructive/10">
-              <TableCell colSpan={3} className="text-center text-destructive font-semibold">
-                ⚠️ Balance Sheet does not balance! Difference: {formatCurrency(Math.abs(totals.totalAssets - totals.totalLiabilitiesAndEquity))}
+          {validation && !validation.isBalanced && (
+            <TableRow className="bg-destructive/10 border-t-2 border-destructive">
+              <TableCell colSpan={3} className="text-center text-destructive font-semibold py-4">
+                ⚠️ BALANCE SHEET DOES NOT BALANCE
+                <div className="text-sm mt-1 font-normal">
+                  Assets: {formatCurrency(validation.assets)} | 
+                  Liabilities + Equity: {formatCurrency(validation.liabilitiesAndEquity)} | 
+                  Difference: {formatCurrency(validation.difference)}
+                </div>
+              </TableCell>
+            </TableRow>
+          )}
+          {validation && validation.isBalanced && (
+            <TableRow className="bg-green-50 border-t-2 border-green-200">
+              <TableCell colSpan={3} className="text-center text-green-700 font-semibold py-2">
+                ✓ Balance Sheet is balanced
               </TableCell>
             </TableRow>
           )}

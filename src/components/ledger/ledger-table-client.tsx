@@ -23,9 +23,10 @@ type LedgerEntry = {
 
 type Props = {
   entries: LedgerEntry[];
+  displayCurrency?: string; // Currency to display amounts in
 };
 
-export function LedgerTableClient({ entries }: Props) {
+export function LedgerTableClient({ entries, displayCurrency }: Props) {
   const {
     currentItems: paginatedEntries,
     currentPage,
@@ -75,13 +76,17 @@ export function LedgerTableClient({ entries }: Props) {
                   </div>
                 </TableCell>
                 <TableCell className="text-right font-mono">
-                  {Number(entry.debit) > 0 ? formatCurrency(Number(entry.debit)) : "-"}
+                  {Number(entry.debit) > 0 
+                    ? formatCurrency(Number(entry.debit), displayCurrency)
+                    : "-"}
                 </TableCell>
                 <TableCell className="text-right font-mono">
-                  {Number(entry.credit) > 0 ? formatCurrency(Number(entry.credit)) : "-"}
+                  {Number(entry.credit) > 0 
+                    ? formatCurrency(Number(entry.credit), displayCurrency)
+                    : "-"}
                 </TableCell>
                 <TableCell className="text-right font-mono font-medium">
-                  {formatCurrency(entry.runningBalance)}
+                  {formatCurrency(entry.runningBalance, displayCurrency)}
                 </TableCell>
                 <TableCell className="text-sm text-muted-foreground">
                   {entry.memo || "-"}

@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { parseAccountingPrompt } from "@/lib/ai";
-import { DraftSchema } from "@/lib/ai/schema";
+import { resolvePromptWithAccountCreation } from "@/lib/ai/prompt-pipeline";
+import { DraftSchema, type DraftPayload } from "@/lib/ai/schema";
 import { getCurrentUser } from "@/lib/data/users";
 import { createServiceSupabaseClient } from "@/lib/supabase/service";
 import type { Database } from "@/lib/database.types";
+import type { Account } from "@/lib/accounting";
 
 const requestSchema = z.object({
   prompt: z.string().min(1, "Please describe what happened."),
@@ -70,7 +71,9 @@ export async function POST(req: NextRequest) {
       ? `${prompt}\n\nAdditional context from uploaded documents:${documentContext}`
       : prompt;
 
-    const parsed = await parseAccountingPrompt(combinedPrompt, {
+    // Use stateful prompt pipeline that auto-creates missing accounts
+    // This fixes the bug where prompt execution stops after account creation confirmation
+    const parsed = await resolvePromptWithAccountCreation(combinedPrompt, {
       tenantId: user.tenant.id,
       userId: user.id,
     });
@@ -176,13 +179,13 @@ export async function POST(req: NextRequest) {
       const bankAccountsList = filterBankAccounts(allAccountsList);
       
       // Find Cash account (code 1000)
-      const cashAccountFound = allAccountsList.find((acc: any) => acc.code === "1000" && acc.type === "asset");
+      const cashAccountFound = allAccountsList.find((acc: Account) => acc.code === "1000" && acc.type === "asset");
       
       // Filter out Cash from bank accounts (we'll show it separately)
-      const bankAccountsExcludingCash = bankAccountsList.filter((acc: any) => acc.code !== "1000");
+      const bankAccountsExcludingCash = bankAccountsList.filter((acc: Account) => acc.code !== "1000");
       
       cashBankSelection = {
-        bankAccounts: bankAccountsExcludingCash.map((acc: any) => ({
+        bankAccounts: bankAccountsExcludingCash.map((acc: Account) => ({
           id: acc.id,
           name: acc.name,
           code: acc.code,
@@ -201,7 +204,9 @@ export async function POST(req: NextRequest) {
     if (!requiresCashContextConfirmation && cashBankIntents.includes(validation.data.intent) && validation.data.accounts) {
       // For record_payment and reconcile_bank, debit_account is typically cash/bank
       // But we should also check credit_account for reconcile_bank (e.g., paying interest/fees)
-      const accountsToCheck: Array<{ key: "debit_account" | "credit_account"; account: any }> = [];
+      type AccountsType = NonNullable<DraftPayload["accounts"]>;
+      type AccountSuggestion = AccountsType["debit_account"] | AccountsType["credit_account"];
+      const accountsToCheck: Array<{ key: "debit_account" | "credit_account"; account: AccountSuggestion }> = [];
       
       if (validation.data.accounts.debit_account) {
         accountsToCheck.push({ key: "debit_account", account: validation.data.accounts.debit_account });
@@ -219,10 +224,10 @@ export async function POST(req: NextRequest) {
       // Check each account to see if cash/bank selection is needed
       // Load accounts once outside the loop to avoid redeclaration
       let accountsLoaded = false;
-      let allAccountsList: any[] = [];
-      let bankAccountsList: any[] = [];
-      let cashAccountFound: any = null;
-      let bankAccountsExcludingCashList: any[] = [];
+      let allAccountsList: Account[] = [];
+      let bankAccountsList: Account[] = [];
+      let cashAccountFound: Account | null = null;
+      let bankAccountsExcludingCashList: Account[] = [];
       
       for (const { key, account } of accountsToCheck) {
         const isAssetType = account.suggested_type === "asset";
@@ -255,15 +260,15 @@ export async function POST(req: NextRequest) {
             bankAccountsList = filterBankAccounts(allAccountsList);
             
             // Find Cash account (code 1000)
-            cashAccountFound = allAccountsList.find((acc: any) => acc.code === "1000" && acc.type === "asset");
+            cashAccountFound = allAccountsList.find((acc: Account) => acc.code === "1000" && acc.type === "asset") || null;
             
             // Filter out Cash from bank accounts (we'll show it separately)
-            bankAccountsExcludingCashList = bankAccountsList.filter((acc: any) => acc.code !== "1000");
+            bankAccountsExcludingCashList = bankAccountsList.filter((acc: Account) => acc.code !== "1000");
             accountsLoaded = true;
           }
           
           cashBankSelection = {
-            bankAccounts: bankAccountsExcludingCashList.map((acc: any) => ({
+            bankAccounts: bankAccountsExcludingCashList.map((acc: Account) => ({
               id: acc.id,
               name: acc.name,
               code: acc.code,
@@ -284,7 +289,12 @@ export async function POST(req: NextRequest) {
     // Check for account confirmation if AI suggested new accounts
     // ALWAYS show confirmation dialog if account doesn't exist (even if no similar accounts found)
     // This ensures user can review before creating new accounts
-    const accountConfirmation: Record<string, any> = {};
+    type AccountsType = NonNullable<DraftPayload["accounts"]>;
+    type AccountConfirmationValue = {
+      suggested: AccountsType["debit_account"] | AccountsType["credit_account"] | AccountsType["tax_debit_account"] | AccountsType["tax_credit_account"];
+      similar_accounts: Array<{ id: string; name: string; code: string }>;
+    };
+    const accountConfirmation: Partial<Record<"debit_account" | "credit_account" | "tax_debit_account" | "tax_credit_account", AccountConfirmationValue>> = {};
     if (validation.data.accounts) {
       const { findSimilarAccounts } = await import("@/lib/accounting/find-similar-accounts");
       

@@ -3,6 +3,7 @@
  * Excel Elimination Doctrine: Charts must answer business questions with context
  * 
  * Shows net income margin trends with period comparison
+ * Uses Recharts for line chart with threshold bands
  */
 
 "use client";
@@ -11,6 +12,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatCurrency } from "@/lib/format";
 import { ArrowUp, ArrowDown, Minus } from "lucide-react";
 import type { PeriodComparison } from "@/lib/utils/period-comparison";
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from "recharts";
+import { ChipTooltip } from "./chip-tooltip";
 
 interface Props {
   currentRevenue: number;
@@ -63,15 +66,36 @@ export function ProfitabilityChart({
   const config = directionConfig[direction];
   const Icon = config.icon;
 
-  // Chart visualization - show net income bars
-  const maxValue = Math.max(
-    Math.abs(currentNetIncome),
-    Math.abs(previousNetIncome),
-    Math.abs(currentRevenue) * 0.3, // Show up to 30% of revenue as max scale
-    1,
-  );
-  const currentHeight = (Math.abs(currentNetIncome) / maxValue) * 100;
-  const previousHeight = (Math.abs(previousNetIncome) / maxValue) * 100;
+  // Chart data for line chart
+  const chartData = [
+    {
+      period: "Previous",
+      netIncome: previousNetIncome,
+      margin: previousMargin,
+    },
+    {
+      period: "Current",
+      netIncome: currentNetIncome,
+      margin: currentMargin,
+    },
+  ];
+
+  // Empty state handling
+  if (currentRevenue === 0 && previousRevenue === 0) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Profitability Trend</CardTitle>
+          <p className="text-xs text-muted-foreground">
+            Net income margin comparison
+          </p>
+        </CardHeader>
+        <CardContent className="flex items-center justify-center h-64">
+          <p className="text-muted-foreground">No data available for this period</p>
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
     <Card>
@@ -82,64 +106,49 @@ export function ProfitabilityChart({
         </p>
       </CardHeader>
       <CardContent className="space-y-3">
-        {/* Chart Visualization */}
-        <div className="flex items-end gap-6 h-40">
-          {/* Previous Period Bar */}
-          <div className="flex-1 flex flex-col items-center gap-2">
-            <div className="w-full flex flex-col items-center justify-end h-full">
-              <div
-                className="w-full bg-muted rounded-t-md transition-all shadow-sm hover:shadow-md"
-                style={{ height: `${Math.max(previousHeight, 5)}%` }}
-              >
-                <div
-                  className={`h-full rounded-t-md ${
-                    previousNetIncome >= 0 ? "bg-blue-400" : "bg-red-400"
-                  }`}
-                />
-              </div>
-            </div>
-            <div className="text-center mt-2">
-              <p className="text-xs font-medium text-muted-foreground">Previous</p>
-              <p className="text-xs font-medium mt-0.5">
-                {formatCurrency(previousNetIncome)}
-              </p>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                {previousMargin.toFixed(1)}% margin
-              </p>
-            </div>
-          </div>
-
-          {/* Current Period Bar */}
-          <div className="flex-1 flex flex-col items-center gap-2">
-            <div className="w-full flex flex-col items-center justify-end h-full">
-              <div
-                className={`w-full rounded-t-md transition-all shadow-md hover:shadow-lg border-2 ${config.bgColor} ${config.borderColor}`}
-                style={{ height: `${Math.max(currentHeight, 5)}%` }}
-              >
-                <div
-                  className={`h-full rounded-t-md ${
-                    currentNetIncome >= 0
-                      ? direction === "up"
-                        ? "bg-green-500"
-                        : "bg-green-400"
-                      : direction === "down"
-                        ? "bg-red-500"
-                        : "bg-red-400"
-                  }`}
-                />
-              </div>
-            </div>
-            <div className="text-center mt-2">
-              <p className="text-xs font-semibold">Current</p>
-              <p className="text-xs font-semibold mt-0.5">
-                {formatCurrency(currentNetIncome)}
-              </p>
-              <p className="text-xs font-medium text-foreground mt-0.5">
-                {currentMargin.toFixed(1)}% margin
-              </p>
-            </div>
-          </div>
-        </div>
+        {/* Line Chart with Threshold Bands */}
+        <ResponsiveContainer width="100%" height={300}>
+          <LineChart data={chartData}>
+            <CartesianGrid strokeDasharray="3 3" />
+            <XAxis dataKey="period" />
+            <YAxis 
+              yAxisId="left"
+              tickFormatter={(value: number) => formatCurrency(value)}
+              label={{ value: "Net Income", angle: -90, position: "insideLeft" }}
+            />
+            <YAxis 
+              yAxisId="right"
+              orientation="right"
+              tickFormatter={(value: number) => `${value}%`}
+              label={{ value: "Margin %", angle: 90, position: "insideRight" }}
+            />
+            <Tooltip 
+              content={<ChipTooltip />}
+            />
+            {/* Threshold lines */}
+            <ReferenceLine yAxisId="right" y={10} stroke="#10b981" strokeDasharray="5 5" label="10% Target" />
+            <ReferenceLine yAxisId="right" y={0} stroke="#ef4444" strokeDasharray="3 3" />
+            <Line 
+              yAxisId="left"
+              type="monotone" 
+              dataKey="netIncome" 
+              stroke="#3b82f6" 
+              strokeWidth={2}
+              name="Net Income"
+              dot={{ r: 6 }}
+            />
+            <Line 
+              yAxisId="right"
+              type="monotone" 
+              dataKey="margin" 
+              stroke="#10b981" 
+              strokeWidth={2}
+              strokeDasharray="5 5"
+              name="Margin %"
+              dot={{ r: 6 }}
+            />
+          </LineChart>
+        </ResponsiveContainer>
 
         {/* Comparison Metrics */}
         <div className={`p-2 rounded-md ${config.bgColor} ${config.borderColor} border`}>
@@ -177,4 +186,3 @@ export function ProfitabilityChart({
     </Card>
   );
 }
-

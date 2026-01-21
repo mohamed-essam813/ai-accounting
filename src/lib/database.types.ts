@@ -731,6 +731,47 @@ export type Database = {
           },
         ]
       }
+      fx_rates: {
+        Row: {
+          created_at: string
+          date: string
+          from_currency: string
+          id: string
+          rate: number
+          tenant_id: string
+          to_currency: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          date: string
+          from_currency: string
+          id?: string
+          rate: number
+          tenant_id: string
+          to_currency: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          date?: string
+          from_currency?: string
+          id?: string
+          rate?: number
+          tenant_id?: string
+          to_currency?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "fx_rates_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       insights: {
         Row: {
           category: string
@@ -1003,9 +1044,11 @@ export type Database = {
       }
       inventory_items: {
         Row: {
+          cogs_account_id: string | null
           created_at: string
           description: string | null
           id: string
+          inventory_account_id: string | null
           is_active: boolean
           name: string
           sku: string | null
@@ -1016,9 +1059,11 @@ export type Database = {
           valuation_method: string
         }
         Insert: {
+          cogs_account_id?: string | null
           created_at?: string
           description?: string | null
           id?: string
+          inventory_account_id?: string | null
           is_active?: boolean
           name: string
           sku?: string | null
@@ -1029,9 +1074,11 @@ export type Database = {
           valuation_method: string
         }
         Update: {
+          cogs_account_id?: string | null
           created_at?: string
           description?: string | null
           id?: string
+          inventory_account_id?: string | null
           is_active?: boolean
           name?: string
           sku?: string | null
@@ -1042,6 +1089,34 @@ export type Database = {
           valuation_method?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "inventory_items_cogs_account_id_fkey"
+            columns: ["cogs_account_id"]
+            isOneToOne: false
+            referencedRelation: "chart_of_accounts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "inventory_items_cogs_account_id_fkey"
+            columns: ["cogs_account_id"]
+            isOneToOne: false
+            referencedRelation: "v_trial_balance"
+            referencedColumns: ["account_id"]
+          },
+          {
+            foreignKeyName: "inventory_items_inventory_account_id_fkey"
+            columns: ["inventory_account_id"]
+            isOneToOne: false
+            referencedRelation: "chart_of_accounts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "inventory_items_inventory_account_id_fkey"
+            columns: ["inventory_account_id"]
+            isOneToOne: false
+            referencedRelation: "v_trial_balance"
+            referencedColumns: ["account_id"]
+          },
           {
             foreignKeyName: "inventory_items_tenant_id_fkey"
             columns: ["tenant_id"]

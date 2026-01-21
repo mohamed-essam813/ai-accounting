@@ -80,7 +80,11 @@ export type StatementTransaction = {
   entry_id?: string;
 };
 
-export async function getContactStatement(contactId: string): Promise<StatementTransaction[]> {
+export async function getContactStatement(
+  contactId: string,
+  startDate?: string,
+  endDate?: string,
+): Promise<StatementTransaction[]> {
   const user = await getCurrentUser();
   if (!user?.tenant) {
     return [];
@@ -96,13 +100,22 @@ export async function getContactStatement(contactId: string): Promise<StatementT
   // First, try to get entries via contact_id (preferred method)
   // Get journal entries linked to this contact
   type JournalEntriesRow = Database["public"]["Tables"]["journal_entries"]["Row"];
-  const { data: entriesByContact } = await supabase
+  let entriesQuery = supabase
     .from("journal_entries")
     .select<"id, date, description", Pick<JournalEntriesRow, "id" | "date" | "description">>("id, date, description")
     .eq("tenant_id", user.tenant.id)
     .eq("status", "posted")
-    .eq("contact_id", contactId)
-    .order("date", { ascending: true });
+    .eq("contact_id", contactId);
+  
+  // Apply date filters if provided
+  if (startDate) {
+    entriesQuery = entriesQuery.gte("date", startDate);
+  }
+  if (endDate) {
+    entriesQuery = entriesQuery.lte("date", endDate);
+  }
+  
+  const { data: entriesByContact } = await entriesQuery.order("date", { ascending: true });
 
   // Also get drafts linked to this contact
   const { data: draftsByContact } = await supabase
@@ -177,12 +190,21 @@ export async function getContactStatement(contactId: string): Promise<StatementT
     // Filter to only entries that are in our entryIds set
     entries = entriesByContact.filter((e) => entryIds.has(e.id)) as EntryBasic[];
   } else {
-    const { data: fetchedEntries } = await supabase
+    let fetchedQuery = supabase
       .from("journal_entries")
       .select<"id, date, description", Pick<JournalEntriesRow, "id" | "date" | "description">>("id, date, description")
       .in("id", Array.from(entryIds))
-      .eq("status", "posted")
-      .order("date", { ascending: true });
+      .eq("status", "posted");
+    
+    // Apply date filters if provided
+    if (startDate) {
+      fetchedQuery = fetchedQuery.gte("date", startDate);
+    }
+    if (endDate) {
+      fetchedQuery = fetchedQuery.lte("date", endDate);
+    }
+    
+    const { data: fetchedEntries } = await fetchedQuery.order("date", { ascending: true });
     entries = (fetchedEntries ?? []) as EntryBasic[];
   }
 

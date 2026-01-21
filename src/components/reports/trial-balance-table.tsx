@@ -89,7 +89,6 @@ export function TrialBalanceTable({ data }: Props) {
         <TableHeader>
           <TableRow>
             <TableHead className="w-[50px]"></TableHead>
-            <TableHead>Account Code</TableHead>
             <TableHead>Account Name</TableHead>
             <TableHead className="text-right">Debit</TableHead>
             <TableHead className="text-right">Credit</TableHead>
@@ -152,9 +151,6 @@ export function TrialBalanceTable({ data }: Props) {
                     return (
                       <TableRow key={account.account_id} className="hover:bg-muted/30">
                         <TableCell></TableCell>
-                        <TableCell className="font-mono text-xs">
-                          {account.code}
-                        </TableCell>
                         <TableCell className="pl-6">{account.name}</TableCell>
                         <TableCell className="text-right font-mono text-sm">
                           {Number(account.total_debit ?? 0) > 0

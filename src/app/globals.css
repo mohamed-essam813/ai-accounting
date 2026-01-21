@@ -129,3 +129,26 @@
     transform: scaleX(1);
   }
 }
+
+/* Ensure all Recharts labels and tooltips use neutral colors */
+/* This prevents green/red text from appearing on matching colored bars */
+.recharts-tooltip-wrapper,
+.recharts-tooltip,
+.recharts-tooltip-item,
+.recharts-label,
+.recharts-legend-item-text {
+  color: #1f2937 !important; /* Dark grey for all labels */
+}
+
+/* Ensure tooltip content is always readable */
+.recharts-tooltip-item-name,
+.recharts-tooltip-item-value {
+  color: #1f2937 !important;
+}
+
+/* Prevent any colored text in chart labels */
+.recharts-bar-label,
+.recharts-cartesian-axis-tick-value {
+  fill: #1f2937 !important;
+  color: #1f2937 !important;
+}

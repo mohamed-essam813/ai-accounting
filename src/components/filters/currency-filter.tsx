@@ -1,5 +1,13 @@
 "use client";
 
+/**
+ * Currency Filter Component
+ * 
+ * Note: This is for currency CONVERSION, not filtering.
+ * When a currency is selected, all amounts are converted to that currency for display.
+ * All records remain visible regardless of their original currency.
+ */
+
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   Select,

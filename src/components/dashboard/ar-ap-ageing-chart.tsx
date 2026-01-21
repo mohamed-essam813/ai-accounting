@@ -1,8 +1,9 @@
 /**
- * AR/AP Ageing Trend Chart for Dashboard
+ * AR/AP Ageing Chart for Dashboard
  * Excel Elimination Doctrine: Charts must answer business questions with context
  * 
  * Shows receivables and payables outstanding trends with period comparison
+ * Uses Recharts for horizontal stacked bars
  */
 
 "use client";
@@ -11,6 +12,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatCurrency } from "@/lib/format";
 import { ArrowUp, ArrowDown, Minus } from "lucide-react";
 import type { PeriodComparison } from "@/lib/utils/period-comparison";
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
+import { ChipTooltip } from "./chip-tooltip";
 
 interface Props {
   currentAR: number;
@@ -54,12 +57,36 @@ export function ARAPAgeingChart({
     interpretation = `Working capital ${trend} by ${formatCurrency(Math.abs(netWCChange))}. ${arDirection === "stable" && apDirection === "stable" ? "Both AR and AP are stable." : "Monitor collection and payment cycles."}`;
   }
 
-  // Chart visualization
-  const maxValue = Math.max(currentAR, previousAR, currentAP, previousAP, 1);
-  const currentARHeight = (currentAR / maxValue) * 100;
-  const previousARHeight = (previousAR / maxValue) * 100;
-  const currentAPHeight = (currentAP / maxValue) * 100;
-  const previousAPHeight = (previousAP / maxValue) * 100;
+  // Chart data for horizontal grouped bars (side-by-side comparison)
+  const chartData = [
+    {
+      period: "Previous",
+      ar: previousAR,
+      ap: previousAP,
+    },
+    {
+      period: "Current",
+      ar: currentAR,
+      ap: currentAP,
+    },
+  ];
+
+  // Empty state handling
+  if (currentAR === 0 && previousAR === 0 && currentAP === 0 && previousAP === 0) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">AR/AP Ageing Trend</CardTitle>
+          <p className="text-xs text-muted-foreground">
+            Receivables vs Payables outstanding
+          </p>
+        </CardHeader>
+        <CardContent className="flex items-center justify-center h-64">
+          <p className="text-muted-foreground">No data available for this period</p>
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
     <Card>
@@ -70,129 +97,99 @@ export function ARAPAgeingChart({
         </p>
       </CardHeader>
       <CardContent className="space-y-3">
-        {/* Chart Visualization */}
-        <div className="space-y-3">
-          <div className="flex items-end gap-6 h-40">
-            {/* Previous Period */}
-            <div className="flex-1 flex flex-col items-center gap-2">
-              <div className="w-full flex flex-col items-center justify-end h-full gap-2">
-                <div className="w-full flex flex-col items-end gap-1">
-                  <div
-                    className="w-full bg-blue-300 rounded-t-md transition-all shadow-sm hover:shadow-md"
-                    style={{ height: `${Math.max(previousARHeight, 5)}%` }}
-                    title={`Previous AR: ${formatCurrency(previousAR)}`}
-                  />
-                  <div
-                    className="w-full bg-orange-300 rounded-t-md transition-all shadow-sm hover:shadow-md"
-                    style={{ height: `${Math.max(previousAPHeight, 5)}%` }}
-                    title={`Previous AP: ${formatCurrency(previousAP)}`}
-                  />
-                </div>
-              </div>
-              <div className="text-center mt-2">
-                <p className="text-xs font-medium text-muted-foreground">Previous</p>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  Net: {formatCurrency(previousAR - previousAP)}
-                </p>
-              </div>
-            </div>
+        {/* Horizontal Grouped Bar Chart - Better for comparison */}
+        <ResponsiveContainer width="100%" height={320}>
+          <BarChart 
+            data={chartData} 
+            layout="vertical"
+            margin={{ top: 10, right: 20, left: 10, bottom: 10 }}
+          >
+            <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" opacity={0.3} />
+            <XAxis 
+              type="number" 
+              tickFormatter={(value: number) => formatCurrency(value)}
+              tick={{ fill: "#6b7280", fontSize: 11 }}
+              axisLine={{ stroke: "#d1d5db" }}
+            />
+            <YAxis 
+              dataKey="period" 
+              type="category" 
+              width={90}
+              tick={{ fill: "#6b7280", fontSize: 12 }}
+              axisLine={{ stroke: "#d1d5db" }}
+            />
+            <Tooltip 
+              content={<ChipTooltip />}
+              cursor={{ fill: "rgba(0, 0, 0, 0.05)" }}
+            />
+            <Legend 
+              wrapperStyle={{ paddingTop: "10px" }}
+              iconType="square"
+            />
+            <Bar 
+              dataKey="ar" 
+              fill="#10b981" 
+              name="Accounts Receivable"
+              radius={[0, 6, 6, 0]}
+              barSize={35}
+              label={false}
+            />
+            <Bar 
+              dataKey="ap" 
+              fill="#ef4444" 
+              name="Accounts Payable"
+              radius={[0, 6, 6, 0]}
+              barSize={35}
+              label={false}
+            />
+          </BarChart>
+        </ResponsiveContainer>
 
-            {/* Current Period */}
-            <div className="flex-1 flex flex-col items-center gap-2">
-              <div className="w-full flex flex-col items-center justify-end h-full gap-2">
-                <div className="w-full flex flex-col items-end gap-1">
-                  <div
-                    className={`w-full rounded-t-md transition-all shadow-md hover:shadow-lg border-2 ${
-                      arDirection === "down"
-                        ? "bg-green-500 border-green-400"
-                        : arDirection === "up"
-                          ? "bg-red-500 border-red-400"
-                          : "bg-blue-500 border-blue-400"
-                    }`}
-                    style={{ height: `${Math.max(currentARHeight, 5)}%` }}
-                    title={`Current AR: ${formatCurrency(currentAR)}`}
-                  />
-                  <div
-                    className={`w-full rounded-t-md transition-all shadow-md hover:shadow-lg border-2 ${
-                      apDirection === "down"
-                        ? "bg-green-400 border-green-300"
-                        : apDirection === "up"
-                          ? "bg-orange-500 border-orange-400"
-                          : "bg-orange-400 border-orange-300"
-                    }`}
-                    style={{ height: `${Math.max(currentAPHeight, 5)}%` }}
-                    title={`Current AP: ${formatCurrency(currentAP)}`}
-                  />
-                </div>
-              </div>
-              <div className="text-center mt-2">
-                <p className="text-xs font-semibold">Current</p>
-                <p className="text-xs font-medium text-foreground mt-0.5">
-                  Net: {formatCurrency(currentAR - currentAP)}
-                </p>
-              </div>
+        {/* Comparison Metrics */}
+        <div className="grid grid-cols-2 gap-2 text-xs">
+          <div className="p-2 rounded-md bg-blue-50 border border-blue-200">
+            <div className="flex items-center gap-1 mb-1">
+              {arDirection === "down" ? (
+                <ArrowDown className="h-3 w-3 text-green-600" />
+              ) : arDirection === "up" ? (
+                <ArrowUp className="h-3 w-3 text-red-600" />
+              ) : (
+                <Minus className="h-3 w-3 text-blue-600" />
+              )}
+              <span className="font-semibold">AR</span>
+              <span className="text-muted-foreground">
+                {arDirection === "down" ? "-" : arDirection === "up" ? "+" : ""}
+                {arChange.toFixed(1)}%
+              </span>
             </div>
+            <p className="text-muted-foreground">{formatCurrency(currentAR)}</p>
           </div>
+          <div className="p-2 rounded-md bg-orange-50 border border-orange-200">
+            <div className="flex items-center gap-1 mb-1">
+              {apDirection === "down" ? (
+                <ArrowDown className="h-3 w-3 text-green-600" />
+              ) : apDirection === "up" ? (
+                <ArrowUp className="h-3 w-3 text-red-600" />
+              ) : (
+                <Minus className="h-3 w-3 text-blue-600" />
+              )}
+              <span className="font-semibold">AP</span>
+              <span className="text-muted-foreground">
+                {apDirection === "up" ? "+" : apDirection === "down" ? "-" : ""}
+                {apChange.toFixed(1)}%
+              </span>
+            </div>
+            <p className="text-muted-foreground">{formatCurrency(currentAP)}</p>
+          </div>
+        </div>
 
-          {/* Legend */}
-          <div className="flex items-center justify-center gap-4 text-xs">
-            <div className="flex items-center gap-1">
-              <div className="w-3 h-3 bg-blue-400 rounded" />
-              <span>AR (Receivables)</span>
-            </div>
-            <div className="flex items-center gap-1">
-              <div className="w-3 h-3 bg-orange-400 rounded" />
-              <span>AP (Payables)</span>
-            </div>
-          </div>
-
-          {/* Comparison Metrics */}
-          <div className="grid grid-cols-2 gap-2 text-xs">
-            <div className="p-2 rounded-md bg-blue-50 border border-blue-200">
-              <div className="flex items-center gap-1 mb-1">
-                {arDirection === "down" ? (
-                  <ArrowDown className="h-3 w-3 text-green-600" />
-                ) : arDirection === "up" ? (
-                  <ArrowUp className="h-3 w-3 text-red-600" />
-                ) : (
-                  <Minus className="h-3 w-3 text-blue-600" />
-                )}
-                <span className="font-semibold">AR</span>
-                <span className="text-muted-foreground">
-                  {arDirection === "down" ? "-" : arDirection === "up" ? "+" : ""}
-                  {arChange.toFixed(1)}%
-                </span>
-              </div>
-              <p className="text-muted-foreground">{formatCurrency(currentAR)}</p>
-            </div>
-            <div className="p-2 rounded-md bg-orange-50 border border-orange-200">
-              <div className="flex items-center gap-1 mb-1">
-                {apDirection === "down" ? (
-                  <ArrowDown className="h-3 w-3 text-green-600" />
-                ) : apDirection === "up" ? (
-                  <ArrowUp className="h-3 w-3 text-red-600" />
-                ) : (
-                  <Minus className="h-3 w-3 text-blue-600" />
-                )}
-                <span className="font-semibold">AP</span>
-                <span className="text-muted-foreground">
-                  {apDirection === "up" ? "+" : apDirection === "down" ? "-" : ""}
-                  {apChange.toFixed(1)}%
-                </span>
-              </div>
-              <p className="text-muted-foreground">{formatCurrency(currentAP)}</p>
-            </div>
-          </div>
-
-          {/* Interpretation */}
-          <div className="p-2 rounded-md bg-muted border">
-            <p className="text-xs text-muted-foreground leading-relaxed">
-              {interpretation}
-            </p>
-          </div>
+        {/* Interpretation */}
+        <div className="p-2 rounded-md bg-muted border">
+          <p className="text-xs text-muted-foreground leading-relaxed">
+            {interpretation}
+          </p>
         </div>
       </CardContent>
     </Card>
   );
 }
-

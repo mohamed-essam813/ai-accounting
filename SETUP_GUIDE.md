@@ -49,8 +49,10 @@ supabase db push
 **Option B: Dashboard SQL Editor**
 
 1. Go to **SQL Editor** in Supabase dashboard
-2. Run each migration file from `supabase/migrations/` in order (all 22 files)
+2. Run each migration file from `supabase/migrations/` in order (all migration files)
 3. Run `supabase/seed.sql` after migrations to create default accounts
+
+**Note**: Migration files are numbered sequentially. Run them in numerical order.
 
 ### 1.4 Create Storage Bucket
 

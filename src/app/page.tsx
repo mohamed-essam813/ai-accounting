@@ -9,7 +9,7 @@ export default async function Home() {
   try {
     const sessionResult = await supabase.auth.getSession();
     session = sessionResult.data?.session;
-  } catch (error) {
+  } catch {
     // User is not logged in or has invalid tokens - redirect to auth
     redirect("/auth");
   }

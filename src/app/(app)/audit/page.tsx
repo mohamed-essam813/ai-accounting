@@ -1,5 +1,4 @@
 import { getRecentAuditEvents } from "@/lib/data/audit";
-import { Input } from "@/components/ui/input";
 import { AuditLogSearch } from "@/components/audit/audit-log-search";
 import { AuditTableClient } from "@/components/audit/audit-table-client";
 
