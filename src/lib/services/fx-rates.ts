@@ -254,7 +254,8 @@ export async function fetchAndStoreFXRates(
     const { error: upsertError } = await supabase
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       .from("fx_rates" as never)
-      .upsert(allRates, {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .upsert(allRates as any, {
         onConflict: "tenant_id,from_currency,to_currency,date",
       });
 
