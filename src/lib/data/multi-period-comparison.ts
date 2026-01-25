@@ -7,6 +7,17 @@
 import { getPeriodFinancialData, type PeriodFinancialData } from "./period-comparison";
 import type { DateRange } from "@/lib/utils/period-comparison";
 
+/**
+ * Format date to YYYY-MM-DD in local timezone (not UTC)
+ * Prevents timezone shifts when converting dates
+ */
+function formatLocalDate(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 export interface MultiPeriodData {
   periods: Array<{
     label: string;
@@ -49,8 +60,8 @@ export function getLastNMonths(n: number): Array<{ label: string; dateRange: Dat
     ranges.push({
       label: date.toLocaleDateString("en-US", { month: "short", year: "numeric" }),
       dateRange: {
-        startDate: date.toISOString().split("T")[0],
-        endDate: lastDay.toISOString().split("T")[0],
+        startDate: formatLocalDate(date),
+        endDate: formatLocalDate(lastDay),
       },
     });
   }
@@ -77,8 +88,8 @@ export function getLastNQuarters(n: number): Array<{ label: string; dateRange: D
     ranges.push({
       label: `Q${quarter + 1} ${year}`,
       dateRange: {
-        startDate: firstDay.toISOString().split("T")[0],
-        endDate: lastDay.toISOString().split("T")[0],
+        startDate: formatLocalDate(firstDay),
+        endDate: formatLocalDate(lastDay),
       },
     });
   }
@@ -101,8 +112,80 @@ export function getLastNYears(n: number): Array<{ label: string; dateRange: Date
     ranges.push({
       label: year.toString(),
       dateRange: {
-        startDate: firstDay.toISOString().split("T")[0],
-        endDate: lastDay.toISOString().split("T")[0],
+        startDate: formatLocalDate(firstDay),
+        endDate: formatLocalDate(lastDay),
+      },
+    });
+  }
+
+  return ranges;
+}
+
+/**
+ * Generate N prior periods from a custom date range
+ * Uses the custom range length as the period length
+ * Shifts the exact date range back by the period length * number of periods
+ */
+export function getMultiPeriodFromCustomRange(
+  customRange: DateRange,
+  n: number,
+  unit: "MONTH" | "QUARTER" | "YEAR",
+): Array<{ label: string; dateRange: DateRange }> {
+  const ranges: Array<{ label: string; dateRange: DateRange }> = [];
+  // Parse as local dates to avoid timezone shifts
+  const [startYear, startMonth, startDay] = customRange.startDate.split("-").map(Number);
+  const [endYear, endMonth, endDay] = customRange.endDate.split("-").map(Number);
+  const start = new Date(startYear, startMonth - 1, startDay);
+  const end = new Date(endYear, endMonth - 1, endDay);
+  const periodLengthDays = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+
+  // Generate N prior periods + the custom range itself
+  // We'll generate from oldest to newest (n-1, n-2, ..., 0, custom)
+  for (let i = n; i >= 0; i--) {
+    const periodStart = new Date(start);
+    const periodEnd = new Date(end);
+
+    if (i === 0) {
+      // This is the custom range itself
+      ranges.push({
+        label: `${start.toLocaleDateString("en-US", { month: "short", day: "numeric" })} - ${end.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`,
+        dateRange: customRange,
+      });
+      continue;
+    }
+
+    // Shift back by i periods using the unit
+    switch (unit) {
+      case "MONTH":
+        periodStart.setMonth(periodStart.getMonth() - i);
+        periodEnd.setMonth(periodEnd.getMonth() - i);
+        break;
+      case "QUARTER":
+        periodStart.setMonth(periodStart.getMonth() - i * 3);
+        periodEnd.setMonth(periodEnd.getMonth() - i * 3);
+        break;
+      case "YEAR":
+        periodStart.setFullYear(periodStart.getFullYear() - i);
+        periodEnd.setFullYear(periodEnd.getFullYear() - i);
+        break;
+    }
+
+    // Format label based on unit
+    let label: string;
+    if (unit === "MONTH") {
+      label = periodStart.toLocaleDateString("en-US", { month: "short", year: "numeric" });
+    } else if (unit === "QUARTER") {
+      const quarter = Math.floor(periodStart.getMonth() / 3) + 1;
+      label = `Q${quarter} ${periodStart.getFullYear()}`;
+    } else {
+      label = periodStart.getFullYear().toString();
+    }
+
+    ranges.push({
+      label,
+      dateRange: {
+        startDate: formatLocalDate(periodStart),
+        endDate: formatLocalDate(periodEnd),
       },
     });
   }

@@ -12,27 +12,54 @@ export type JournalEntryWithLines = JournalEntriesRow & {
   })[];
 };
 
-export async function listJournalEntries(limit = 50) {
+export type ListJournalEntriesFilters = {
+  startDate?: string;
+  endDate?: string;
+  accountCode?: string;
+  search?: string;
+  status?: "draft" | "posted" | "all";
+  limit?: number;
+};
+
+/**
+ * List journal entries with optional filters (Doc 9: Journal filters).
+ */
+export async function listJournalEntries(
+  opts: ListJournalEntriesFilters | number = 50,
+): Promise<JournalEntryWithLines[]> {
   const user = await getCurrentUser();
   if (!user?.tenant) {
     return [];
   }
 
+  const filters: ListJournalEntriesFilters =
+    typeof opts === "number" ? { limit: opts } : opts;
+  const limit = filters.limit ?? 50;
+
   const supabase = await createServerSupabaseClient();
-  
-  // Get journal entries
-  const entriesTable = supabase.from("journal_entries") as unknown as {
-    select: (columns: string) => {
-      eq: (column: string, value: string) => {
-        order: (column: string, options?: { ascending?: boolean }) => {
-          limit: (count: number) => Promise<{ data: JournalEntriesRow[] | null; error: unknown }>;
-        };
-      };
-    };
-  };
-  const { data: entries, error: entriesError } = await entriesTable
+
+  let query = supabase
+    .from("journal_entries")
     .select("*")
-    .eq("tenant_id", user.tenant.id)
+    .eq("tenant_id", user.tenant.id);
+
+  if (filters.startDate) {
+    query = query.gte("date", filters.startDate);
+  }
+  if (filters.endDate) {
+    query = query.lte("date", filters.endDate);
+  }
+  if (filters.search?.trim()) {
+    query = query.ilike("description", `%${filters.search.trim()}%`);
+  }
+  const statusFilter = filters.status ?? "all";
+  if (statusFilter === "draft") {
+    query = query.eq("status", "draft");
+  } else if (statusFilter === "posted") {
+    query = query.eq("status", "posted");
+  }
+
+  const { data: entries, error: entriesError } = await query
     .order("date", { ascending: false })
     .limit(limit);
 
@@ -45,14 +72,9 @@ export async function listJournalEntries(limit = 50) {
     return [];
   }
 
-  // Get journal lines for these entries
   const entryIds = entries.map((e) => e.id);
-  const linesTable = supabase.from("journal_lines") as unknown as {
-    select: (columns: string) => {
-      in: (column: string, values: string[]) => Promise<{ data: JournalLinesRow[] | null; error: unknown }>;
-    };
-  };
-  const { data: lines, error: linesError } = await linesTable
+  const { data: lines, error: linesError } = await supabase
+    .from("journal_lines")
     .select("*")
     .in("entry_id", entryIds);
 
@@ -61,24 +83,15 @@ export async function listJournalEntries(limit = 50) {
     throw linesError;
   }
 
-  // Get accounts for the lines
   const accountIds = new Set((lines ?? []).map((l) => l.account_id));
-  const accountsTable = supabase.from("chart_of_accounts") as unknown as {
-    select: (columns: string) => {
-      in: (column: string, values: string[]) => Promise<{ 
-        data: Array<{ id: string; code: string; name: string }> | null; 
-        error: unknown 
-      }>;
-    };
-  };
-  const { data: accounts } = await accountsTable
+  const { data: accounts } = await supabase
+    .from("chart_of_accounts")
     .select("id, code, name")
     .in("id", Array.from(accountIds));
 
   const accountMap = new Map(accounts?.map((a) => [a.id, a]) ?? []);
 
-  // Combine entries with lines
-  return entries.map((entry) => ({
+  let combined = entries.map((entry) => ({
     ...entry,
     journal_lines: (lines ?? [])
       .filter((line) => line.entry_id === entry.id)
@@ -91,5 +104,15 @@ export async function listJournalEntries(limit = 50) {
         };
       }),
   })) as JournalEntryWithLines[];
-}
 
+  if (filters.accountCode?.trim()) {
+    const code = filters.accountCode.trim().toUpperCase();
+    combined = combined.filter((entry) =>
+      entry.journal_lines.some(
+        (l) => l.account_code?.toUpperCase() === code,
+      ),
+    );
+  }
+
+  return combined;
+}

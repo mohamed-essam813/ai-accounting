@@ -1,47 +1,58 @@
 /**
  * Currency Conversion Utilities
  * Converts values between currencies using FX rates
- * 
+ *
  * Fixes bug: Currency selector was filtering records instead of converting values
  * Correct behavior: Currency switch = presentation layer conversion, NOT data filtering
  */
 
 import { createServiceSupabaseClient } from "@/lib/supabase/service";
+import { isSupportedCurrency, normaliseCurrencyCode } from "@/lib/currencies";
 
-type FXRate = {
-  from_currency: string;
-  to_currency: string;
-  rate: number;
-  date: string;
-};
+/** Free FX APIs return only latest rates. We fetch/store/lookup by today so we use what we fetch. */
+function getFXDate(): string {
+  return new Date().toISOString().split("T")[0];
+}
 
 /**
- * Get FX rate for conversion
- * Checks database first, then fetches on-demand if not found
- * Falls back to 1:1 only if fetch fails
+ * Get FX rate for conversion.
+ * Checks database first, then fetches on-demand if not found.
+ * Uses latest (today) for fetch/lookup: free APIs don't support historical dates.
+ * Falls back to 1:1 if currency unsupported or fetch fails.
  */
 export async function getFXRate(
   fromCurrency: string,
   toCurrency: string,
-  date: string,
+  _date: string,
   tenantId: string,
   fetchIfMissing: boolean = true,
 ): Promise<number> {
-  if (fromCurrency.toUpperCase() === toCurrency.toUpperCase()) {
+  const from = normaliseCurrencyCode(fromCurrency);
+  const to = normaliseCurrencyCode(toCurrency);
+
+  if (from === to) {
     return 1.0;
   }
 
-  // Check if rate exists in database
+  if (!isSupportedCurrency(from) || !isSupportedCurrency(to)) {
+    console.warn(
+      `FX: Unsupported currency (${fromCurrency} -> ${toCurrency}). ` +
+        `Use ISO 4217 codes (e.g. AED, USD). Common typo: ATD -> AED. Using 1:1.`,
+    );
+    return 1.0;
+  }
+
+  const fxDate = getFXDate();
   const supabase = createServiceSupabaseClient();
 
   const { data: rate } = await supabase
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     .from("fx_rates" as never)
     .select("rate")
-    .eq("from_currency", fromCurrency.toUpperCase())
-    .eq("to_currency", toCurrency.toUpperCase())
+    .eq("from_currency", from)
+    .eq("to_currency", to)
     .eq("tenant_id", tenantId)
-    .lte("date", date)
+    .lte("date", fxDate)
     .order("date", { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -50,41 +61,37 @@ export async function getFXRate(
     return Number((rate as { rate: number }).rate);
   }
 
-  // If rate not found and fetchIfMissing is true, try to fetch it
   if (fetchIfMissing) {
     try {
-      const { fetchAndStoreFXRates } = await import("@/lib/services/fx-rates");
-      const { getRecommendedProvider } = await import("@/lib/services/fx-rates");
-      
-      // Fetch rates for today (or specified date)
+      const { fetchAndStoreFXRates, getRecommendedProvider } = await import(
+        "@/lib/services/fx-rates"
+      );
       const provider = getRecommendedProvider();
-      await fetchAndStoreFXRates(tenantId, fromCurrency, provider, date);
-      
-      // Try to get the rate again
+      await fetchAndStoreFXRates(tenantId, from, provider, fxDate, [to]);
+
       const { data: newRate } = await supabase
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    .from("fx_rates" as never)
+        .from("fx_rates" as never)
         .select("rate")
-        .eq("from_currency", fromCurrency.toUpperCase())
-        .eq("to_currency", toCurrency.toUpperCase())
+        .eq("from_currency", from)
+        .eq("to_currency", to)
         .eq("tenant_id", tenantId)
-        .eq("date", date)
+        .eq("date", fxDate)
         .maybeSingle();
 
       if (newRate && typeof newRate === "object" && "rate" in newRate && typeof (newRate as { rate: unknown }).rate === "number") {
         return Number((newRate as { rate: number }).rate);
       }
     } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
       console.warn(
-        `Failed to fetch FX rate for ${fromCurrency} -> ${toCurrency}:`,
-        error,
+        `FX fetch failed for ${from} -> ${to}: ${msg}. Using 1:1.`,
       );
     }
   }
 
-  // Final fallback: Use 1:1 (should not happen in production with proper setup)
   console.warn(
-    `FX rate not found for ${fromCurrency} -> ${toCurrency} on ${date}. Using 1:1.`,
+    `FX rate not found for ${from} -> ${to}. Using 1:1.`,
   );
   return 1.0;
 }

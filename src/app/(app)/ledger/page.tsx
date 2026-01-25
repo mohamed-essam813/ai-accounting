@@ -12,8 +12,9 @@ import { listAccounts } from "@/lib/data/accounts";
 import { CurrencyFilter } from "@/components/filters/currency-filter";
 import { ExportButtons } from "@/components/reports/export-buttons";
 import { LedgerTableClient } from "@/components/ledger/ledger-table-client";
-import { AccountSelector } from "@/components/ledger/account-selector";
+import { SearchableAccountSelector } from "@/components/ledger/searchable-account-selector";
 import { convertCurrency, getTenantBaseCurrency } from "@/lib/utils/currency-conversion";
+import { normaliseCurrencyCode } from "@/lib/currencies";
 import { getCurrentUser } from "@/lib/data/users";
 import { ChevronRight } from "lucide-react";
 import {
@@ -33,9 +34,17 @@ export default async function LedgerPage({
   searchParams: Promise<{ accountCode?: string; startDate?: string; endDate?: string; currency?: string }>;
 }) {
   const params = await searchParams;
-  const targetCurrency = params.currency;
+  const rawCurrency = params.currency;
+  const currency =
+    rawCurrency && rawCurrency !== "all"
+      ? normaliseCurrencyCode(rawCurrency)
+      : rawCurrency;
+  const targetCurrency = currency && currency !== "all" ? currency : undefined;
   const user = await getCurrentUser();
-  
+  const baseCurrency = user?.tenant
+    ? await getTenantBaseCurrency(user.tenant.id)
+    : "USD";
+
   const [ledger, accounts] = await Promise.all([
     getJournalLedger(params.startDate, params.endDate, targetCurrency),
     listAccounts(),
@@ -162,9 +171,9 @@ export default async function LedgerPage({
       </div>
 
       <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center">
-        <AccountSelector accounts={accounts} selectedAccountCode={params.accountCode} />
+        <SearchableAccountSelector accounts={accounts} selectedAccountCode={params.accountCode} />
         <div className="ml-auto">
-          <CurrencyFilter initialCurrency={targetCurrency} />
+          <CurrencyFilter initialCurrency={currency} baseCurrency={baseCurrency} currencies={[]} />
         </div>
       </div>
 
@@ -224,7 +233,7 @@ export default async function LedgerPage({
           )}
         </CardHeader>
           <CardContent>
-          <LedgerTableClient entries={ledgerWithBalance} displayCurrency={targetCurrency} />
+          <LedgerTableClient entries={ledgerWithBalance} displayCurrency={targetCurrency ?? baseCurrency} />
         </CardContent>
       </Card>
     </div>

@@ -35,7 +35,7 @@ export default function AuthPage() {
     const params = new URLSearchParams(window.location.search);
     if (params.get("error") === "not_linked") {
       toast.error("Account not linked to a tenant", {
-        description: "Your account needs to be linked to a tenant. See SETUP_GUIDE.md or run link-user.sql in Supabase SQL Editor.",
+        description: "Your account needs to be linked to a tenant. See SETUP_GUIDE.md Step 5 (Link First User).",
         duration: 10000,
       });
     }
@@ -218,10 +218,10 @@ export default function AuthPage() {
             <ol className="mt-1 list-decimal list-inside space-y-1">
               <li>Go to Supabase Dashboard → Authentication → Users</li>
               <li>Copy your User ID (UUID)</li>
-              <li>Run <code className="bg-amber-100 px-1 rounded">link-user.sql</code> in Supabase SQL Editor</li>
-              <li>Replace the placeholders with your User ID and email</li>
+              <li>Run the SQL in <strong>SETUP_GUIDE.md</strong> Step 5 (Link First User) in Supabase SQL Editor</li>
+              <li>Replace placeholders with your User ID, tenant ID, and email</li>
             </ol>
-            <p className="mt-2">See SETUP_GUIDE.md for detailed instructions.</p>
+            <p className="mt-2">See SETUP_GUIDE.md Step 5 (Link First User) for the full SQL.</p>
           </div>
         </CardContent>
       </Card>

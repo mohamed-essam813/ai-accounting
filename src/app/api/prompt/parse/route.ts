@@ -1,16 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { resolvePromptWithAccountCreation } from "@/lib/ai/prompt-pipeline";
+import { classifyDocument } from "@/lib/ai/document-classifier";
 import { DraftSchema, type DraftPayload } from "@/lib/ai/schema";
 import { getCurrentUser } from "@/lib/data/users";
 import { createServiceSupabaseClient } from "@/lib/supabase/service";
 import type { Database } from "@/lib/database.types";
 import type { Account } from "@/lib/accounting";
 
-const requestSchema = z.object({
-  prompt: z.string().min(1, "Please describe what happened."),
-  documentIds: z.array(z.string()).optional(),
-});
+/** Doc 6: Doc-only mode – prompt optional when documentIds provided. */
+const requestSchema = z
+  .object({
+    prompt: z.string().optional(),
+    documentIds: z.array(z.string()).optional(),
+  })
+  .refine(
+    (d) => (d.prompt?.trim() ?? "").length > 0 || (d.documentIds?.length ?? 0) > 0,
+    { message: "Provide a prompt or at least one document.", path: ["prompt"] }
+  );
 
 type SourceDocumentRow = Database["public"]["Tables"]["source_documents"]["Row"];
 
@@ -60,16 +67,37 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // Fetch document texts if provided (silently, no OCR terminology)
     let documentContext = "";
     if (documentIds && documentIds.length > 0) {
       documentContext = await getDocumentTexts(documentIds, user.tenant.id);
     }
 
-    // Combine prompt with document context
-    const combinedPrompt = documentContext
-      ? `${prompt}\n\nAdditional context from uploaded documents:${documentContext}`
-      : prompt;
+    const hasDocIds = (documentIds?.length ?? 0) > 0;
+    const userPrompt = (prompt ?? "").trim();
+    const docOnlyPrompt =
+      "Extract accounting entries from the following uploaded documents. Determine intent, entities, and accounts.";
+    const effectivePrompt = userPrompt || (hasDocIds ? docOnlyPrompt : "");
+    let combinedPrompt: string;
+    if (hasDocIds) {
+      const docText = documentContext || "(No extractable text)";
+      if (userPrompt) {
+        combinedPrompt = `${userPrompt}\n\nAdditional context from uploaded documents:\n${docText}`;
+      } else {
+        /** Doc 6: Classifier – hint parser when doc-only. */
+        let classifierHint = "";
+        if (docText !== "(No extractable text)") {
+          try {
+            const { type, confidence } = await classifyDocument(docText);
+            classifierHint = `The uploaded document was classified as "${type}" (confidence: ${confidence.toFixed(2)}). Use this to infer intent (e.g. invoice→create_invoice, bill→create_bill, receipt→record_payment, bank_statement→reconcile_bank).\n\n`;
+          } catch {
+            /* ignore */
+          }
+        }
+        combinedPrompt = `${classifierHint}${docOnlyPrompt}\n\nUploaded documents:\n${docText}`;
+      }
+    } else {
+      combinedPrompt = effectivePrompt;
+    }
 
     // Use stateful prompt pipeline that auto-creates missing accounts
     // This fixes the bug where prompt execution stops after account creation confirmation
@@ -84,6 +112,24 @@ export async function POST(req: NextRequest) {
         { error: "Model returned invalid schema", issues: validation.error.issues },
         { status: 422 },
       );
+    }
+
+    /** Doc 6: Clarify flow – low confidence → ask user to clarify before creating draft. */
+    const CONFIDENCE_CLARIFY_THRESHOLD = 0.7;
+    if (validation.data.confidence < CONFIDENCE_CLARIFY_THRESHOLD) {
+      return NextResponse.json({
+        needs_clarification: {
+          message:
+            "We're not confident about the intent or amounts. Please clarify what this transaction is (e.g. invoice, bill, payment).",
+          options: [
+            "It's an invoice (sales to customer)",
+            "It's a bill (from supplier/vendor)",
+            "It's a payment (received or made)",
+            "It's a bank transaction",
+            "Other – I'll describe below",
+          ],
+        },
+      });
     }
 
     // Search for or create contact if counterparty is provided
@@ -119,32 +165,38 @@ export async function POST(req: NextRequest) {
     }
 
     // STEP 1: Detect if transaction might involve cash/bank (MANDATORY CHECK)
-    // This is more aggressive - we check for ANY potential cash/bank involvement
-    const promptLower = prompt.toLowerCase();
+    // Per feedback: create_invoice defaults to UNPAID (non-cash). Only ask cash when user
+    // explicitly says "paid in cash/bank now". Don't over-trigger for invoices.
+    const promptLower = combinedPrompt.toLowerCase();
+    const isCreateInvoice = validation.data.intent === "create_invoice";
+    const explicitPaidCash = /paid\s+(in\s+)?(cash|bank)|received\s+cash|paid\s+now|cash\s+received/i.test(promptLower);
+
     const cashBankKeywords = [
       "loan", "borrow", "dividend", "capital", "drawing", "draw", "bank charge", "bank fee",
-      "transfer", "payment", "receipt", "deposit", "withdrawal", "cash", "bank",
-      "interest received", "interest paid", "repayment", "injection", "contribution"
+      "transfer", "payment", "receipt", "deposit", "withdrawal", "interest received", "interest paid",
+      "repayment", "injection", "contribution"
     ];
-    const hasCashBankKeywords = cashBankKeywords.some(keyword => promptLower.includes(keyword));
-    
-    // Check if intent typically involves cash/bank
+    const hasCashBankKeywords = cashBankKeywords.some((keyword) => promptLower.includes(keyword));
+
     const cashBankIntents: Array<typeof validation.data.intent> = [
       "record_payment",
       "reconcile_bank",
     ];
     const isCashBankIntent = cashBankIntents.includes(validation.data.intent);
-    
-    // Check if accounts suggest cash/bank (asset/current type)
+
     const hasCashBankAccounts = validation.data.accounts && (
-      (validation.data.accounts.debit_account?.suggested_type === "asset" && 
-       validation.data.accounts.debit_account?.suggested_category === "current") ||
-      (validation.data.accounts.credit_account?.suggested_type === "asset" && 
-       validation.data.accounts.credit_account?.suggested_category === "current")
+      (validation.data.accounts.debit_account?.suggested_type === "asset" &&
+        validation.data.accounts.debit_account?.suggested_category === "current") ||
+      (validation.data.accounts.credit_account?.suggested_type === "asset" &&
+        validation.data.accounts.credit_account?.suggested_category === "current")
     );
-    
-    // If ANY indicator suggests cash/bank, require confirmation
-    const requiresCashContextConfirmation = hasCashBankKeywords || isCashBankIntent || hasCashBankAccounts;
+
+    let requiresCashContextConfirmation: boolean;
+    if (isCreateInvoice) {
+      requiresCashContextConfirmation = explicitPaidCash;
+    } else {
+      requiresCashContextConfirmation = !!(hasCashBankKeywords || isCashBankIntent || hasCashBankAccounts);
+    }
     
     // STEP 2: If cash context is required, prepare bank selection data
     // This will be shown AFTER user confirms cash context (STEP 1)
@@ -364,7 +416,7 @@ export async function POST(req: NextRequest) {
       accountConfirmation: Object.keys(accountConfirmation).length > 0 ? accountConfirmation : undefined,
       cashContextConfirmation: requiresCashContextConfirmation ? {
         required: true,
-        transactionDescription: prompt,
+        transactionDescription: userPrompt || (hasDocIds ? "Uploaded documents" : ""),
       } : undefined,
       cashBankSelection: cashBankSelection,
     });

@@ -27,9 +27,10 @@ type Props = {
   startDate?: string;
   endDate?: string;
   validation?: BalanceSheetValidationResult;
+  displayCurrency?: string;
 };
 
-export function BalanceSheetTable({ data, startDate, endDate, validation }: Props) {
+export function BalanceSheetTable({ data, startDate, endDate, validation, displayCurrency = "AED" }: Props) {
   const {
     currentAssets,
     nonCurrentAssets,
@@ -74,7 +75,7 @@ export function BalanceSheetTable({ data, startDate, endDate, validation }: Prop
                     className="hover:text-primary hover:underline decoration-dotted cursor-pointer transition-colors font-medium"
                     title="Click to view ledger transactions for this account"
                   >
-                    {formatCurrency(item.amount)}
+                    {formatCurrency(item.amount, displayCurrency)}
                   </Link>
                 </TableCell>
               </TableRow>
@@ -85,7 +86,7 @@ export function BalanceSheetTable({ data, startDate, endDate, validation }: Prop
           <TableRow className="bg-muted/30 font-semibold">
             <TableCell colSpan={2}>Total {title}</TableCell>
             <TableCell className="text-right">
-              {formatCurrency(subtotal)}
+              {formatCurrency(subtotal, displayCurrency)}
             </TableCell>
           </TableRow>
         )}
@@ -123,7 +124,7 @@ export function BalanceSheetTable({ data, startDate, endDate, validation }: Prop
               TOTAL ASSETS
             </TableCell>
             <TableCell className="text-right text-lg py-4">
-              {formatCurrency(totals.totalAssets)}
+              {formatCurrency(totals.totalAssets, displayCurrency)}
             </TableCell>
           </TableRow>
 
@@ -144,7 +145,7 @@ export function BalanceSheetTable({ data, startDate, endDate, validation }: Prop
           <TableRow className="bg-muted/30 font-semibold">
             <TableCell colSpan={2}>Total Liabilities</TableCell>
             <TableCell className="text-right">
-              {formatCurrency(totals.totalLiabilities)}
+              {formatCurrency(totals.totalLiabilities, displayCurrency)}
             </TableCell>
           </TableRow>
 
@@ -157,7 +158,7 @@ export function BalanceSheetTable({ data, startDate, endDate, validation }: Prop
               TOTAL LIABILITIES & EQUITY
             </TableCell>
             <TableCell className="text-right text-lg py-4">
-              {formatCurrency(totals.totalLiabilitiesAndEquity)}
+              {formatCurrency(totals.totalLiabilitiesAndEquity, displayCurrency)}
             </TableCell>
           </TableRow>
 
@@ -167,9 +168,9 @@ export function BalanceSheetTable({ data, startDate, endDate, validation }: Prop
               <TableCell colSpan={3} className="text-center text-destructive font-semibold py-4">
                 ⚠️ BALANCE SHEET DOES NOT BALANCE
                 <div className="text-sm mt-1 font-normal">
-                  Assets: {formatCurrency(validation.assets)} | 
-                  Liabilities + Equity: {formatCurrency(validation.liabilitiesAndEquity)} | 
-                  Difference: {formatCurrency(validation.difference)}
+                  Assets: {formatCurrency(validation.assets, displayCurrency)} | 
+                  Liabilities + Equity: {formatCurrency(validation.liabilitiesAndEquity, displayCurrency)} | 
+                  Difference: {formatCurrency(validation.difference, displayCurrency)}
                 </div>
               </TableCell>
             </TableRow>

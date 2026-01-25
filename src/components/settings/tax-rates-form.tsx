@@ -33,19 +33,44 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { createTaxRateAction, updateTaxRateAction, deleteTaxRateAction, listTaxRatesAction, type TaxRate } from "@/lib/actions/tax-rates";
+import {
+  createTaxRateAction,
+  updateTaxRateAction,
+  deleteTaxRateAction,
+  listTaxRatesAction,
+  type TaxRate,
+} from "@/lib/actions/tax-rates";
 import { listAccountsAction } from "@/lib/actions/accounts";
 import type { Account } from "@/lib/accounting";
 
-const TaxRateFormSchema = z.object({
-  name: z.string().min(1, "Tax rate name is required"),
-  percentage: z.number().min(0).max(100),
-  tax_type: z.enum(["input", "output"]),
-  output_vat_account_id: z.string().uuid().optional().nullable(),
-  input_vat_account_id: z.string().uuid().optional().nullable(),
-});
+const TaxRateFormSchema = z
+  .object({
+    name: z.string().min(1, "Tax rate name is required"),
+    percentage: z
+      .number()
+      .refine((n) => !Number.isNaN(n), "Enter a valid number")
+      .refine((n) => n > 0, "Rate must be greater than 0")
+      .refine((n) => n <= 100, "Rate cannot exceed 100"),
+    tax_type: z.enum(["input", "output"]),
+    output_vat_account_id: z.string().uuid().optional().nullable(),
+    input_vat_account_id: z.string().uuid().optional().nullable(),
+  })
+  .superRefine((data, ctx) => {
+    const msg = "Please create and select a tax control account first.";
+    if (data.tax_type === "output") {
+      if (!data.output_vat_account_id) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["output_vat_account_id"], message: msg });
+      }
+    } else {
+      if (!data.input_vat_account_id) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["input_vat_account_id"], message: msg });
+      }
+    }
+  });
 
 type TaxRateFormValues = z.infer<typeof TaxRateFormSchema>;
+
+const LINKED_ACCOUNT_MSG = "Please create and select a tax control account first.";
 
 export function TaxRatesForm() {
   const [taxRates, setTaxRates] = useState<TaxRate[]>([]);
@@ -59,16 +84,24 @@ export function TaxRatesForm() {
     resolver: zodResolver(TaxRateFormSchema),
     defaultValues: {
       name: "",
-      percentage: 0,
+      percentage: 5,
       tax_type: "output",
       output_vat_account_id: null,
       input_vat_account_id: null,
     },
   });
 
+  const taxType = form.watch("tax_type");
+
   useEffect(() => {
     loadData();
   }, []);
+
+  const onTaxTypeChange = (v: "input" | "output") => {
+    form.setValue("tax_type", v);
+    form.setValue("output_vat_account_id", null);
+    form.setValue("input_vat_account_id", null);
+  };
 
   const loadData = async () => {
     try {
@@ -78,8 +111,8 @@ export function TaxRatesForm() {
       ]);
       setTaxRates(ratesData);
       setAccounts(accountsData);
-    } catch (error) {
-      console.error("Failed to load tax rates:", error);
+    } catch (e) {
+      console.error("Failed to load tax rates", e);
       toast.error("Failed to load tax rates");
     } finally {
       setLoading(false);
@@ -100,7 +133,7 @@ export function TaxRatesForm() {
       setEditingRate(null);
       form.reset({
         name: "",
-        percentage: 0,
+        percentage: 5,
         tax_type: "output",
         output_vat_account_id: null,
         input_vat_account_id: null,
@@ -115,26 +148,35 @@ export function TaxRatesForm() {
     form.reset();
   };
 
+  const setServerFieldErrors = (fieldErrors: Record<string, string>) => {
+    Object.entries(fieldErrors).forEach(([field, message]) => {
+      form.setError(field as keyof TaxRateFormValues, { type: "server", message });
+    });
+  };
+
   const handleSubmit = (values: TaxRateFormValues) => {
     startTransition(async () => {
-      try {
-        if (editingRate) {
-          await updateTaxRateAction({
-            id: editingRate.id,
-            ...values,
-          });
+      form.clearErrors();
+      if (editingRate) {
+        const res = await updateTaxRateAction({ id: editingRate.id, ...values });
+        if (res.success) {
           toast.success("Tax rate updated");
+          handleCloseDialog();
+          await loadData();
         } else {
-          await createTaxRateAction(values);
-          toast.success("Tax rate created");
+          if (res.fieldErrors) setServerFieldErrors(res.fieldErrors);
+          toast.error(res.error);
         }
-        handleCloseDialog();
-        await loadData();
-      } catch (error) {
-        console.error("Failed to save tax rate:", error);
-        toast.error(
-          error instanceof Error ? error.message : "Failed to save tax rate"
-        );
+      } else {
+        const res = await createTaxRateAction(values);
+        if (res.success) {
+          toast.success("Tax rate created");
+          handleCloseDialog();
+          await loadData();
+        } else {
+          if (res.fieldErrors) setServerFieldErrors(res.fieldErrors);
+          toast.error(res.error);
+        }
       }
     });
   };
@@ -143,25 +185,30 @@ export function TaxRatesForm() {
     if (!confirm("Are you sure you want to delete this tax rate?")) return;
 
     startTransition(async () => {
-      try {
-        await deleteTaxRateAction(id);
+      const res = await deleteTaxRateAction(id);
+      if (res.success) {
         toast.success("Tax rate deleted");
         await loadData();
-      } catch (error) {
-        console.error("Failed to delete tax rate:", error);
-        toast.error("Failed to delete tax rate");
+      } else {
+        toast.error(res.error);
       }
     });
   };
 
-  // Get VAT accounts for selection
-  const vatAccounts = accounts.filter(
-    (acc) =>
-      acc.code === "2100" || // VAT Output Tax
-      acc.code === "5100" || // VAT Input Tax (if exists)
-      acc.name.toLowerCase().includes("vat") ||
-      acc.name.toLowerCase().includes("tax")
-  );
+  const liabilityAccounts = accounts.filter((a) => a.type === "liability");
+  const assetAccounts = accounts.filter((a) => a.type === "asset");
+
+  const linkedAccountId =
+    taxType === "output"
+      ? form.watch("output_vat_account_id")
+      : form.watch("input_vat_account_id");
+  const linkedAccountField =
+    taxType === "output" ? "output_vat_account_id" : "input_vat_account_id";
+  const linkedOptions = taxType === "output" ? liabilityAccounts : assetAccounts;
+  const linkedLabel =
+    taxType === "output"
+      ? "Output VAT account (Liability) *"
+      : "Input VAT account (Asset) *";
 
   if (loading) {
     return <div className="text-sm text-muted-foreground">Loading tax rates...</div>;
@@ -185,7 +232,7 @@ export function TaxRatesForm() {
 
       {taxRates.length === 0 ? (
         <div className="text-center py-8 text-sm text-muted-foreground border rounded-md">
-          No tax rates configured. Click "Add Tax Rate" to create one.
+          No tax rates configured. Click &quot;Add Tax Rate&quot; to create one.
         </div>
       ) : (
         <div className="border rounded-md">
@@ -195,19 +242,17 @@ export function TaxRatesForm() {
                 <TableHead>Name</TableHead>
                 <TableHead>Percentage</TableHead>
                 <TableHead>Type</TableHead>
-                <TableHead>Output VAT Account</TableHead>
-                <TableHead>Input VAT Account</TableHead>
+                <TableHead>Linked account</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {taxRates.map((rate) => {
-                const outputAccount = accounts.find(
-                  (acc) => acc.id === rate.output_vat_account_id
-                );
-                const inputAccount = accounts.find(
-                  (acc) => acc.id === rate.input_vat_account_id
-                );
+                const accountId =
+                  rate.tax_type === "output"
+                    ? rate.output_vat_account_id
+                    : rate.input_vat_account_id;
+                const account = accounts.find((a) => a.id === accountId);
 
                 return (
                   <TableRow key={rate.id}>
@@ -217,13 +262,8 @@ export function TaxRatesForm() {
                       <span className="capitalize">{rate.tax_type}</span>
                     </TableCell>
                     <TableCell>
-                      {outputAccount
-                        ? `${outputAccount.code} - ${outputAccount.name}`
-                        : "—"}
-                    </TableCell>
-                    <TableCell>
-                      {inputAccount
-                        ? `${inputAccount.code} - ${inputAccount.name}`
+                      {account
+                        ? `${account.code} - ${account.name}`
                         : "—"}
                     </TableCell>
                     <TableCell className="text-right">
@@ -261,14 +301,15 @@ export function TaxRatesForm() {
             </DialogTitle>
             <DialogDescription>
               Configure a tax rate that can be selected when creating drafts.
+              Output VAT must link to a liability account; Input VAT to an asset account.
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={form.handleSubmit(handleSubmit)} className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="name">Tax Rate Name *</Label>
+              <Label htmlFor="name">Tax rate name *</Label>
               <Input
                 id="name"
-                placeholder="e.g., VAT 5%, GST 10%"
+                placeholder="e.g. VAT 5%, GST 10%"
                 {...form.register("name")}
               />
               {form.formState.errors.name && (
@@ -285,8 +326,9 @@ export function TaxRatesForm() {
                   id="percentage"
                   type="number"
                   step="0.01"
-                  min="0"
+                  min="0.01"
                   max="100"
+                  placeholder="5"
                   {...form.register("percentage", { valueAsNumber: true })}
                 />
                 {form.formState.errors.percentage && (
@@ -297,12 +339,10 @@ export function TaxRatesForm() {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="tax_type">Tax Type *</Label>
+                <Label htmlFor="tax_type">Tax type *</Label>
                 <Select
                   value={form.watch("tax_type")}
-                  onValueChange={(value: "input" | "output") =>
-                    form.setValue("tax_type", value)
-                  }
+                  onValueChange={(v: "input" | "output") => onTaxTypeChange(v)}
                 >
                   <SelectTrigger>
                     <SelectValue />
@@ -316,47 +356,45 @@ export function TaxRatesForm() {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="output_vat_account_id">Output VAT Account</Label>
+              <Label htmlFor={linkedAccountField}>{linkedLabel}</Label>
               <Select
-                value={form.watch("output_vat_account_id") || "none"}
-                onValueChange={(value) =>
-                  form.setValue("output_vat_account_id", value === "none" ? null : value)
+                value={linkedAccountId ?? "none"}
+                onValueChange={(v) =>
+                  form.setValue(linkedAccountField, v === "none" ? null : v)
                 }
               >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select output VAT account" />
+                <SelectTrigger disabled={linkedOptions.length === 0}>
+                  <SelectValue
+                    placeholder={
+                      linkedOptions.length === 0
+                        ? "No suitable account"
+                        : `Select ${taxType === "output" ? "liability" : "asset"} account`
+                    }
+                  />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="none">None</SelectItem>
-                  {vatAccounts.map((acc) => (
+                  <SelectItem value="none">Select an account</SelectItem>
+                  {linkedOptions.map((acc) => (
                     <SelectItem key={acc.id} value={acc.id}>
                       {acc.code} - {acc.name}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="input_vat_account_id">Input VAT Account</Label>
-              <Select
-                value={form.watch("input_vat_account_id") || "none"}
-                onValueChange={(value) =>
-                  form.setValue("input_vat_account_id", value === "none" ? null : value)
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select input VAT account" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">None</SelectItem>
-                  {vatAccounts.map((acc) => (
-                    <SelectItem key={acc.id} value={acc.id}>
-                      {acc.code} - {acc.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              {linkedOptions.length === 0 && (
+                <p className="text-xs text-muted-foreground">
+                  {LINKED_ACCOUNT_MSG} Create a{" "}
+                  {taxType === "output" ? "liability" : "asset"} account (e.g. VAT Output /
+                  Input) in the chart of accounts first.
+                </p>
+              )}
+              {(form.formState.errors.output_vat_account_id ??
+                form.formState.errors.input_vat_account_id) && (
+                <p className="text-xs text-destructive">
+                  {form.formState.errors.output_vat_account_id?.message ??
+                    form.formState.errors.input_vat_account_id?.message}
+                </p>
+              )}
             </div>
 
             <DialogFooter>
@@ -368,8 +406,11 @@ export function TaxRatesForm() {
               >
                 Cancel
               </Button>
-              <Button type="submit" disabled={isPending}>
-                {isPending ? "Saving..." : editingRate ? "Update" : "Create"}
+              <Button
+                type="submit"
+                disabled={isPending || linkedOptions.length === 0}
+              >
+                {isPending ? "Saving…" : editingRate ? "Update" : "Create"}
               </Button>
             </DialogFooter>
           </form>

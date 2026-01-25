@@ -23,12 +23,13 @@ interface Props {
   items: ARAgeingItem[];
   summary?: ARAgeingSummary[];
   showSummary?: boolean;
+  displayCurrency?: string;
 }
 
 type SortField = "customer" | "outstanding" | "days_overdue";
 type SortDirection = "asc" | "desc";
 
-export function GroupedARAgeingTable({ items, summary, showSummary = true }: Props) {
+export function GroupedARAgeingTable({ items, summary, showSummary = true, displayCurrency = "AED" }: Props) {
   const [expandedCustomers, setExpandedCustomers] = useState<Set<string>>(new Set());
   const [sortField, setSortField] = useState<SortField>("outstanding");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
@@ -131,12 +132,12 @@ export function GroupedARAgeingTable({ items, summary, showSummary = true }: Pro
               {summary.map((row) => (
                 <TableRow key={row.customer_name}>
                   <TableCell className="font-medium">{row.customer_name}</TableCell>
-                  <TableCell className="text-right">{formatCurrency(row.total_current)}</TableCell>
-                  <TableCell className="text-right">{formatCurrency(row.total_31_60)}</TableCell>
-                  <TableCell className="text-right">{formatCurrency(row.total_61_90)}</TableCell>
-                  <TableCell className="text-right">{formatCurrency(row.total_90_plus)}</TableCell>
+                  <TableCell className="text-right">{formatCurrency(row.total_current, displayCurrency)}</TableCell>
+                  <TableCell className="text-right">{formatCurrency(row.total_31_60, displayCurrency)}</TableCell>
+                  <TableCell className="text-right">{formatCurrency(row.total_61_90, displayCurrency)}</TableCell>
+                  <TableCell className="text-right">{formatCurrency(row.total_90_plus, displayCurrency)}</TableCell>
                   <TableCell className="text-right font-semibold">
-                    {formatCurrency(row.total_outstanding)}
+                    {formatCurrency(row.total_outstanding, displayCurrency)}
                   </TableCell>
                 </TableRow>
               ))}
@@ -232,19 +233,19 @@ export function GroupedARAgeingTable({ items, summary, showSummary = true }: Pro
                           )}
                         </TableCell>
                         <TableCell className="text-right font-mono font-semibold">
-                          {group.totalCurrent > 0 ? formatCurrency(group.totalCurrent) : "—"}
+                          {group.totalCurrent > 0 ? formatCurrency(group.totalCurrent, displayCurrency) : "—"}
                         </TableCell>
                         <TableCell className="text-right font-mono font-semibold">
-                          {group.total31_60 > 0 ? formatCurrency(group.total31_60) : "—"}
+                          {group.total31_60 > 0 ? formatCurrency(group.total31_60, displayCurrency) : "—"}
                         </TableCell>
                         <TableCell className="text-right font-mono font-semibold">
-                          {group.total61_90 > 0 ? formatCurrency(group.total61_90) : "—"}
+                          {group.total61_90 > 0 ? formatCurrency(group.total61_90, displayCurrency) : "—"}
                         </TableCell>
                         <TableCell className="text-right font-mono font-semibold">
-                          {group.total90Plus > 0 ? formatCurrency(group.total90Plus) : "—"}
+                          {group.total90Plus > 0 ? formatCurrency(group.total90Plus, displayCurrency) : "—"}
                         </TableCell>
                         <TableCell className="text-right font-mono font-semibold">
-                          {formatCurrency(group.totalOutstanding)}
+                          {formatCurrency(group.totalOutstanding, displayCurrency)}
                         </TableCell>
                       </TableRow>
 
@@ -266,19 +267,19 @@ export function GroupedARAgeingTable({ items, summary, showSummary = true }: Pro
                                 )}
                               </TableCell>
                               <TableCell className="text-right">
-                                {item.current_0_30 > 0 ? formatCurrency(item.current_0_30) : "—"}
+                                {item.current_0_30 > 0 ? formatCurrency(item.current_0_30, displayCurrency) : "—"}
                               </TableCell>
                               <TableCell className="text-right">
-                                {item.days_31_60 > 0 ? formatCurrency(item.days_31_60) : "—"}
+                                {item.days_31_60 > 0 ? formatCurrency(item.days_31_60, displayCurrency) : "—"}
                               </TableCell>
                               <TableCell className="text-right">
-                                {item.days_61_90 > 0 ? formatCurrency(item.days_61_90) : "—"}
+                                {item.days_61_90 > 0 ? formatCurrency(item.days_61_90, displayCurrency) : "—"}
                               </TableCell>
                               <TableCell className="text-right">
-                                {item.days_90_plus > 0 ? formatCurrency(item.days_90_plus) : "—"}
+                                {item.days_90_plus > 0 ? formatCurrency(item.days_90_plus, displayCurrency) : "—"}
                               </TableCell>
                               <TableCell className="text-right font-semibold">
-                                {formatCurrency(item.outstanding_amount)}
+                                {formatCurrency(item.outstanding_amount, displayCurrency)}
                               </TableCell>
                             </TableRow>
                           ))}
@@ -292,19 +293,19 @@ export function GroupedARAgeingTable({ items, summary, showSummary = true }: Pro
                     Grand Total
                   </TableCell>
                   <TableCell className="text-right font-mono font-semibold">
-                    {formatCurrency(totals.current)}
+                    {formatCurrency(totals.current, displayCurrency)}
                   </TableCell>
                   <TableCell className="text-right font-mono font-semibold">
-                    {formatCurrency(totals.days31_60)}
+                    {formatCurrency(totals.days31_60, displayCurrency)}
                   </TableCell>
                   <TableCell className="text-right font-mono font-semibold">
-                    {formatCurrency(totals.days61_90)}
+                    {formatCurrency(totals.days61_90, displayCurrency)}
                   </TableCell>
                   <TableCell className="text-right font-mono font-semibold">
-                    {formatCurrency(totals.days90Plus)}
+                    {formatCurrency(totals.days90Plus, displayCurrency)}
                   </TableCell>
                   <TableCell className="text-right font-mono font-semibold">
-                    {formatCurrency(totals.total)}
+                    {formatCurrency(totals.total, displayCurrency)}
                   </TableCell>
                 </TableRow>
               </>

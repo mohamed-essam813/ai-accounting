@@ -5,9 +5,21 @@
 
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { getCurrentUser } from "./users";
+import { convertCurrency, getTenantBaseCurrency } from "@/lib/utils/currency-conversion";
 import type { Database } from "../database.types";
 
 type TrialBalance = Database["public"]["Views"]["v_trial_balance"]["Row"];
+
+async function convertAmount(
+  n: number,
+  base: string,
+  target: string,
+  date: string,
+  tenantId: string,
+): Promise<number> {
+  if (base.toUpperCase() === target.toUpperCase()) return n;
+  return convertCurrency(n, base, target, date, tenantId);
+}
 
 export interface PLLineItem {
   account_code: string;
@@ -33,8 +45,13 @@ export interface CashFlowLineItem {
 
 /**
  * Get detailed Profit & Loss line items
+ * @param targetCurrency Optional. When set with asOfDate, amounts are converted from base to this currency.
+ * @param asOfDate Optional. Date used for FX (e.g. report period end). Defaults to today when converting.
  */
-export async function getDetailedProfitAndLoss(): Promise<{
+export async function getDetailedProfitAndLoss(
+  targetCurrency?: string,
+  asOfDate?: string,
+): Promise<{
   revenue: PLLineItem[];
   costOfSales: PLLineItem[];
   operatingExpenses: PLLineItem[];
@@ -160,6 +177,48 @@ export async function getDetailedProfitAndLoss(): Promise<{
   const gainLossOnDisposal = gainLoss.reduce((sum, item) => sum + item.amount, 0) + totalOtherIncome;
   const netProfit = operatingProfit + totalOtherIncome + gainLossOnDisposal;
 
+  if (targetCurrency && asOfDate && user.tenant) {
+    const base = await getTenantBaseCurrency(user.tenant.id);
+    const conv = (n: number) => convertAmount(n, base, targetCurrency, asOfDate, user.tenant!.id);
+    const [revConv, cosConv, opeConv, othConv, gainConv, tr, tcs, gp, toe, op, tOi, gl, np] = await Promise.all([
+      Promise.all(revenue.map((i) => conv(i.amount))),
+      Promise.all(costOfSales.map((i) => conv(i.amount))),
+      Promise.all(operatingExpenses.map((i) => conv(i.amount))),
+      Promise.all(otherIncome.map((i) => conv(i.amount))),
+      Promise.all(gainLoss.map((i) => conv(i.amount))),
+      conv(totalRevenue),
+      conv(totalCostOfSales),
+      conv(grossProfit),
+      conv(totalOperatingExpenses),
+      conv(operatingProfit),
+      conv(totalOtherIncome),
+      conv(gainLossOnDisposal),
+      conv(netProfit),
+    ]);
+    revenue.forEach((i, k) => { i.amount = revConv[k]!; });
+    costOfSales.forEach((i, k) => { i.amount = cosConv[k]!; });
+    operatingExpenses.forEach((i, k) => { i.amount = opeConv[k]!; });
+    otherIncome.forEach((i, k) => { i.amount = othConv[k]!; });
+    gainLoss.forEach((i, k) => { i.amount = gainConv[k]!; });
+    return {
+      revenue,
+      costOfSales,
+      operatingExpenses,
+      otherIncome,
+      gainLoss,
+      totals: {
+        totalRevenue: tr,
+        totalCostOfSales: tcs,
+        grossProfit: gp,
+        totalOperatingExpenses: toe,
+        operatingProfit: op,
+        totalOtherIncome: tOi,
+        gainLossOnDisposal: gl,
+        netProfit: np,
+      },
+    };
+  }
+
   return {
     revenue,
     costOfSales,
@@ -181,8 +240,13 @@ export async function getDetailedProfitAndLoss(): Promise<{
 
 /**
  * Get detailed Balance Sheet line items
+ * @param targetCurrency Optional. When set with asOfDate, amounts are converted from base to this currency.
+ * @param asOfDate Optional. Date used for FX.
  */
-export async function getDetailedBalanceSheet(): Promise<{
+export async function getDetailedBalanceSheet(
+  targetCurrency?: string,
+  asOfDate?: string,
+): Promise<{
   currentAssets: BalanceSheetLineItem[];
   nonCurrentAssets: BalanceSheetLineItem[];
   currentLiabilities: BalanceSheetLineItem[];
@@ -301,6 +365,48 @@ export async function getDetailedBalanceSheet(): Promise<{
   const totalEquity = equity.reduce((sum, item) => sum + item.amount, 0);
   const totalLiabilitiesAndEquity = totalLiabilities + totalEquity;
 
+  if (targetCurrency && asOfDate && user.tenant) {
+    const base = await getTenantBaseCurrency(user.tenant.id);
+    const conv = (n: number) => convertAmount(n, base, targetCurrency, asOfDate, user.tenant!.id);
+    const [ca, nca, cl, ncl, eq, tca, tnca, ta, tcl, tncl, tl, te, tle] = await Promise.all([
+      Promise.all(currentAssets.map((i) => conv(i.amount))),
+      Promise.all(nonCurrentAssets.map((i) => conv(i.amount))),
+      Promise.all(currentLiabilities.map((i) => conv(i.amount))),
+      Promise.all(nonCurrentLiabilities.map((i) => conv(i.amount))),
+      Promise.all(equity.map((i) => conv(i.amount))),
+      conv(totalCurrentAssets),
+      conv(totalNonCurrentAssets),
+      conv(totalAssets),
+      conv(totalCurrentLiabilities),
+      conv(totalNonCurrentLiabilities),
+      conv(totalLiabilities),
+      conv(totalEquity),
+      conv(totalLiabilitiesAndEquity),
+    ]);
+    currentAssets.forEach((i, k) => { i.amount = ca[k]!; });
+    nonCurrentAssets.forEach((i, k) => { i.amount = nca[k]!; });
+    currentLiabilities.forEach((i, k) => { i.amount = cl[k]!; });
+    nonCurrentLiabilities.forEach((i, k) => { i.amount = ncl[k]!; });
+    equity.forEach((i, k) => { i.amount = eq[k]!; });
+    return {
+      currentAssets,
+      nonCurrentAssets,
+      currentLiabilities,
+      nonCurrentLiabilities,
+      equity,
+      totals: {
+        totalCurrentAssets: tca,
+        totalNonCurrentAssets: tnca,
+        totalAssets: ta,
+        totalCurrentLiabilities: tcl,
+        totalNonCurrentLiabilities: tncl,
+        totalLiabilities: tl,
+        totalEquity: te,
+        totalLiabilitiesAndEquity: tle,
+      },
+    };
+  }
+
   return {
     currentAssets,
     nonCurrentAssets,
@@ -323,8 +429,13 @@ export async function getDetailedBalanceSheet(): Promise<{
 /**
  * Get detailed Cash Flow line items
  * Note: This is simplified for MVP. Full cash flow requires analyzing all transactions.
+ * @param targetCurrency Optional. When set with asOfDate, amounts are converted from base to this currency.
+ * @param asOfDate Optional. Date used for FX.
  */
-export async function getDetailedCashFlow(): Promise<{
+export async function getDetailedCashFlow(
+  targetCurrency?: string,
+  asOfDate?: string,
+): Promise<{
   operating: CashFlowLineItem[];
   investing: CashFlowLineItem[];
   financing: CashFlowLineItem[];
@@ -402,6 +513,34 @@ export async function getDetailedCashFlow(): Promise<{
   const investingCashFlow = investing.reduce((sum, item) => sum + item.amount, 0);
   const financingCashFlow = financing.reduce((sum, item) => sum + item.amount, 0);
   const netCashFlow = operatingCashFlow + investingCashFlow + financingCashFlow;
+
+  if (targetCurrency && asOfDate && user.tenant) {
+    const base = await getTenantBaseCurrency(user.tenant.id);
+    const conv = (n: number) => convertAmount(n, base, targetCurrency, asOfDate, user.tenant!.id);
+    const [opConv, invConv, finConv, ocf, icf, fcf, ncf] = await Promise.all([
+      Promise.all(operating.map((i) => conv(i.amount))),
+      Promise.all(investing.map((i) => conv(i.amount))),
+      Promise.all(financing.map((i) => conv(i.amount))),
+      conv(operatingCashFlow),
+      conv(investingCashFlow),
+      conv(financingCashFlow),
+      conv(netCashFlow),
+    ]);
+    operating.forEach((i, k) => { i.amount = opConv[k]!; });
+    investing.forEach((i, k) => { i.amount = invConv[k]!; });
+    financing.forEach((i, k) => { i.amount = finConv[k]!; });
+    return {
+      operating,
+      investing,
+      financing,
+      totals: {
+        operatingCashFlow: ocf,
+        investingCashFlow: icf,
+        financingCashFlow: fcf,
+        netCashFlow: ncf,
+      },
+    };
+  }
 
   return {
     operating,

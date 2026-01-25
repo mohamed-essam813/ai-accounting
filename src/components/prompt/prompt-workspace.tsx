@@ -5,7 +5,7 @@
 
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { UnifiedInput } from "./unified-input";
 import { InlineDraftReviewPanel } from "./inline-draft-review";
 import type { SourceDocument } from "@/lib/data/documents";
@@ -35,10 +35,26 @@ type DraftResponse = {
   };
 };
 
+const SESSION_STORAGE_KEY = "prompt_session_id";
+
 export function PromptWorkspace() {
   const [draftId, setDraftId] = useState<string | null>(null);
   const [draftData, setDraftData] = useState<DraftResponse | null>(null);
   const [isLoadingDraft, setIsLoadingDraft] = useState(false);
+
+  useEffect(() => {
+    const sid = typeof window !== "undefined" ? localStorage.getItem(SESSION_STORAGE_KEY) : null;
+    if (!sid) return;
+    fetch(`/api/prompt/session/${sid}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: { status?: string; draft_id?: string } | null) => {
+        if (data?.status === "DRAFT_READY" && data.draft_id) {
+          setDraftId(data.draft_id);
+          fetchDraftData(data.draft_id);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   const fetchDraftData = async (id: string) => {
     setIsLoadingDraft(true);

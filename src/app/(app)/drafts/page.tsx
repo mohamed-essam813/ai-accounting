@@ -1,10 +1,9 @@
 import { listDrafts } from "@/lib/data/drafts";
 import { listAccounts } from "@/lib/data/accounts";
-import { DraftsTable } from "@/components/drafts/drafts-table";
-import { CurrencyFilter } from "@/components/filters/currency-filter";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { DraftsPageClient } from "@/components/drafts/drafts-page-client";
 import { getCurrentUser } from "@/lib/data/users";
-import { convertCurrency } from "@/lib/utils/currency-conversion";
+import { convertCurrency, getTenantBaseCurrency } from "@/lib/utils/currency-conversion";
+import { normaliseCurrencyCode } from "@/lib/currencies";
 
 export const revalidate = 60;
 
@@ -14,15 +13,26 @@ export default async function DraftsPage({
   searchParams: Promise<{ currency?: string }>;
 }) {
   const params = await searchParams;
-  const targetCurrency = params.currency; // For conversion, not filtering
-
+  const rawCurrency = params.currency;
+  const currency =
+    rawCurrency && rawCurrency !== "all"
+      ? normaliseCurrencyCode(rawCurrency)
+      : rawCurrency;
   const [drafts, accounts, user] = await Promise.all([
-    listDrafts(), // No filtering - show all drafts
+    listDrafts(),
     listAccounts(),
     getCurrentUser(),
   ]);
+  const baseCurrency = user?.tenant
+    ? await getTenantBaseCurrency(user.tenant.id)
+    : "USD";
 
-  // Convert draft amounts if targetCurrency is provided
+  // No param => default "All Currencies". "all" => no conversion, per-draft currency. Else => selected currency.
+  const targetCurrency =
+    currency === "all" || !currency ? undefined : currency;
+  const displayCurrency = currency ?? "all";
+
+  // Convert draft amounts when targetCurrency is set (base or specific)
   const convertedDrafts = targetCurrency && user?.tenant
     ? await Promise.all(
         drafts.map(async (draft) => {
@@ -74,41 +84,16 @@ export default async function DraftsPage({
       )
     : drafts;
 
-  // Extract unique currencies from drafts for conversion selector options
-  const currencies = Array.from(
-    new Set(
-      drafts
-        .map((draft) => (draft.entities as { currency?: string })?.currency)
-        .filter((c): c is string => typeof c === "string" && c.length > 0)
-    )
-  ).sort();
-
   return (
-    <div className="space-y-6">
-      <div>
-        <h2 className="text-2xl font-semibold">Drafts &amp; Approvals</h2>
-        <p className="text-sm text-muted-foreground">
-          Review AI generated drafts, approve them, and post balanced journal entries.
-        </p>
-      </div>
-      <CurrencyFilter initialCurrency={targetCurrency} currencies={currencies} />
-      <DraftsTable 
-        drafts={convertedDrafts} 
-        accounts={accounts} 
-        userRole={user?.role}
-        displayCurrency={targetCurrency}
-      />
-      <Card>
-        <CardHeader>
-          <CardTitle>Workflow Guidance</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-2 text-sm text-muted-foreground">
-          <p>• Draft status indicates items created by AI awaiting review.</p>
-          <p>• Approved items can be translated into immutable journal entries.</p>
-          <p>• All actions are logged for auditability.</p>
-        </CardContent>
-      </Card>
-    </div>
+    <DraftsPageClient
+      key={displayCurrency}
+      drafts={convertedDrafts}
+      accounts={accounts}
+      userRole={user?.role ?? null}
+      displayCurrency={displayCurrency}
+      baseCurrency={baseCurrency}
+      currencies={[]}
+    />
   );
 }
 

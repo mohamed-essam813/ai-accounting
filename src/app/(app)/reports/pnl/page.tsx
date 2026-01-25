@@ -1,30 +1,13 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { TabsContent } from "@/components/ui/tabs";
 import { ReportsTabs } from "@/components/reports/reports-tabs";
-import {
-  getTrialBalance,
-  getJournalLedger,
-  getVATReport,
-} from "@/lib/data/reports";
+import { getTrialBalance, getVATReport } from "@/lib/data/reports";
 import {
   getDetailedProfitAndLoss,
   getDetailedBalanceSheet,
   getDetailedCashFlow,
 } from "@/lib/data/reports-detailed";
 import { validateBalanceSheet } from "@/lib/accounting/balance-validation";
-type JournalLedgerRow = {
-  tenant_id: string;
-  entry_id: string;
-  date: string;
-  description: string;
-  status: string;
-  created_at: string;
-  account_code: string;
-  account_name: string;
-  debit: number | null;
-  credit: number | null;
-  memo: string | null;
-};
 import { formatCurrency } from "@/lib/format";
 import Link from "next/link";
 import { ReportFilters } from "@/components/reports/report-filters";
@@ -33,7 +16,6 @@ import { ExportButtons } from "@/components/reports/export-buttons";
 import { GroupedARAgeingTable } from "@/components/reports/grouped-ar-ageing-table";
 import { GroupedAPAgeingTable } from "@/components/reports/grouped-ap-ageing-table";
 import { TrialBalanceTable } from "@/components/reports/trial-balance-table";
-import { GroupedLedgerTable } from "@/components/reports/grouped-ledger-table";
 import { ProfitLossTable } from "@/components/reports/profit-loss-table";
 import { BalanceSheetTable } from "@/components/reports/balance-sheet-table";
 import { CashFlowTable } from "@/components/reports/cash-flow-table";
@@ -46,6 +28,9 @@ import {
   getPreviousMonth,
   calculateComparison,
 } from "@/lib/utils/period-comparison";
+import { getCurrentUser } from "@/lib/data/users";
+import { convertCurrency, getTenantBaseCurrency } from "@/lib/utils/currency-conversion";
+import { normaliseCurrencyCode } from "@/lib/currencies";
 
 export const revalidate = 120;
 
@@ -56,15 +41,25 @@ export default async function ReportsPage({
 }) {
   const params = await searchParams;
   const defaultTab = params.tab || "pnl";
-  const currency = params.currency;
-  
+  const rawCurrency = params.currency;
+  const currency =
+    rawCurrency && rawCurrency !== "all"
+      ? normaliseCurrencyCode(rawCurrency)
+      : rawCurrency;
+  const user = await getCurrentUser();
+  const baseCurrency = user?.tenant
+    ? await getTenantBaseCurrency(user.tenant.id)
+    : "USD";
+  const currencyForFetch = currency && currency !== "all" ? currency : undefined;
+  const displayCurrency = currencyForFetch ?? baseCurrency;
+  const asOfDate = params.endDate ?? new Date().toISOString().split("T")[0];
+
   // Get current and previous month data for period comparisons
   const currentMonth = getCurrentMonth();
   const previousMonth = getPreviousMonth();
-  
+
   const [
     trialBalance,
-    journalLedger,
     vatReport,
     arAgeing,
     arAgeingSummary,
@@ -77,24 +72,45 @@ export default async function ReportsPage({
     detailedCashFlow,
     balanceValidation,
   ] = await Promise.all([
-    getTrialBalance(),
-    getJournalLedger(params.startDate, params.endDate, params.currency),
-    getVATReport(),
-    getARAgeing(),
-    getARAgeingSummary(),
-    getAPAgeing(),
-    getAPAgeingSummary(),
-    getPeriodFinancialData(currentMonth),
-    getPeriodFinancialData(previousMonth),
-    getDetailedProfitAndLoss(),
-    getDetailedBalanceSheet(),
-    getDetailedCashFlow(),
+    getTrialBalance(currencyForFetch, asOfDate),
+    getVATReport(currencyForFetch, asOfDate),
+    getARAgeing(currencyForFetch, asOfDate),
+    getARAgeingSummary(currencyForFetch, asOfDate),
+    getAPAgeing(currencyForFetch, asOfDate),
+    getAPAgeingSummary(currencyForFetch, asOfDate),
+    getPeriodFinancialData(currentMonth, currencyForFetch),
+    getPeriodFinancialData(previousMonth, currencyForFetch),
+    getDetailedProfitAndLoss(currencyForFetch, asOfDate),
+    getDetailedBalanceSheet(currencyForFetch, asOfDate),
+    getDetailedCashFlow(currencyForFetch, asOfDate),
     validateBalanceSheet(),
   ]);
 
+  let balanceValidationDisplay = balanceValidation;
+  if (currencyForFetch && user?.tenant) {
+    const [a, l, d] = await Promise.all([
+      convertCurrency(balanceValidation.assets, baseCurrency, currencyForFetch, asOfDate, user.tenant.id),
+      convertCurrency(balanceValidation.liabilitiesAndEquity, baseCurrency, currencyForFetch, asOfDate, user.tenant.id),
+      convertCurrency(balanceValidation.difference, baseCurrency, currencyForFetch, asOfDate, user.tenant.id),
+    ]);
+    const convertedOffending = balanceValidation.offendingEntries
+      ? await Promise.all(
+          balanceValidation.offendingEntries.map(async (e) => ({
+            ...e,
+            balance: await convertCurrency(e.balance, baseCurrency, currencyForFetch, asOfDate, user!.tenant!.id),
+          })),
+        )
+      : undefined;
+    balanceValidationDisplay = {
+      ...balanceValidation,
+      assets: a,
+      liabilitiesAndEquity: l,
+      difference: d,
+      offendingEntries: convertedOffending,
+    };
+  }
+
   // Calculate period comparisons (for potential future use)
-  // Note: These are calculated but not currently used in the UI
-  // Keeping for potential future enhancements
   const _revenueComparison = calculateComparison(
     currentPeriodData.revenue,
     previousPeriodData.revenue,
@@ -124,7 +140,7 @@ export default async function ReportsPage({
             initialStartDate={params.startDate}
             initialEndDate={params.endDate}
           />
-          <CurrencyFilter initialCurrency={currency} />
+          <CurrencyFilter initialCurrency={currency} baseCurrency={baseCurrency} currencies={[]} />
         </CardContent>
       </Card>
 
@@ -165,6 +181,7 @@ export default async function ReportsPage({
                   data={detailedPnl} 
                   startDate={params.startDate}
                   endDate={params.endDate}
+                  displayCurrency={displayCurrency}
                 />
               </div>
             </CardContent>
@@ -214,10 +231,10 @@ export default async function ReportsPage({
                         Balance Sheet Imbalance Detected
                       </h4>
                       <p className="text-sm text-muted-foreground">
-                        Assets ({formatCurrency(balanceValidation.assets)}) ≠ Liabilities + Equity ({formatCurrency(balanceValidation.liabilitiesAndEquity)})
+                        Assets ({formatCurrency(balanceValidationDisplay.assets, displayCurrency)}) ≠ Liabilities + Equity ({formatCurrency(balanceValidationDisplay.liabilitiesAndEquity, displayCurrency)})
                       </p>
                       <p className="text-sm font-medium">
-                        Difference: <span className="text-destructive">{formatCurrency(balanceValidation.difference)}</span>
+                        Difference: <span className="text-destructive">{formatCurrency(balanceValidationDisplay.difference, displayCurrency)}</span>
                       </p>
                       {balanceValidation.suggestions && balanceValidation.suggestions.length > 0 && (
                         <div className="mt-3 space-y-1">
@@ -237,7 +254,7 @@ export default async function ReportsPage({
                               <div key={idx} className="text-xs text-muted-foreground flex items-center gap-2">
                                 <span className="font-mono">{entry.accountCode}</span>
                                 <span>{entry.accountName}</span>
-                                <span className="ml-auto">{formatCurrency(entry.balance)}</span>
+                                <span className="ml-auto">{formatCurrency(entry.balance, displayCurrency)}</span>
                               </div>
                             ))}
                           </div>
@@ -252,7 +269,8 @@ export default async function ReportsPage({
                   data={detailedBalanceSheet} 
                   startDate={params.startDate}
                   endDate={params.endDate}
-                  validation={balanceValidation}
+                  validation={balanceValidationDisplay}
+                  displayCurrency={displayCurrency}
                 />
               </div>
             </CardContent>
@@ -289,44 +307,9 @@ export default async function ReportsPage({
                   data={detailedCashFlow} 
                   startDate={params.startDate}
                   endDate={params.endDate}
+                  displayCurrency={displayCurrency}
                 />
               </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-        <TabsContent value="ledger">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between">
-              <div>
-                <CardTitle>Journal Ledger</CardTitle>
-                <p className="text-sm text-muted-foreground mt-1">
-                  All journal entries and transactions. Use the filters above to adjust date ranges.
-                </p>
-              </div>
-              <ExportButtons
-                data={{
-                  title: "Journal-Ledger",
-                  headers: ["Date", "Description", "Account Code", "Account Name", "Debit", "Credit", "Memo"],
-                  rows: journalLedger.map((entry: JournalLedgerRow) => [
-                    entry.date,
-                    entry.description,
-                    entry.account_code,
-                    entry.account_name,
-                    Number(entry.debit ?? 0),
-                    Number(entry.credit ?? 0),
-                    entry.memo ?? "",
-                  ]),
-                }}
-              />
-            </CardHeader>
-            <CardContent className="overflow-hidden rounded-md border p-0">
-              {journalLedger.length === 0 ? (
-                <div className="py-6 text-center text-sm text-muted-foreground">
-                  No journal entries found for the selected date range.
-                </div>
-              ) : (
-                <GroupedLedgerTable data={journalLedger} />
-              )}
             </CardContent>
           </Card>
         </TabsContent>
@@ -353,16 +336,19 @@ export default async function ReportsPage({
               <ReportRow 
                 label="VAT Output Tax" 
                 value={vatReport?.vat_output_tax ? Math.abs(Number(vatReport.vat_output_tax)) : 0} 
+                displayCurrency={displayCurrency}
               />
               <ReportRow 
                 label="VAT Input Tax" 
                 value={vatReport?.vat_input_tax ? Math.abs(Number(vatReport.vat_input_tax)) : 0} 
+                displayCurrency={displayCurrency}
               />
               <div className="border-t pt-4">
                 <ReportRow 
                   label={vatReport?.vat_payable && Number(vatReport.vat_payable) < 0 ? "VAT Receivable" : "VAT Payable"} 
                   value={vatReport?.vat_payable ? Math.abs(Number(vatReport.vat_payable)) : 0} 
                   highlight 
+                  displayCurrency={displayCurrency}
                 />
               </div>
             </CardContent>
@@ -392,7 +378,7 @@ export default async function ReportsPage({
                   No posted journal entries yet.
                 </div>
               ) : (
-                <TrialBalanceTable data={trialBalance} />
+                <TrialBalanceTable data={trialBalance} displayCurrency={displayCurrency} />
               )}
             </CardContent>
           </Card>
@@ -430,7 +416,7 @@ export default async function ReportsPage({
               />
             </CardHeader>
             <CardContent className="p-6">
-              <GroupedARAgeingTable items={arAgeing} summary={arAgeingSummary} />
+              <GroupedARAgeingTable items={arAgeing} summary={arAgeingSummary} displayCurrency={displayCurrency} />
             </CardContent>
           </Card>
         </TabsContent>
@@ -467,7 +453,7 @@ export default async function ReportsPage({
               />
             </CardHeader>
             <CardContent className="p-6">
-              <GroupedAPAgeingTable items={apAgeing} summary={apAgeingSummary} />
+              <GroupedAPAgeingTable items={apAgeing} summary={apAgeingSummary} displayCurrency={displayCurrency} />
             </CardContent>
           </Card>
         </TabsContent>
@@ -481,13 +467,15 @@ function ReportRow({
   value,
   highlight,
   accountCode,
+  displayCurrency = "AED",
 }: {
   label: string;
   value?: string | number | null;
   highlight?: boolean;
   accountCode?: string;
+  displayCurrency?: string;
 }) {
-  const amount = formatCurrency(Number(value ?? 0));
+  const amount = formatCurrency(Number(value ?? 0), displayCurrency);
   
   // Make numbers clickable for traceability (Excel Elimination Doctrine)
   const content = (

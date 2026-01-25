@@ -6,17 +6,19 @@
 
 "use client";
 
+import React from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatCurrency } from "@/lib/format";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, LabelList } from "recharts";
 import type { MultiPeriodData } from "@/lib/data/multi-period-comparison";
-import { ChipTooltip } from "./chip-tooltip";
+import { ChipTooltip, type ChipTooltipProps } from "./chip-tooltip";
 
 interface Props {
   multiPeriodData: MultiPeriodData;
+  displayCurrency?: string;
 }
 
-export function RevenueExpenseChartMulti({ multiPeriodData }: Props) {
+export function RevenueExpenseChartMulti({ multiPeriodData, displayCurrency = "AED" }: Props) {
   // Prepare chart data from multiple periods
   const chartData = multiPeriodData.periods.map((period) => ({
     name: period.label,
@@ -26,14 +28,23 @@ export function RevenueExpenseChartMulti({ multiPeriodData }: Props) {
   }));
 
   // Custom label renderer with dark grey text and background for maximum contrast
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const renderBarLabel = (props: any) => {
-    const { x = 0, y = 0, width = 0, value } = props;
+  interface LabelRendererProps {
+    x?: number | string;
+    y?: number | string;
+    width?: number | string;
+    value?: number | string;
+    [key: string]: unknown;
+  }
+  const renderBarLabel = (props: LabelRendererProps) => {
+    const x = typeof props.x === "string" ? parseFloat(props.x) || 0 : props.x || 0;
+    const y = typeof props.y === "string" ? parseFloat(props.y) || 0 : props.y || 0;
+    const width = typeof props.width === "string" ? parseFloat(props.width) || 0 : props.width || 0;
+    const value = typeof props.value === "string" ? parseFloat(props.value) || 0 : props.value || 0;
     if (value === undefined || value === 0 || !width) return null;
     
     const textX = x + width / 2;
     const textY = y - 8;
-    const textValue = formatCurrency(value);
+    const textValue = formatCurrency(value, displayCurrency);
     
     return (
       <g>
@@ -120,13 +131,13 @@ export function RevenueExpenseChartMulti({ multiPeriodData }: Props) {
               axisLine={{ stroke: "#d1d5db" }}
             />
             <YAxis 
-              tickFormatter={(value: number) => formatCurrency(value)}
+              tickFormatter={(value: number) => formatCurrency(value, displayCurrency)}
               tick={{ fill: "#6b7280", fontSize: 11 }}
               axisLine={{ stroke: "#d1d5db" }}
               width={80}
             />
             <Tooltip 
-              content={<ChipTooltip />}
+              content={(p) => <ChipTooltip {...(p as unknown as ChipTooltipProps)} displayCurrency={displayCurrency} />}
               cursor={{ fill: "rgba(0, 0, 0, 0.05)" }}
             />
             <Legend 
@@ -140,7 +151,7 @@ export function RevenueExpenseChartMulti({ multiPeriodData }: Props) {
               radius={[6, 6, 0, 0]}
               barSize={50}
             >
-              <LabelList dataKey="revenue" content={renderBarLabel} />
+              <LabelList dataKey="revenue" content={renderBarLabel as (props: unknown) => React.ReactNode} />
             </Bar>
             <Bar 
               dataKey="expenses" 
@@ -149,7 +160,7 @@ export function RevenueExpenseChartMulti({ multiPeriodData }: Props) {
               radius={[6, 6, 0, 0]}
               barSize={50}
             >
-              <LabelList dataKey="expenses" content={renderBarLabel} />
+              <LabelList dataKey="expenses" content={renderBarLabel as (props: unknown) => React.ReactNode} />
             </Bar>
           </BarChart>
         </ResponsiveContainer>
@@ -164,7 +175,7 @@ export function RevenueExpenseChartMulti({ multiPeriodData }: Props) {
               </span>
             </div>
             <p className="text-muted-foreground">
-              {formatCurrency(firstPeriod.data.revenue)} → {formatCurrency(lastPeriod.data.revenue)}
+              {formatCurrency(firstPeriod.data.revenue, displayCurrency)} → {formatCurrency(lastPeriod.data.revenue, displayCurrency)}
             </p>
           </div>
           <div className="p-2 rounded-md bg-red-50 border border-red-200">
@@ -175,7 +186,7 @@ export function RevenueExpenseChartMulti({ multiPeriodData }: Props) {
               </span>
             </div>
             <p className="text-muted-foreground">
-              {formatCurrency(firstPeriod.data.expenses)} → {formatCurrency(lastPeriod.data.expenses)}
+              {formatCurrency(firstPeriod.data.expenses, displayCurrency)} → {formatCurrency(lastPeriod.data.expenses, displayCurrency)}
             </p>
           </div>
         </div>

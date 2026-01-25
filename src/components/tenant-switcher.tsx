@@ -14,10 +14,10 @@ export function TenantSwitcher({ tenantName }: TenantSwitcherProps) {
       <SheetTrigger asChild>
         <Button
           variant="outline"
-          className="w-full justify-between border-dashed bg-background"
+          className="w-full justify-between border-dashed bg-background text-sm"
         >
-          <span className="truncate">{tenantName}</span>
-          <ChevronsUpDown className="h-4 w-4 text-muted-foreground" />
+          <span className="truncate text-xs font-medium">{tenantName}</span>
+          <ChevronsUpDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         </Button>
       </SheetTrigger>
       <SheetContent side="left" className="w-[320px]">

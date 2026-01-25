@@ -88,7 +88,8 @@ export function AccountConfirmationDialog({
         accountType: suggested.suggested_type,
       });
     }
-    onClose();
+    // Do NOT call onClose on confirm. Parent controls close after create draft (success)
+    // or keeps dialog open when moving to next account (new key/data).
   };
 
   const accountLabel = accountKey

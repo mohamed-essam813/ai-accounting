@@ -1,118 +1,66 @@
 # AI Accounting Platform
 
-A SaaS accounting platform that converts natural language prompts into structured accounting entries using AI, with human review, approval workflows, and comprehensive financial reporting.
+SaaS accounting platform: natural-language prompts → AI drafts → human review → approval workflows → financial reporting.
 
-## 🚀 Quick Start
+## Quick Start
 
-1. **Read the [Setup Guide](./SETUP_GUIDE.md)** for detailed installation instructions
-2. **Copy environment template**: `cp env.example .env.local`
-3. **Fill in your keys** (Supabase, OpenAI, optional Google Cloud)
-4. **Run migrations** (see Setup Guide)
-5. **Start dev server**: `npm run dev`
+1. **[Setup Guide](./SETUP_GUIDE.md)** – installation, env vars, migrations, link first user
+2. `cp env.example .env.local` and add Supabase, OpenAI keys
+3. Run migrations (Supabase CLI or SQL Editor)
+4. `npm run dev`
 
-## 📚 Documentation
+## Documentation
 
-- **[SETUP_GUIDE.md](./SETUP_GUIDE.md)** - Setup instructions and configuration
-- **[DEPLOYMENT.md](./DEPLOYMENT.md)** - Deployment guide for Vercel, Supabase, and OpenAI
-- **[FX_RATES_SETUP.md](./FX_RATES_SETUP.md)** - Currency conversion and FX rates setup
+- **[SETUP_GUIDE.md](./SETUP_GUIDE.md)** – local setup, Supabase, OpenAI, OCR, FX rates, RAG
+- **[DEPLOYMENT.md](./DEPLOYMENT.md)** – deploy to Vercel, Supabase, OpenAI, optional GCP Vision
 
-## 🛠 Tech Stack
+## Tech Stack
 
-- **Frontend**: Next.js 16 (App Router), TypeScript, Tailwind CSS, shadcn/ui
-- **Backend**: Next.js API Routes + Server Actions
-- **Database**: Supabase (PostgreSQL + Row-Level Security)
-- **AI**: OpenAI GPT-4o (or GPT-5.1 if available) via Vercel AI SDK with RAG (Retrieval-Augmented Generation)
-- **Storage**: Supabase Storage
-- **OCR**: Google Cloud Vision API (optional)
+- **Frontend**: Next.js 16 (App Router), TypeScript, Tailwind, shadcn/ui
+- **Backend**: API Routes + Server Actions
+- **Database**: Supabase (PostgreSQL, RLS)
+- **AI**: OpenAI (Vercel AI SDK, RAG)
+- **Storage**: Supabase Storage  
+- **OCR**: Google Cloud Vision (optional)
 
-## ✨ Features
+## Features
 
-- Natural language prompt → AI draft generation
-- Draft review, editing, and approval workflow
-- Double-entry journal posting with balance validation
-- Insight Engine - Automatic contextual insights after every transaction
-- Financial Radar Dashboard with attention signals
-- Inventory management (FIFO/Weighted Average)
-- Fixed assets & depreciation
-- Financial reports (P&L, Balance Sheet, Cash Flow, AR/AP Ageing)
-- Bank reconciliation with CSV import
-- Contacts management (customers and vendors)
-- Multi-tenant architecture with RLS
-- User roles and permissions (admin, accountant, business_user, auditor)
+- Natural language → AI draft → review & approve
+- Double-entry posting, balance validation
+- Insights, dashboard, attention signals
+- Inventory (FIFO / WA), fixed assets & depreciation
+- Reports: P&L, Balance Sheet, Cash Flow, AR/AP Ageing, Trial Balance, VAT
+- Bank reconciliation (PDF import), contacts, multi-tenant, roles
 
-## 📁 Project Structure
+## Project Structure
 
 ```
 src/
-├── app/              # Next.js App Router pages
-│   ├── (app)/        # Protected app routes
-│   ├── api/          # API endpoints
-│   └── auth/         # Authentication pages
-├── components/       # React components
-│   ├── ui/           # shadcn/ui components
-│   └── ...           # Feature components
-└── lib/              # Core libraries
-    ├── actions/      # Server actions
-    ├── data/         # Data access layer
-    ├── ai/           # AI integration
-    └── supabase/     # Supabase clients
+├── app/          # App Router (pages, API)
+├── components/   # UI (shadcn + feature components)
+└── lib/          # actions, data, AI, Supabase
 ```
 
-## 🔧 Development
+## Commands
 
 ```bash
-# Install dependencies
 npm install
-
-# Run development server
 npm run dev
-
-# Lint code
-npm run lint
-
-# Build for production
 npm run build
+npm run lint
 ```
 
-## 🔐 Environment Variables
+## Environment
 
-See `env.example` for required variables. **Never commit `.env.local` to version control.**
+See `env.example`. Required: `NEXT_PUBLIC_SUPABASE_*`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_JWT_SECRET`, `OPENAI_API_KEY`. Optional: Google Vision, FX API keys. Never commit `.env.local`.
 
-Required:
-- `NEXT_PUBLIC_SUPABASE_URL` & `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-- `SUPABASE_SERVICE_ROLE_KEY` & `SUPABASE_JWT_SECRET`
-- `OPENAI_API_KEY`
+## Database
 
-Optional:
-- `GOOGLE_APPLICATION_CREDENTIALS` (for OCR features)
+Migrations in `supabase/migrations/`. Run via Supabase CLI (`supabase db push`) or SQL Editor. See [SETUP_GUIDE.md](./SETUP_GUIDE.md).
 
-## 🗄 Database
+## Costs (typical)
 
-Migrations are in `supabase/migrations/`. Run them via:
-- Supabase CLI: `supabase db push`
-- Or Supabase Dashboard SQL Editor
-
-See [SETUP_GUIDE.md](./SETUP_GUIDE.md) for details.
-
-## 🧪 Testing
-
-Currently manual testing only. Automated tests planned for future release.
-
-
-## 💰 Costs
-
-**Free Tier (Development/Small Business):**
-- Vercel: Free (100GB bandwidth/month)
-- Supabase: Free tier (500MB database, 1GB storage)
-- OpenAI: $5 free credits, then ~$10-20/month
-- **Total**: ~$10-25/month after free credits
-
-See [DEPLOYMENT.md](./DEPLOYMENT.md) for deployment guide.
-
-## 📝 License
-
-Private project - All rights reserved
-
----
-
-**Need help?** Check [SETUP_GUIDE.md](./SETUP_GUIDE.md) for setup instructions and troubleshooting.
+- Vercel: free tier
+- Supabase: free tier
+- OpenAI: ~$10–20/month after credits  
+See [DEPLOYMENT.md](./DEPLOYMENT.md) for production setup.

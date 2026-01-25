@@ -33,7 +33,7 @@ export function ReportsTabs({ defaultTab, children }: ReportsTabsProps) {
   return (
     <Tabs value={currentTab} onValueChange={handleTabChange} className="space-y-6">
       <div className="relative">
-        <TabsList className="grid w-full grid-cols-8">
+        <TabsList className="grid w-full grid-cols-7">
           <TabsTrigger value="pnl" disabled={isPending}>
             P&amp;L
           </TabsTrigger>
@@ -42,9 +42,6 @@ export function ReportsTabs({ defaultTab, children }: ReportsTabsProps) {
           </TabsTrigger>
           <TabsTrigger value="cashflow" disabled={isPending}>
             Cash Flow
-          </TabsTrigger>
-          <TabsTrigger value="ledger" disabled={isPending}>
-            Journal Ledger
           </TabsTrigger>
           <TabsTrigger value="vat" disabled={isPending}>
             VAT Report

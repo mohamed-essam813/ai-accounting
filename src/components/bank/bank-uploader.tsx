@@ -1,9 +1,14 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import Papa from "papaparse";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import {
   Select,
   SelectContent,
@@ -13,6 +18,7 @@ import {
 } from "@/components/ui/select";
 import { importBankTransactionsAction } from "@/lib/actions/bank";
 import { toast } from "sonner";
+import { FileUp } from "lucide-react";
 
 type ParsedTransaction = {
   date: string;
@@ -32,40 +38,56 @@ type Props = {
   accounts?: Account[];
 };
 
-export function BankUploader({ bankAccountId: initialBankAccountId, accounts = [] }: Props) {
+export function BankUploader({
+  bankAccountId: initialBankAccountId,
+  accounts = [],
+}: Props) {
   const [transactions, setTransactions] = useState<ParsedTransaction[]>([]);
   const [fileName, setFileName] = useState<string | null>(null);
-  const [selectedBankAccountId, setSelectedBankAccountId] = useState<string>(initialBankAccountId ?? "");
+  const [selectedBankAccountId, setSelectedBankAccountId] = useState<string>(
+    initialBankAccountId ?? ""
+  );
   const [isPending, startTransition] = useTransition();
+  const [isParsing, setIsParsing] = useState(false);
 
-  const handleFile = (file: File) => {
+  const handleFile = async (file: File) => {
+    setIsParsing(true);
     setFileName(file.name);
-    Papa.parse(file, {
-      header: true,
-      skipEmptyLines: true,
-      complete: (results) => {
-        const rows = results.data as Record<string, string>[];
-        const parsed = rows
-          .map((row) => {
-            const amount = parseFloat(row.Amount ?? row.amount ?? row.Debit ?? "0");
-            const description = row.Description ?? row.description ?? "";
-            const date = row.Date ?? row.date ?? "";
-            return {
-              date,
-              description,
-              amount,
-              counterparty: row.Counterparty ?? row.counterparty ?? null,
-            };
-          })
-          .filter((txn) => txn.description && !Number.isNaN(txn.amount));
-        setTransactions(parsed);
-        toast.success("Bank file parsed", { description: `${parsed.length} transactions detected.` });
-      },
-      error: (error) => {
-        console.error(error);
-        toast.error("Failed to parse CSV", { description: error.message });
-      },
-    });
+    setTransactions([]);
+
+    try {
+      const formData = new FormData();
+      formData.set("file", file);
+
+      const res = await fetch("/api/bank/parse-pdf", {
+        method: "POST",
+        body: formData,
+      });
+
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        toast.error(data.error ?? "Failed to parse PDF", {
+          description: data.details,
+        });
+        setFileName(null);
+        return;
+      }
+
+      const list = Array.isArray(data.transactions) ? data.transactions : [];
+      setTransactions(list);
+      toast.success("PDF parsed", {
+        description: `${list.length} transaction${list.length !== 1 ? "s" : ""} detected.`,
+      });
+    } catch (err) {
+      console.error(err);
+      toast.error("Failed to parse PDF", {
+        description: err instanceof Error ? err.message : undefined,
+      });
+      setFileName(null);
+    } finally {
+      setIsParsing(false);
+    }
   };
 
   const handleImport = () => {
@@ -101,80 +123,78 @@ export function BankUploader({ bankAccountId: initialBankAccountId, accounts = [
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Upload Bank CSV</CardTitle>
+        <CardTitle>Upload Bank Statement (PDF)</CardTitle>
         <CardDescription>
-          Accepts UTF-8 CSV exports with columns Date, Description, Amount, Counterparty (optional).
+          Upload a bank statement PDF; we extract and import transactions.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         {accounts.length > 0 && (
           <div className="space-y-2">
-            <label className="text-sm font-medium">Select bank or cash account to reconcile *</label>
+            <label className="text-sm font-medium">
+              Select bank account to reconcile *
+            </label>
             <Select
               value={selectedBankAccountId}
               onValueChange={setSelectedBankAccountId}
             >
               <SelectTrigger>
-                <SelectValue placeholder="Select bank or cash account" />
+                <SelectValue placeholder="Select bank account to reconcile" />
               </SelectTrigger>
               <SelectContent>
                 {accounts.map((account) => (
                   <SelectItem key={account.id} value={account.id}>
-                    {account.code} · {account.name}
+                    {account.code} — {account.name}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
             <p className="text-xs text-muted-foreground">
-              Only bank and cash accounts can be reconciled. These transactions will be imported for the selected account.
+              Only bank accounts with external statements can be reconciled.
+              Transactions will be imported for the selected account.
             </p>
           </div>
         )}
-        <div className="flex items-center justify-between gap-4">
-          <input
-            type="file"
-            accept=".csv,text/csv"
-            onChange={(event) => {
-              const file = event.target.files?.[0];
-              if (file) {
-                handleFile(file);
-              }
-            }}
-          />
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => {
-              // Create CSV template
-              const headers = ["Date", "Description", "Debit", "Credit", "Balance"];
-              const sampleRow = ["2024-01-15", "Sample Transaction", "1000.00", "", "1000.00"];
-              const csvContent = [headers, sampleRow].map((row) => row.join(",")).join("\n");
-              const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-              const link = document.createElement("a");
-              const url = URL.createObjectURL(blob);
-              link.setAttribute("href", url);
-              link.setAttribute("download", "bank-reconciliation-template.csv");
-              link.style.visibility = "hidden";
-              document.body.appendChild(link);
-              link.click();
-              document.body.removeChild(link);
-              toast.success("Template downloaded", { description: "Fill in your bank statement data and upload." });
-            }}
-          >
-            Download Template
-          </Button>
+
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+          <label className="flex items-center justify-center gap-2 rounded-lg border border-dashed border-muted-foreground/30 bg-muted/30 px-4 py-6 cursor-pointer hover:bg-muted/50 transition-colors">
+            <FileUp className="h-5 w-5 text-muted-foreground" />
+            <span className="text-sm font-medium">
+              {isParsing ? "Parsing…" : "Choose PDF"}
+            </span>
+            <input
+              type="file"
+              accept=".pdf,application/pdf"
+              className="sr-only"
+              disabled={isParsing}
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) handleFile(f);
+                e.target.value = "";
+              }}
+            />
+          </label>
         </div>
+
         {fileName ? (
           <div className="rounded-md border bg-muted p-3 text-sm">
             <p className="font-medium">{fileName}</p>
-            <p className="text-muted-foreground">{transactions.length} rows ready for import.</p>
+            <p className="text-muted-foreground">
+              {transactions.length} row
+              {transactions.length !== 1 ? "s" : ""} ready for import.
+            </p>
           </div>
         ) : null}
-        <Button disabled={isPending || transactions.length === 0} onClick={handleImport}>
-          {isPending ? "Importing..." : "Import Transactions"}
+
+        <Button
+          disabled={
+            isPending || isParsing || transactions.length === 0
+          }
+          onClick={handleImport}
+        >
+          {isPending ? "Importing…" : "Import transactions"}
         </Button>
       </CardContent>
     </Card>
   );
 }
-

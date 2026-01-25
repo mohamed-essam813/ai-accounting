@@ -22,9 +22,10 @@ type AppUser = Database["public"]["Tables"]["app_users"]["Row"];
 
 type TopbarProps = {
   user: (AppUser & { tenant: Database["public"]["Tables"]["tenants"]["Row"] | null }) | null;
+  sidebarWidth?: number;
 };
 
-export function Topbar({ user }: TopbarProps) {
+export function Topbar({ user, sidebarWidth = 256 }: TopbarProps) {
   const initials = user?.email
     ? user.email
         .split("@")[0]
@@ -51,8 +52,18 @@ export function Topbar({ user }: TopbarProps) {
     });
   };
 
+  // Ensure sidebarWidth is a valid number
+  const safeSidebarWidth = typeof sidebarWidth === "number" && !isNaN(sidebarWidth) ? sidebarWidth : 256;
+  
   return (
-    <header className="fixed top-0 left-64 right-0 z-30 flex h-16 items-center justify-between border-b border-l border-border bg-background shadow-sm px-6">
+    <header
+      className="fixed top-0 right-0 z-30 flex h-16 items-center justify-between border-b border-l border-border bg-background shadow-sm px-6 transition-all duration-300"
+      style={{ 
+        left: `${safeSidebarWidth}px`, 
+        width: `calc(100% - ${safeSidebarWidth}px)`,
+        top: 0,
+      }}
+    >
       <div>
         <p className="text-sm font-medium text-muted-foreground">AI Accounting Platform</p>
         <h1 className="text-lg font-semibold">{user?.tenant?.name ?? "Tenant Workspace"}</h1>

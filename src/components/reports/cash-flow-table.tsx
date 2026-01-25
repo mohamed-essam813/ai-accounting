@@ -19,9 +19,10 @@ type Props = {
   };
   startDate?: string;
   endDate?: string;
+  displayCurrency?: string;
 };
 
-export function CashFlowTable({ data, startDate, endDate }: Props) {
+export function CashFlowTable({ data, startDate, endDate, displayCurrency = "AED" }: Props) {
   const { operating, investing, financing, totals } = data;
 
   const renderSection = (
@@ -59,7 +60,7 @@ export function CashFlowTable({ data, startDate, endDate }: Props) {
                     className="hover:text-primary hover:underline decoration-dotted cursor-pointer transition-colors font-medium"
                     title="Click to view ledger transactions for this account"
                   >
-                    {formatCurrency(item.amount)}
+                    {formatCurrency(item.amount, displayCurrency)}
                   </Link>
                 </TableCell>
               </TableRow>
@@ -70,7 +71,7 @@ export function CashFlowTable({ data, startDate, endDate }: Props) {
           <TableRow className="bg-muted/30 font-semibold">
             <TableCell colSpan={2}>Net Cash from {title}</TableCell>
             <TableCell className="text-right">
-              {formatCurrency(subtotal)}
+              {formatCurrency(subtotal, displayCurrency)}
             </TableCell>
           </TableRow>
         )}
@@ -104,7 +105,7 @@ export function CashFlowTable({ data, startDate, endDate }: Props) {
               Net Cash Flow
             </TableCell>
             <TableCell className="text-right text-primary text-lg py-4">
-              {formatCurrency(totals.netCashFlow)}
+              {formatCurrency(totals.netCashFlow, displayCurrency)}
             </TableCell>
           </TableRow>
         </TableBody>

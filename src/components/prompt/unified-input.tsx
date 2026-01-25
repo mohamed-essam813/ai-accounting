@@ -13,15 +13,17 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { toast } from "sonner";
-import { Upload, X, FileText, Check, Loader2 } from "lucide-react";
+import { Upload, X, FileText, Check, Loader2, AlertCircle, RotateCcw } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { AccountConfirmationDialog } from "./account-confirmation-dialog";
 import { CashBankSelectionDialog } from "./cash-bank-selection-dialog";
 import { CashContextConfirmationDialog } from "./cash-context-confirmation-dialog";
 
+/** Doc 6: Doc-only mode – prompt optional when documents are uploaded. */
 const UnifiedInputSchema = z.object({
-  prompt: z.string().min(1, "Please describe what happened."),
+  prompt: z.string().optional(),
 });
 
 type FormValues = z.infer<typeof UnifiedInputSchema>;
@@ -55,9 +57,17 @@ export function UnifiedInput({ onDraftCreated }: Props) {
     cashAccount: { id: string; name: string; code: string } | null;
     accountKey: "debit_account" | "credit_account";
   } | null>(null);
+  const [sessionId, setSessionId] = useState<string | null>(null);
   const [pendingDraftData, setPendingDraftData] = useState<any>(null);
-  // Use ref to track if we're transitioning to bank selection (prevents onClose from clearing state)
+  const [needsClarification, setNeedsClarification] = useState<{
+    message: string;
+    options?: string[];
+  } | null>(null);
+  const [clarifyText, setClarifyText] = useState("");
+  const [parseError, setParseError] = useState<string | null>(null);
   const isTransitioningToBankSelection = useRef(false);
+
+  const SESSION_STORAGE_KEY = "prompt_session_id";
   
   // localStorage persistence state
   const STORAGE_KEY = "prompt_draft_session";
@@ -70,6 +80,7 @@ export function UnifiedInput({ onDraftCreated }: Props) {
     defaultValues: {
       prompt: "",
     },
+    mode: "onChange",
   });
 
   // Load from localStorage on mount
@@ -179,14 +190,14 @@ export function UnifiedInput({ onDraftCreated }: Props) {
   };
 
   const onSubmit = async (values: FormValues) => {
-    if (!values.prompt.trim() && uploadedFiles.length === 0) {
+    if (!(values.prompt?.trim() ?? "") && uploadedFiles.length === 0) {
       toast.error("Please describe what happened or upload a document.");
       return;
     }
 
+    setParseError(null);
     startProcessing(async () => {
       try {
-        // First, upload files if any (silently, no OCR terminology)
         const fileIds: string[] = [];
         if (uploadedFiles.length > 0) {
           for (const uploadedFile of uploadedFiles) {
@@ -207,40 +218,53 @@ export function UnifiedInput({ onDraftCreated }: Props) {
               }
             } catch (error) {
               console.error("File upload failed:", error);
-              // Continue with other files even if one fails
             }
           }
         }
 
-        // Combine text prompt with file context
-        let combinedPrompt = values.prompt;
-        if (uploadedFiles.length > 0) {
-          // If files were uploaded, the system will use them as context
-          // We don't expose this to the user
-          combinedPrompt = values.prompt || "Process the uploaded documents";
-        }
-
-        // Parse the prompt (system handles text + files silently)
-        const response = await fetch("/api/prompt/parse", {
+        /** Doc 6: Doc-only – send raw prompt; server uses default when docs-only. */
+        const rawPrompt = values.prompt?.trim() ?? "";
+        const response = await fetch("/api/prompt/session", {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ 
-            prompt: combinedPrompt,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            prompt: rawPrompt || undefined,
             documentIds: fileIds.length > 0 ? fileIds : undefined,
           }),
         });
 
-        if (!response.ok) {
-          const error = await response.json();
-          throw new Error(error.error ?? "Failed to process your request.");
-        }
-
         const data = await response.json();
 
-        // STEP 1: Check if cash context confirmation is needed (HIGHEST PRIORITY)
-        // This is mandatory for ALL potential cash/bank transactions
+        if (!response.ok) {
+          const msg = data.error ?? "Failed to process your request.";
+          setParseError(msg);
+          toast.error(msg);
+          if (data.session_id && typeof window !== "undefined") {
+            localStorage.setItem(SESSION_STORAGE_KEY, data.session_id);
+          }
+          return;
+        }
+
+        const sid = data.session_id as string;
+        setSessionId(sid);
+        if (typeof window !== "undefined") {
+          localStorage.setItem(SESSION_STORAGE_KEY, sid);
+        }
+
+        if (data.draft_id) {
+          handleDraftReady(data.draft_id, fileIds);
+          return;
+        }
+
+        /** Doc 6: Clarify flow – low confidence. Show clarify UI, then retry with clarification. */
+        if (data.needs_clarification) {
+          setNeedsClarification(data.needs_clarification);
+          setPendingDraftData({ documentIds: fileIds });
+          setClarifyText("");
+          setParseError(null);
+          return;
+        }
+
         if (data.cashContextConfirmation?.required) {
           // Store draft data for after cash context confirmation
           setPendingDraftData({
@@ -253,9 +277,9 @@ export function UnifiedInput({ onDraftCreated }: Props) {
             cashBankSelection: data.cashBankSelection, // Store for later if needed
           });
           
-          // Show cash context confirmation dialog (STEP 1)
+          setParseError(null);
           setCashContextConfirmation(data.cashContextConfirmation);
-          return; // Wait for user confirmation
+          return;
         }
 
         // STEP 2: Check if cash/bank selection is needed (after cash context confirmed)
@@ -270,9 +294,9 @@ export function UnifiedInput({ onDraftCreated }: Props) {
             accountConfirmations: {},
           });
           
-          // Show cash/bank selection dialog
+          setParseError(null);
           setCashBankSelection(data.cashBankSelection);
-          return; // Wait for user selection
+          return;
         }
 
         // Check if account confirmation is needed
@@ -287,29 +311,215 @@ export function UnifiedInput({ onDraftCreated }: Props) {
             accountConfirmations: {},
           });
           
-          // Show first account confirmation (debit_account, then credit_account, etc.)
+          setParseError(null);
           const firstKey = Object.keys(data.accountConfirmation)[0];
           setAccountConfirmation({
             key: firstKey,
             data: data.accountConfirmation[firstKey],
           });
-          return; // Wait for user confirmation
+          return;
         }
 
-        // No confirmation needed, proceed with draft creation
-        await createDraftWithAccounts(data.draft, data.contactId, values.prompt, fileIds);
+        setParseError(null);
+        await createDraftWithAccounts(
+          data.draft,
+          data.contactId,
+          values.prompt ?? "",
+          fileIds
+        );
       } catch (error) {
         console.error(error);
-        toast.error("Failed to process your request", {
-          description: error instanceof Error ? error.message : "Please try again.",
-        });
+        const msg = error instanceof Error ? error.message : "Failed to process your request.";
+        setParseError(msg);
+        toast.error(msg);
       }
     });
   };
 
+  /** Doc 6: Submit clarification and retry parse. */
+  const handleClarifySubmit = async () => {
+    const sid = sessionId ?? (typeof window !== "undefined" ? localStorage.getItem(SESSION_STORAGE_KEY) : null);
+    const text = (clarifyText ?? "").trim();
+    if (!sid || !text) {
+      toast.error("Please clarify what this transaction is.");
+      return;
+    }
+    setParseError(null);
+    startProcessing(async () => {
+      try {
+        const res = await fetch(`/api/prompt/session/${sid}/retry`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ clarification: text }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          setParseError(data.error ?? "Retry failed");
+          toast.error(data.error ?? "Retry failed");
+          return;
+        }
+        setSessionId(data.session_id ?? sid);
+        if (data.draft_id) {
+          setNeedsClarification(null);
+          setClarifyText("");
+          handleDraftReady(data.draft_id, (pendingDraftData?.documentIds as string[]) ?? []);
+          return;
+        }
+        if (data.needs_clarification) {
+          setNeedsClarification(data.needs_clarification);
+          setClarifyText("");
+          toast.info("Still unsure. Please add more detail.");
+          return;
+        }
+        if (data.cashContextConfirmation?.required) {
+          setNeedsClarification(null);
+          setPendingDraftData({
+            draft: data.draft,
+            contactId: data.contactId,
+            rawPrompt: "",
+            documentIds: pendingDraftData?.documentIds ?? [],
+            originalAccountConfirmations: data.accountConfirmation ?? {},
+            accountConfirmations: {},
+            cashBankSelection: data.cashBankSelection,
+          });
+          setCashContextConfirmation(data.cashContextConfirmation);
+          return;
+        }
+        if (data.cashBankSelection) {
+          setNeedsClarification(null);
+          setPendingDraftData({
+            draft: data.draft,
+            contactId: data.contactId,
+            rawPrompt: "",
+            documentIds: pendingDraftData?.documentIds ?? [],
+            originalAccountConfirmations: data.accountConfirmation ?? {},
+            accountConfirmations: {},
+          });
+          setCashBankSelection(data.cashBankSelection);
+          return;
+        }
+        if (data.accountConfirmation && Object.keys(data.accountConfirmation).length > 0) {
+          setNeedsClarification(null);
+          setPendingDraftData({
+            draft: data.draft,
+            contactId: data.contactId,
+            rawPrompt: "",
+            documentIds: pendingDraftData?.documentIds ?? [],
+            originalAccountConfirmations: data.accountConfirmation,
+            accountConfirmation: {},
+          });
+          const firstKey = Object.keys(data.accountConfirmation)[0];
+          setAccountConfirmation({ key: firstKey, data: data.accountConfirmation[firstKey] });
+          return;
+        }
+        setNeedsClarification(null);
+        setClarifyText("");
+        await createDraftWithAccounts(
+          data.draft,
+          data.contactId,
+          "",
+          (pendingDraftData?.documentIds as string[]) ?? []
+        );
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "Failed to submit clarification.";
+        setParseError(msg);
+        toast.error(msg);
+      }
+    });
+  };
+
+  const handleRetry = async () => {
+    setParseError(null);
+    const sid = sessionId ?? (typeof window !== "undefined" ? localStorage.getItem(SESSION_STORAGE_KEY) : null);
+    if (sid) {
+      startProcessing(async () => {
+        try {
+          const res = await fetch(`/api/prompt/session/${sid}/retry`, { method: "POST" });
+          const data = await res.json();
+          if (!res.ok) {
+            setParseError(data.error ?? "Retry failed");
+            toast.error(data.error ?? "Retry failed");
+            return;
+          }
+          setSessionId(data.session_id);
+          if (data.draft_id) {
+            handleDraftReady(data.draft_id, (pendingDraftData?.documentIds as string[]) ?? []);
+            return;
+          }
+          if (data.needs_clarification) {
+            setNeedsClarification(data.needs_clarification);
+            setClarifyText("");
+            return;
+          }
+          if (data.cashContextConfirmation?.required) {
+            setPendingDraftData({
+              draft: data.draft,
+              contactId: data.contactId,
+              rawPrompt: "",
+              documentIds: [],
+              originalAccountConfirmations: data.accountConfirmation ?? {},
+              accountConfirmations: {},
+              cashBankSelection: data.cashBankSelection,
+            });
+            setCashContextConfirmation(data.cashContextConfirmation);
+            return;
+          }
+          if (data.cashBankSelection) {
+            setPendingDraftData({
+              draft: data.draft,
+              contactId: data.contactId,
+              rawPrompt: "",
+              documentIds: [],
+              originalAccountConfirmations: data.accountConfirmation ?? {},
+              accountConfirmations: {},
+            });
+            setCashBankSelection(data.cashBankSelection);
+            return;
+          }
+          if (data.accountConfirmation && Object.keys(data.accountConfirmation).length > 0) {
+            setPendingDraftData({
+              draft: data.draft,
+              contactId: data.contactId,
+              rawPrompt: "",
+              documentIds: [],
+              originalAccountConfirmations: data.accountConfirmation,
+              accountConfirmations: {},
+            });
+            const firstKey = Object.keys(data.accountConfirmation)[0];
+            setAccountConfirmation({ key: firstKey, data: data.accountConfirmation[firstKey] });
+          }
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : "Retry failed";
+          setParseError(msg);
+          toast.error(msg);
+        }
+      });
+      return;
+    }
+    form.handleSubmit(onSubmit)();
+  };
+
   const handleDraftUpdated = () => {
-    // Refresh the draft data if needed
     router.refresh();
+  };
+
+  const handleDraftReady = (draftId: string, fileIds: string[]) => {
+    setParseError(null);
+    setSessionId(null);
+    setDraftId(draftId);
+    setDocumentIds(fileIds);
+    form.reset();
+    setUploadedFiles([]);
+    clearSavedPrompt();
+    setPendingDraftData(null);
+    setNeedsClarification(null);
+    setClarifyText("");
+    setCashContextConfirmation(null);
+    setCashBankSelection(null);
+    setAccountConfirmation(null);
+    if (onDraftCreated) onDraftCreated(draftId);
+    router.refresh();
+    toast.success("Draft created successfully");
   };
 
   const handleClosePanel = () => {
@@ -325,63 +535,80 @@ export function UnifiedInput({ onDraftCreated }: Props) {
       return;
     }
 
+    if (sessionId) {
+      try {
+        setParseError(null);
+        const res = await fetch(`/api/prompt/session/${sessionId}/answer`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ answer: { type: "cash_context", isCashBank } }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          setParseError(data.error ?? "Failed to submit answer");
+          toast.error(data.error ?? "Failed to submit answer");
+          return;
+        }
+        if (data.draft_id) {
+          handleDraftReady(data.draft_id, pendingDraftData.documentIds ?? []);
+          setCashContextConfirmation(null);
+          return;
+        }
+        if (data.cashBankSelection) {
+          isTransitioningToBankSelection.current = true;
+          setCashBankSelection(data.cashBankSelection);
+          setCashContextConfirmation(null);
+          setPendingDraftData((p: any) => (p ? { ...p, draft: data.draft, contactId: data.contactId } : p));
+          setTimeout(() => { isTransitioningToBankSelection.current = false; }, 100);
+          return;
+        }
+        if (data.accountConfirmation && Object.keys(data.accountConfirmation).length > 0) {
+          setCashContextConfirmation(null);
+          const firstKey = Object.keys(data.accountConfirmation)[0];
+          setAccountConfirmation({ key: firstKey, data: data.accountConfirmation[firstKey] });
+          setPendingDraftData((p: any) => (p ? { ...p, draft: data.draft, contactId: data.contactId } : p));
+          return;
+        }
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "Failed to submit answer";
+        setParseError(msg);
+        toast.error(msg);
+      }
+      return;
+    }
+
     if (isCashBank) {
-      // User confirmed it's cash/bank - now show bank selection
       if (pendingDraftData.cashBankSelection) {
-        // CRITICAL: Set flag to indicate we're transitioning to bank selection
-        // This prevents onClose from clearing pendingDraftData
         isTransitioningToBankSelection.current = true;
-        // Set bank selection FIRST, then close cash context dialog
         setCashBankSelection(pendingDraftData.cashBankSelection);
-        // Now close cash context dialog - pendingDraftData will be preserved
         setCashContextConfirmation(null);
-        // Reset flag after a brief delay to allow state updates
-        setTimeout(() => {
-          isTransitioningToBankSelection.current = false;
-        }, 100);
+        setTimeout(() => { isTransitioningToBankSelection.current = false; }, 100);
       } else {
-        // Close cash context dialog
         setCashContextConfirmation(null);
-        // If no bank selection data, we need to trigger it
-        // Re-parse with cash/bank context or show bank selection directly
-        // For now, proceed to account confirmations if any
-        if (pendingDraftData.originalAccountConfirmations && 
-            Object.keys(pendingDraftData.originalAccountConfirmations).length > 0) {
+        if (pendingDraftData.originalAccountConfirmations && Object.keys(pendingDraftData.originalAccountConfirmations).length > 0) {
           const firstKey = Object.keys(pendingDraftData.originalAccountConfirmations)[0];
-          setAccountConfirmation({
-            key: firstKey,
-            data: pendingDraftData.originalAccountConfirmations[firstKey],
-          });
+          setAccountConfirmation({ key: firstKey, data: pendingDraftData.originalAccountConfirmations[firstKey] });
         } else {
-          // No confirmations needed, proceed with draft
           await createDraftWithAccounts(
             pendingDraftData.draft,
             pendingDraftData.contactId,
             pendingDraftData.rawPrompt,
-            pendingDraftData.documentIds,
+            pendingDraftData.documentIds ?? [],
           );
           setPendingDraftData(null);
         }
       }
     } else {
-      // User said it's NOT cash/bank - proceed without cash/bank selection
-      // Close cash context dialog first
       setCashContextConfirmation(null);
-      // Check if there are account confirmations needed
-      if (pendingDraftData.originalAccountConfirmations && 
-          Object.keys(pendingDraftData.originalAccountConfirmations).length > 0) {
+      if (pendingDraftData.originalAccountConfirmations && Object.keys(pendingDraftData.originalAccountConfirmations).length > 0) {
         const firstKey = Object.keys(pendingDraftData.originalAccountConfirmations)[0];
-        setAccountConfirmation({
-          key: firstKey,
-          data: pendingDraftData.originalAccountConfirmations[firstKey],
-        });
+        setAccountConfirmation({ key: firstKey, data: pendingDraftData.originalAccountConfirmations[firstKey] });
       } else {
-        // No confirmations needed, proceed with draft
         await createDraftWithAccounts(
           pendingDraftData.draft,
           pendingDraftData.contactId,
           pendingDraftData.rawPrompt,
-          pendingDraftData.documentIds,
+          pendingDraftData.documentIds ?? [],
         );
         setPendingDraftData(null);
       }
@@ -394,8 +621,42 @@ export function UnifiedInput({ onDraftCreated }: Props) {
       return;
     }
 
-    // Update draft with selected cash/bank account (debit or credit)
-    // Create a new draft object to ensure React state updates properly
+    if (sessionId) {
+      try {
+        setParseError(null);
+        const res = await fetch(`/api/prompt/session/${sessionId}/answer`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            answer: { type: "cash_bank_selection", accountId, accountKey },
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          setParseError(data.error ?? "Failed to submit answer");
+          toast.error(data.error ?? "Failed to submit answer");
+          return;
+        }
+        if (data.draft_id) {
+          handleDraftReady(data.draft_id, pendingDraftData.documentIds ?? []);
+          setCashBankSelection(null);
+          return;
+        }
+        if (data.accountConfirmation && Object.keys(data.accountConfirmation).length > 0) {
+          setCashBankSelection(null);
+          const firstKey = Object.keys(data.accountConfirmation)[0];
+          setAccountConfirmation({ key: firstKey, data: data.accountConfirmation[firstKey] });
+          setPendingDraftData((p: any) => (p ? { ...p, draft: data.draft, contactId: data.contactId } : p));
+          return;
+        }
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "Failed to submit answer";
+        setParseError(msg);
+        toast.error(msg);
+      }
+      return;
+    }
+
     const existingAccounts = pendingDraftData.draft.accounts || {};
     const updatedDraft = {
       ...pendingDraftData.draft,
@@ -413,47 +674,27 @@ export function UnifiedInput({ onDraftCreated }: Props) {
         },
       },
     };
+    const updatedPendingData = { ...pendingDraftData, draft: updatedDraft };
 
-    // Update pending draft data with the updated draft
-    const updatedPendingData = {
-      ...pendingDraftData,
-      draft: updatedDraft,
-    };
-
-    // Check if there are account confirmations needed (e.g., credit account)
-    if (updatedPendingData.originalAccountConfirmations && 
-        Object.keys(updatedPendingData.originalAccountConfirmations).length > 0) {
-      // Close cash/bank selection dialog first
+    if (updatedPendingData.originalAccountConfirmations && Object.keys(updatedPendingData.originalAccountConfirmations).length > 0) {
       setCashBankSelection(null);
-      // Show first account confirmation
       const firstKey = Object.keys(updatedPendingData.originalAccountConfirmations)[0];
       setPendingDraftData(updatedPendingData);
-      setAccountConfirmation({
-        key: firstKey,
-        data: updatedPendingData.originalAccountConfirmations[firstKey],
-      });
+      setAccountConfirmation({ key: firstKey, data: updatedPendingData.originalAccountConfirmations[firstKey] });
     } else {
-      // No other confirmations needed, proceed with draft creation
-      // Close cash/bank selection dialog
       setCashBankSelection(null);
-      
       try {
         await createDraftWithAccounts(
           updatedDraft,
           updatedPendingData.contactId,
           updatedPendingData.rawPrompt,
-          updatedPendingData.documentIds,
+          updatedPendingData.documentIds ?? [],
         );
         setPendingDraftData(null);
-        // Note: createDraftWithAccounts already calls setDraftId and onDraftCreated
-        // which triggers the split view in PromptWorkspace
       } catch (error) {
-        // Restore pending data so user can try again
         setPendingDraftData(updatedPendingData);
-        toast.error("Failed to create draft", {
-          description: error instanceof Error ? error.message : "Please try again.",
-        });
-        throw error; // Re-throw so dialog doesn't close
+        toast.error("Failed to create draft", { description: error instanceof Error ? error.message : "Please try again." });
+        throw error;
       }
     }
   };
@@ -466,16 +707,59 @@ export function UnifiedInput({ onDraftCreated }: Props) {
   }) => {
     if (!pendingDraftData || !accountConfirmation) return;
 
+    if (sessionId) {
+      try {
+        setParseError(null);
+        const res = await fetch(`/api/prompt/session/${sessionId}/answer`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            answer: {
+              type: "account_confirmation",
+              key: accountConfirmation.key,
+              decision: {
+                useExisting: decision.useExisting,
+                accountId: decision.accountId,
+                accountName: decision.accountName,
+                accountType: decision.accountType,
+              },
+            },
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          setParseError(data.error ?? "Failed to submit answer");
+          toast.error(data.error ?? "Failed to submit answer");
+          return;
+        }
+        if (data.draft_id) {
+          handleDraftReady(data.draft_id, pendingDraftData.documentIds ?? []);
+          setAccountConfirmation(null);
+          setPendingDraftData(null);
+          return;
+        }
+        if (data.accountConfirmation && Object.keys(data.accountConfirmation).length > 0) {
+          const firstKey = Object.keys(data.accountConfirmation)[0];
+          setAccountConfirmation({ key: firstKey, data: data.accountConfirmation[firstKey] });
+          setPendingDraftData((p: any) => (p ? { ...p, draft: data.draft, contactId: data.contactId } : p));
+          return;
+        }
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "Failed to submit answer";
+        setParseError(msg);
+        toast.error(msg);
+      }
+      return;
+    }
+
     const { autoCreateAccountAction } = await import("@/lib/actions/accounts");
     let accountId: string | undefined = decision.accountId;
 
     // If creating new account, auto-create it
     if (!decision.useExisting && decision.accountName && decision.accountType) {
       try {
-        // Get category from AI suggestion if available
         const accountSuggestion = accountConfirmation.data.suggested;
         const category = accountSuggestion.suggested_category ?? null;
-        
         const createdAccount = await autoCreateAccountAction(
           decision.accountName,
           decision.accountType as "asset" | "liability" | "equity" | "revenue" | "expense",
@@ -492,50 +776,69 @@ export function UnifiedInput({ onDraftCreated }: Props) {
       }
     }
 
-    // Update draft data with confirmed account
     const accountKey = accountConfirmation.key;
-    if (pendingDraftData.draft.accounts && pendingDraftData.draft.accounts[accountKey]) {
-      // Store the confirmed account ID in the existing_account_id field
-      pendingDraftData.draft.accounts[accountKey].existing_account_id = accountId ?? null;
-    }
-
-    // Store all account confirmations in pendingDraftData
-    if (!pendingDraftData.accountConfirmations) {
-      pendingDraftData.accountConfirmations = {};
-    }
-    pendingDraftData.accountConfirmations[accountKey] = {
-      accountId: accountId ?? null,
-      useExisting: decision.useExisting,
+    const accountConfirmations = {
+      ...(pendingDraftData.accountConfirmations || {}),
+      [accountKey]: { accountId: accountId ?? null, useExisting: decision.useExisting },
     };
 
-    // Check if there are more accounts to confirm
+    const updatedDraft = { ...pendingDraftData.draft };
+    if (updatedDraft.accounts && updatedDraft.accounts[accountKey]) {
+      updatedDraft.accounts = {
+        ...updatedDraft.accounts,
+        [accountKey]: {
+          ...updatedDraft.accounts[accountKey],
+          existing_account_id: accountId ?? null,
+        },
+      };
+    }
+
+    const updatedPending = {
+      ...pendingDraftData,
+      draft: updatedDraft,
+      accountConfirmations,
+    };
+    setPendingDraftData(updatedPending);
+
     const allConfirmationKeys = Object.keys(pendingDraftData.originalAccountConfirmations || {});
-    const confirmedKeys = Object.keys(pendingDraftData.accountConfirmations || {});
-    const remainingKeys = allConfirmationKeys.filter((key) => !confirmedKeys.includes(key));
+    const confirmedKeys = Object.keys(accountConfirmations);
+    const remainingKeys = allConfirmationKeys.filter((k) => !confirmedKeys.includes(k));
 
     if (remainingKeys.length > 0) {
-      // Show next confirmation dialog
       const nextKey = remainingKeys[0];
       setAccountConfirmation({
         key: nextKey,
-        data: pendingDraftData.originalAccountConfirmations[nextKey],
+        data: updatedPending.originalAccountConfirmations![nextKey],
       });
-    } else {
-      // All accounts confirmed, update draft with confirmed account IDs and proceed
-      Object.entries(pendingDraftData.accountConfirmations).forEach(([key, conf]: [string, any]) => {
-        if (pendingDraftData.draft.accounts && pendingDraftData.draft.accounts[key]) {
-          pendingDraftData.draft.accounts[key].existing_account_id = conf.accountId;
+      return;
+    }
+
+    // All confirmed: build final draft with all account IDs and create
+    const finalDraft = { ...updatedPending.draft };
+    if (finalDraft.accounts) {
+      const accounts = { ...finalDraft.accounts };
+      Object.entries(accountConfirmations).forEach(([k, conf]) => {
+        const { accountId: aid } = conf as { accountId: string | null; useExisting: boolean };
+        if (accounts[k]) {
+          accounts[k] = { ...accounts[k], existing_account_id: aid };
         }
       });
+      finalDraft.accounts = accounts;
+    }
 
-      setAccountConfirmation(null);
+    try {
       await createDraftWithAccounts(
-        pendingDraftData.draft,
-        pendingDraftData.contactId,
-        pendingDraftData.rawPrompt,
-        pendingDraftData.documentIds,
+        finalDraft,
+        updatedPending.contactId,
+        updatedPending.rawPrompt,
+        updatedPending.documentIds ?? [],
       );
+      setAccountConfirmation(null);
       setPendingDraftData(null);
+    } catch (err) {
+      toast.error("Failed to create draft", {
+        description: err instanceof Error ? err.message : "Please try again.",
+      });
     }
   };
 
@@ -584,7 +887,7 @@ export function UnifiedInput({ onDraftCreated }: Props) {
           <div>
             <CardTitle>Tell us what happened</CardTitle>
             <CardDescription>
-              You can type, upload documents, or do both.
+              Describe what happened, upload documents only, or both.
             </CardDescription>
           </div>
           {/* Save Status Indicator */}
@@ -609,10 +912,72 @@ export function UnifiedInput({ onDraftCreated }: Props) {
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
+        {needsClarification ? (
+          <div className="space-y-4">
+            <Alert>
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription className="space-y-3">
+                <p>{needsClarification.message}</p>
+                {needsClarification.options && needsClarification.options.length > 0 && (
+                  <div className="flex flex-wrap gap-2">
+                    {needsClarification.options.map((opt) => (
+                      <Button
+                        key={opt}
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setClarifyText(opt)}
+                      >
+                        {opt}
+                      </Button>
+                    ))}
+                  </div>
+                )}
+              </AlertDescription>
+            </Alert>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Clarify (or use a quick option above)</label>
+              <Textarea
+                rows={4}
+                placeholder="e.g. It's an invoice from ABC for office supplies."
+                value={clarifyText}
+                onChange={(e) => setClarifyText(e.target.value)}
+                disabled={isProcessing}
+              />
+            </div>
+            {parseError && (
+              <Alert variant="destructive">
+                <AlertCircle className="h-4 w-4 shrink-0" />
+                <AlertDescription>{parseError}</AlertDescription>
+              </Alert>
+            )}
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  setNeedsClarification(null);
+                  setClarifyText("");
+                  setParseError(null);
+                }}
+                disabled={isProcessing}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                disabled={isProcessing || !clarifyText.trim()}
+                onClick={handleClarifySubmit}
+              >
+                {isProcessing ? "Submitting…" : "Submit clarification"}
+              </Button>
+            </div>
+          </div>
+        ) : (
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
           <Textarea
             rows={8}
-            placeholder="Example: Received an invoice from ABC Suppliers for $500 for office supplies on January 15, 2025..."
+            placeholder="Example: Received an invoice from ABC Suppliers for $500 for office supplies on January 15, 2025. Or leave empty and upload documents only."
             {...form.register("prompt")}
             disabled={isProcessing}
           />
@@ -661,9 +1026,9 @@ export function UnifiedInput({ onDraftCreated }: Props) {
                     className="flex items-center justify-between gap-2 text-sm"
                   >
                     <div className="flex items-center gap-2 flex-1 min-w-0">
-                      <FileText className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                      <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
                       <span className="truncate">{uploadedFile.file.name}</span>
-                      <span className="text-xs text-muted-foreground flex-shrink-0">
+                      <span className="text-xs text-muted-foreground shrink-0">
                         ({(uploadedFile.file.size / 1024).toFixed(0)} KB)
                       </span>
                     </div>
@@ -686,7 +1051,28 @@ export function UnifiedInput({ onDraftCreated }: Props) {
           <Button type="submit" disabled={isProcessing} className="w-full">
             {isProcessing ? "Processing..." : "Generate Draft"}
           </Button>
+
+          {parseError && (
+            <Alert variant="destructive" className="mt-4">
+              <AlertCircle className="h-4 w-4 shrink-0" />
+              <AlertDescription className="flex flex-col gap-2">
+                <span>{parseError}</span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handleRetry}
+                  disabled={isProcessing}
+                  className="w-fit border-destructive/50 text-destructive hover:bg-destructive/10"
+                >
+                  <RotateCcw className="h-3 w-3 mr-2" />
+                  Retry
+                </Button>
+              </AlertDescription>
+            </Alert>
+          )}
         </form>
+        )}
 
         {/* Cash Context Confirmation Dialog (STEP 1) */}
         {cashContextConfirmation && (
@@ -724,6 +1110,7 @@ export function UnifiedInput({ onDraftCreated }: Props) {
         {/* Account Confirmation Dialog */}
         {accountConfirmation && (
           <AccountConfirmationDialog
+            key={accountConfirmation.key}
             open={!!accountConfirmation}
             onClose={() => {
               setAccountConfirmation(null);

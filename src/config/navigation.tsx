@@ -66,7 +66,7 @@ export const mainNavigation: NavItem[] = [
     title: "Bank Reconciliation",
     href: "/bank",
     icon: Banknote,
-    description: "Upload bank CSV files and match transactions.",
+    description: "Upload bank statement PDFs and match transactions.",
   },
   {
     title: "Reports",

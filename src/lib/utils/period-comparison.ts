@@ -9,6 +9,26 @@
  * - Custom range vs baseline
  */
 
+/**
+ * Format date to YYYY-MM-DD in local timezone (not UTC)
+ * Prevents timezone shifts when converting dates
+ */
+function formatLocalDate(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+/**
+ * Parse date string as local date (not UTC)
+ * Prevents timezone shifts when parsing YYYY-MM-DD strings
+ */
+function parseLocalDate(dateString: string): Date {
+  const [year, month, day] = dateString.split("-").map(Number);
+  return new Date(year, month - 1, day);
+}
+
 export interface PeriodComparison {
   current: number;
   previous: number;
@@ -30,8 +50,9 @@ export function getPreviousPeriodRange(
   startDate: string,
   endDate: string,
 ): DateRange {
-  const start = new Date(startDate);
-  const end = new Date(endDate);
+  // Parse as local dates to avoid timezone shifts
+  const start = parseLocalDate(startDate);
+  const end = parseLocalDate(endDate);
   const daysDiff = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
 
   const prevEnd = new Date(start);
@@ -40,8 +61,8 @@ export function getPreviousPeriodRange(
   prevStart.setDate(prevStart.getDate() - daysDiff);
 
   return {
-    startDate: prevStart.toISOString().split("T")[0],
-    endDate: prevEnd.toISOString().split("T")[0],
+    startDate: formatLocalDate(prevStart),
+    endDate: formatLocalDate(prevEnd),
   };
 }
 
@@ -52,15 +73,16 @@ export function getSamePeriodLastYear(
   startDate: string,
   endDate: string,
 ): DateRange {
-  const start = new Date(startDate);
-  const end = new Date(endDate);
+  // Parse as local dates to avoid timezone shifts
+  const start = parseLocalDate(startDate);
+  const end = parseLocalDate(endDate);
 
   start.setFullYear(start.getFullYear() - 1);
   end.setFullYear(end.getFullYear() - 1);
 
   return {
-    startDate: start.toISOString().split("T")[0],
-    endDate: end.toISOString().split("T")[0],
+    startDate: formatLocalDate(start),
+    endDate: formatLocalDate(end),
   };
 }
 
@@ -73,8 +95,8 @@ export function getPreviousMonth(): DateRange {
   const prevMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0);
 
   return {
-    startDate: prevMonth.toISOString().split("T")[0],
-    endDate: prevMonthEnd.toISOString().split("T")[0],
+    startDate: formatLocalDate(prevMonth),
+    endDate: formatLocalDate(prevMonthEnd),
   };
 }
 
@@ -87,8 +109,8 @@ export function getCurrentMonth(): DateRange {
   const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0);
 
   return {
-    startDate: firstDay.toISOString().split("T")[0],
-    endDate: lastDay.toISOString().split("T")[0],
+    startDate: formatLocalDate(firstDay),
+    endDate: formatLocalDate(lastDay),
   };
 }
 
@@ -102,8 +124,8 @@ export function getCurrentQuarter(): DateRange {
   const lastDay = new Date(now.getFullYear(), (quarter + 1) * 3, 0);
 
   return {
-    startDate: firstDay.toISOString().split("T")[0],
-    endDate: lastDay.toISOString().split("T")[0],
+    startDate: formatLocalDate(firstDay),
+    endDate: formatLocalDate(lastDay),
   };
 }
 
@@ -119,8 +141,8 @@ export function getPreviousQuarter(): DateRange {
   const lastDay = new Date(prevYear, (prevQuarter + 1) * 3, 0);
 
   return {
-    startDate: firstDay.toISOString().split("T")[0],
-    endDate: lastDay.toISOString().split("T")[0],
+    startDate: formatLocalDate(firstDay),
+    endDate: formatLocalDate(lastDay),
   };
 }
 
@@ -133,8 +155,8 @@ export function getCurrentYear(): DateRange {
   const lastDay = new Date(now.getFullYear(), 11, 31);
 
   return {
-    startDate: firstDay.toISOString().split("T")[0],
-    endDate: lastDay.toISOString().split("T")[0],
+    startDate: formatLocalDate(firstDay),
+    endDate: formatLocalDate(lastDay),
   };
 }
 
@@ -147,8 +169,53 @@ export function getPreviousYear(): DateRange {
   const lastDay = new Date(now.getFullYear() - 1, 11, 31);
 
   return {
-    startDate: firstDay.toISOString().split("T")[0],
-    endDate: lastDay.toISOString().split("T")[0],
+    startDate: formatLocalDate(firstDay),
+    endDate: formatLocalDate(lastDay),
+  };
+}
+
+/**
+ * Get last month (completed previous month)
+ */
+export function getLastMonth(): DateRange {
+  const now = new Date();
+  const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0);
+
+  return {
+    startDate: formatLocalDate(lastMonth),
+    endDate: formatLocalDate(lastMonthEnd),
+  };
+}
+
+/**
+ * Get last quarter (completed previous quarter)
+ */
+export function getLastQuarter(): DateRange {
+  const now = new Date();
+  const currentQuarter = Math.floor(now.getMonth() / 3);
+  const lastQuarter = currentQuarter === 0 ? 3 : currentQuarter - 1;
+  const lastQuarterYear = currentQuarter === 0 ? now.getFullYear() - 1 : now.getFullYear();
+  const firstDay = new Date(lastQuarterYear, lastQuarter * 3, 1);
+  const lastDay = new Date(lastQuarterYear, (lastQuarter + 1) * 3, 0);
+
+  return {
+    startDate: formatLocalDate(firstDay),
+    endDate: formatLocalDate(lastDay),
+  };
+}
+
+/**
+ * Get last year (completed previous year)
+ */
+export function getLastYear(): DateRange {
+  const now = new Date();
+  const firstDay = new Date(now.getFullYear() - 1, 0, 1);
+  const lastDay = new Date(now.getFullYear() - 1, 11, 31);
+
+  return {
+    startDate: formatLocalDate(firstDay),
+    endDate: formatLocalDate(lastDay),
   };
 }
 

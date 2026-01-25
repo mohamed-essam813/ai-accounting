@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { useForm, useFieldArray } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -14,8 +15,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { createJournalEntryAction } from "@/lib/actions/journals";
+import {
+  createJournalEntryAction,
+  updateJournalEntryAction,
+} from "@/lib/actions/journals";
 import { toast } from "sonner";
+import Link from "next/link";
 import { Plus, Trash2 } from "lucide-react";
 import { formatCurrency } from "@/lib/format";
 
@@ -51,28 +56,83 @@ type Account = {
   type: string;
 };
 
-type Props = {
-  accounts: Account[];
+type EditEntry = {
+  id: string;
+  date: string;
+  description: string;
+  journal_lines: Array<{
+    account_id: string;
+    debit: number;
+    credit: number;
+    memo?: string | null;
+  }>;
 };
 
-export function JournalEntryForm({ accounts }: Props) {
+type Props = {
+  accounts: Account[];
+  editEntry?: EditEntry | null;
+  cancelHref?: string;
+};
+
+function getDefaultFormValues(): FormValues {
+  return {
+    date: new Date().toISOString().slice(0, 10),
+    description: "",
+    lines: [
+      { account_id: "", debit: 0, credit: 0, memo: "" },
+      { account_id: "", debit: 0, credit: 0, memo: "" },
+    ],
+  };
+}
+
+export function JournalEntryForm({
+  accounts,
+  editEntry,
+  cancelHref = "/journals",
+}: Props) {
+  const router = useRouter();
   const [isPending, startTransition] = useTransition();
+  const [template, setTemplate] = useState<string>("none");
+  const isEdit = !!editEntry;
+
   const form = useForm<FormValues>({
     resolver: zodResolver(JournalEntryFormSchema),
-    defaultValues: {
-      date: new Date().toISOString().slice(0, 10),
-      description: "",
-      lines: [
-        { account_id: "", debit: 0, credit: 0, memo: "" },
-        { account_id: "", debit: 0, credit: 0, memo: "" },
-      ],
-    },
+    defaultValues: isEdit
+      ? {
+          date: editEntry!.date,
+          description: editEntry!.description,
+          lines: editEntry!.journal_lines.map((l) => ({
+            account_id: l.account_id,
+            debit: Number(l.debit),
+            credit: Number(l.credit),
+            memo: l.memo ?? "",
+          })),
+        }
+      : getDefaultFormValues(),
   });
 
-  const { fields, append, remove } = useFieldArray({
+  const { fields, append, remove, replace } = useFieldArray({
     control: form.control,
     name: "lines",
   });
+
+  const TEMPLATES = [
+    { value: "none", label: "None" },
+    { value: "depreciation", label: "Depreciation", description: "Monthly depreciation" },
+    { value: "accrual", label: "Accrual", description: "Accrual" },
+    { value: "adjustment", label: "Adjustment", description: "Adjustment" },
+  ] as const;
+
+  const applyTemplate = (value: string) => {
+    setTemplate(value);
+    const t = TEMPLATES.find((x) => x.value === value);
+    if (!t || t.value === "none") return;
+    form.setValue("description", t.description ?? "");
+    replace([
+      { account_id: "", debit: 0, credit: 0, memo: "" },
+      { account_id: "", debit: 0, credit: 0, memo: "" },
+    ]);
+  };
 
   const accountOptions = accounts.map((account) => ({
     id: account.id,
@@ -86,36 +146,71 @@ export function JournalEntryForm({ accounts }: Props) {
   const onSubmit = (values: FormValues) => {
     startTransition(async () => {
       try {
-        await createJournalEntryAction({
-          date: values.date,
-          description: values.description,
-          lines: values.lines.map((line) => ({
-            account_id: line.account_id,
-            debit: Number(line.debit),
-            credit: Number(line.credit),
-            memo: line.memo || null,
-          })),
-        });
-        toast.success("Journal entry created");
-        form.reset({
-          date: new Date().toISOString().slice(0, 10),
-          description: "",
-          lines: [
-            { account_id: "", debit: 0, credit: 0, memo: "" },
-            { account_id: "", debit: 0, credit: 0, memo: "" },
-          ],
-        });
+        if (isEdit && editEntry) {
+          await updateJournalEntryAction({
+            entryId: editEntry.id,
+            date: values.date,
+            description: values.description,
+            lines: values.lines.map((line) => ({
+              account_id: line.account_id,
+              debit: Number(line.debit),
+              credit: Number(line.credit),
+              memo: line.memo || null,
+            })),
+          });
+          toast.success("Draft updated.");
+          router.push(cancelHref);
+          router.refresh();
+        } else {
+          await createJournalEntryAction({
+            date: values.date,
+            description: values.description,
+            lines: values.lines.map((line) => ({
+              account_id: line.account_id,
+              debit: Number(line.debit),
+              credit: Number(line.credit),
+              memo: line.memo || null,
+            })),
+          });
+          toast.success("Saved as draft. An approver can post it.");
+          setTemplate("none");
+          form.reset(getDefaultFormValues());
+          router.refresh();
+        }
       } catch (error) {
         console.error(error);
-        toast.error("Failed to create journal entry", {
-          description: error instanceof Error ? error.message : undefined,
-        });
+        toast.error(
+          isEdit ? "Failed to update journal entry" : "Failed to create journal entry",
+          { description: error instanceof Error ? error.message : undefined },
+        );
       }
     });
   };
 
   return (
     <form className="space-y-6" onSubmit={form.handleSubmit(onSubmit)}>
+      {!isEdit && (
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="space-y-2">
+            <label className="text-sm font-medium">Template</label>
+            <Select value={template} onValueChange={applyTemplate}>
+              <SelectTrigger>
+                <SelectValue placeholder="Use a template (optional)" />
+              </SelectTrigger>
+              <SelectContent>
+                {TEMPLATES.map((t) => (
+                  <SelectItem key={t.value} value={t.value}>
+                    {t.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              Prefill description and 2 lines. Select accounts and amounts.
+            </p>
+          </div>
+        </div>
+      )}
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="space-y-2">
           <label className="text-sm font-medium">Date</label>
@@ -248,9 +343,20 @@ export function JournalEntryForm({ accounts }: Props) {
         </div>
       </div>
 
-      <div className="flex justify-end">
+      <div className="flex justify-end gap-2">
+        {isEdit && (
+          <Button type="button" variant="outline" asChild>
+            <Link href={cancelHref}>Cancel</Link>
+          </Button>
+        )}
         <Button type="submit" disabled={isPending || !isBalanced}>
-          {isPending ? "Creating..." : "Create Journal Entry"}
+          {isPending
+            ? isEdit
+              ? "Updating…"
+              : "Creating…"
+            : isEdit
+              ? "Update draft"
+              : "Create Journal Entry"}
         </Button>
       </div>
     </form>

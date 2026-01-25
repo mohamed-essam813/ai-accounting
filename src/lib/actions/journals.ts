@@ -6,10 +6,12 @@ import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { getCurrentUser } from "@/lib/data/users";
 import { listAccounts } from "@/lib/data/accounts";
 import { ensureBalanced, type JournalLine } from "@/lib/accounting";
+import { canApprove, type UserRole } from "@/lib/auth";
 import type { Database } from "@/lib/database.types";
 
 type JournalEntriesInsert = Database["public"]["Tables"]["journal_entries"]["Insert"];
 type JournalEntriesRow = Database["public"]["Tables"]["journal_entries"]["Row"];
+type JournalEntriesUpdate = Database["public"]["Tables"]["journal_entries"]["Update"];
 type JournalLinesInsert = Database["public"]["Tables"]["journal_lines"]["Insert"];
 type AuditLogsInsert = Database["public"]["Tables"]["audit_logs"]["Insert"];
 
@@ -36,9 +38,14 @@ const CreateJournalEntrySchema = z.object({
     ),
 });
 
+export type CreateJournalOptions = { postImmediately?: boolean };
+
+/** Doc 9: Manual journals created as draft by default. System journals (depreciation, disposal) use postImmediately. */
 export async function createJournalEntryAction(
   input: z.infer<typeof CreateJournalEntrySchema>,
+  options?: CreateJournalOptions,
 ) {
+  const postImmediately = options?.postImmediately ?? false;
   const payload = CreateJournalEntrySchema.parse(input);
   const user = await getCurrentUser();
   if (!user?.tenant) {
@@ -58,15 +65,14 @@ export async function createJournalEntryAction(
 
   ensureBalanced(journalLines);
 
-  // Create journal entry
   const entryData: JournalEntriesInsert = {
     tenant_id: user.tenant.id,
     date: payload.date,
     description: payload.description,
-    status: "posted", // Manual journals are posted immediately
+    status: postImmediately ? "posted" : "draft",
     created_by: user.id,
-    approved_by: user.id,
-    posted_at: new Date().toISOString(),
+    approved_by: postImmediately ? user.id : null,
+    posted_at: postImmediately ? new Date().toISOString() : null,
   };
 
   const entryTable = supabase.from("journal_entries") as unknown as {
@@ -105,7 +111,6 @@ export async function createJournalEntryAction(
     throw linesError;
   }
 
-  // Log audit
   const auditData: AuditLogsInsert = {
     tenant_id: user.tenant.id,
     actor_id: user.id,
@@ -116,6 +121,7 @@ export async function createJournalEntryAction(
       description: payload.description,
       date: payload.date,
       line_count: payload.lines.length,
+      status: postImmediately ? "posted" : "draft",
     },
   };
   const auditTable = supabase.from("audit_logs") as unknown as {
@@ -123,28 +129,114 @@ export async function createJournalEntryAction(
   };
   await auditTable.insert([auditData]);
 
-  // Generate and save insights (async, don't wait)
+  if (postImmediately) {
+    const tenantId = user.tenant.id;
+    import("@/lib/insights/context-builder")
+      .then(({ buildInsightContext }) =>
+        import("@/lib/insights/generate")
+          .then(({ generateInsights }) =>
+            import("@/lib/data/insights").then(({ saveInsights }) =>
+              buildInsightContext(entry.id)
+                .then((context) => generateInsights(context))
+                .then((generatedInsights) => {
+                  const allInsights = [
+                    ...(generatedInsights.primary ?? []),
+                    ...(generatedInsights.secondary ?? []),
+                    ...(generatedInsights.deep_dive ?? []),
+                  ].map((insight) => ({
+                    ...insight,
+                    tenant_id: tenantId,
+                    journal_entry_id: entry.id,
+                  }));
+                  return saveInsights(allInsights);
+                }),
+            ),
+        ),
+    )
+      .catch((err) => console.error("Failed to generate insights:", err));
+  }
+
+  revalidatePath("/journals");
+  revalidatePath("/reports");
+  revalidatePath("/dashboard");
+  return entry.id;
+}
+
+const ApproveSchema = z.object({ entryId: z.string().uuid() });
+
+/**
+ * Doc 9: Approve draft journal entry and post. Admin/accountant only.
+ * Insights are generated after post.
+ */
+export async function approveAndPostJournalEntryAction(
+  input: z.infer<typeof ApproveSchema>,
+) {
+  const { entryId } = ApproveSchema.parse(input);
+  const user = await getCurrentUser();
+  if (!user?.tenant) throw new Error("User tenant not resolved.");
+  if (!canApprove(user.role as UserRole)) {
+    throw new Error("Only administrators and accountants can approve and post journal entries.");
+  }
+
+  const supabase = await createServerSupabaseClient();
+  const { data: entry, error: fetchErr } = await supabase
+    .from("journal_entries")
+    .select("id, tenant_id, status")
+    .eq("id", entryId)
+    .eq("tenant_id", user.tenant.id)
+    .single();
+
+  if (fetchErr || !entry) {
+    throw new Error("Journal entry not found.");
+  }
+  if (entry.status !== "draft") {
+    throw new Error("Only draft entries can be approved and posted.");
+  }
+
+  const updateData: JournalEntriesUpdate = {
+    status: "posted",
+    approved_by: user.id,
+    posted_at: new Date().toISOString(),
+  };
+  const { error: updateErr } = await supabase
+    .from("journal_entries")
+    .update(updateData)
+    .eq("id", entryId)
+    .eq("tenant_id", user.tenant.id);
+
+  if (updateErr) throw updateErr;
+
+  const auditData: AuditLogsInsert = {
+    tenant_id: user.tenant.id,
+    actor_id: user.id,
+    action: "journal.approved",
+    entity: "journal_entries",
+    entity_id: entryId,
+    changes: { approved_by: user.id, posted_at: updateData.posted_at },
+  };
+  await (supabase.from("audit_logs") as unknown as { insert: (v: AuditLogsInsert[]) => Promise<{ error: unknown }> }).insert([auditData]);
+
   const tenantId = user.tenant.id;
   import("@/lib/insights/context-builder")
     .then(({ buildInsightContext }) =>
       import("@/lib/insights/generate")
         .then(({ generateInsights }) =>
-          import("@/lib/data/insights").then(({ saveInsights }) => {
-            return buildInsightContext(entry.id)
+          import("@/lib/data/insights").then(({ saveInsights }) =>
+            buildInsightContext(entryId)
               .then((context) => generateInsights(context))
               .then((generatedInsights) => {
                 const allInsights = [
-                  ...generatedInsights.primary,
-                  ...generatedInsights.secondary,
-                  ...(generatedInsights.deep_dive || []),
+                  ...(generatedInsights.primary ?? []),
+                  ...(generatedInsights.secondary ?? []),
+                  ...(generatedInsights.deep_dive ?? []),
                 ].map((insight) => ({
                   ...insight,
                   tenant_id: tenantId,
-                  journal_entry_id: entry.id,
+                  journal_entry_id: entryId,
                 }));
                 return saveInsights(allInsights);
-              });
-          }),
+              }),
+          ),
         ),
     )
     .catch((err) => console.error("Failed to generate insights:", err));
@@ -152,6 +244,127 @@ export async function createJournalEntryAction(
   revalidatePath("/journals");
   revalidatePath("/reports");
   revalidatePath("/dashboard");
-  return entry.id;
+  return { id: entryId, status: "posted" as const };
+}
+
+const UpdateJournalEntrySchema = CreateJournalEntrySchema.extend({
+  entryId: z.string().uuid(),
+});
+
+/**
+ * Doc 9: Update draft journal entry. Only drafts; posted entries are immutable.
+ */
+export async function updateJournalEntryAction(
+  input: z.infer<typeof UpdateJournalEntrySchema>,
+) {
+  const payload = UpdateJournalEntrySchema.parse(input);
+  const { entryId, ...rest } = payload;
+  const user = await getCurrentUser();
+  if (!user?.tenant) throw new Error("User tenant not resolved.");
+
+  const journalLines: JournalLine[] = rest.lines.map((line) => ({
+    account_id: line.account_id,
+    debit: Number(line.debit.toFixed(2)),
+    credit: Number(line.credit.toFixed(2)),
+    memo: line.memo ?? null,
+  }));
+  ensureBalanced(journalLines);
+
+  const supabase = await createServerSupabaseClient();
+  const { data: entry, error: fetchErr } = await supabase
+    .from("journal_entries")
+    .select("id, tenant_id, status")
+    .eq("id", entryId)
+    .eq("tenant_id", user.tenant.id)
+    .single();
+
+  if (fetchErr || !entry) throw new Error("Journal entry not found.");
+  if (entry.status !== "draft") {
+    throw new Error("Only draft entries can be edited. Posted entries are immutable.");
+  }
+
+  const { error: delLinesErr } = await supabase.from("journal_lines").delete().eq("entry_id", entryId);
+  if (delLinesErr) throw delLinesErr;
+
+  const { error: updateErr } = await supabase
+    .from("journal_entries")
+    .update({ date: rest.date, description: rest.description })
+    .eq("id", entryId)
+    .eq("tenant_id", user.tenant.id);
+
+  if (updateErr) throw updateErr;
+
+  const linesData: JournalLinesInsert[] = journalLines.map((line) => ({
+    entry_id: entryId,
+    account_id: line.account_id,
+    memo: line.memo,
+    debit: line.debit,
+    credit: line.credit,
+  }));
+  const { error: insErr } = await supabase.from("journal_lines").insert(linesData);
+  if (insErr) throw insErr;
+
+  const auditData: AuditLogsInsert = {
+    tenant_id: user.tenant.id,
+    actor_id: user.id,
+    action: "journal.updated",
+    entity: "journal_entries",
+    entity_id: entryId,
+    changes: { description: rest.description, date: rest.date, line_count: rest.lines.length },
+  };
+  await (supabase.from("audit_logs") as unknown as { insert: (v: AuditLogsInsert[]) => Promise<{ error: unknown }> }).insert([auditData]);
+
+  revalidatePath("/journals");
+  revalidatePath("/reports");
+  revalidatePath("/dashboard");
+  return { id: entryId, status: "draft" as const };
+}
+
+const DeleteSchema = z.object({ entryId: z.string().uuid() });
+
+/**
+ * Doc 9: Delete draft journal entry. Only drafts; posted entries cannot be deleted.
+ */
+export async function deleteJournalEntryAction(input: z.infer<typeof DeleteSchema>) {
+  const { entryId } = DeleteSchema.parse(input);
+  const user = await getCurrentUser();
+  if (!user?.tenant) throw new Error("User tenant not resolved.");
+
+  const supabase = await createServerSupabaseClient();
+  const { data: entry, error: fetchErr } = await supabase
+    .from("journal_entries")
+    .select("id, tenant_id, status")
+    .eq("id", entryId)
+    .eq("tenant_id", user.tenant.id)
+    .single();
+
+  if (fetchErr || !entry) throw new Error("Journal entry not found.");
+  if (entry.status !== "draft") {
+    throw new Error("Only draft entries can be deleted. Posted entries are immutable.");
+  }
+
+  await supabase.from("journal_lines").delete().eq("entry_id", entryId);
+  const { error: delErr } = await supabase
+    .from("journal_entries")
+    .delete()
+    .eq("id", entryId)
+    .eq("tenant_id", user.tenant.id);
+
+  if (delErr) throw delErr;
+
+  const auditData: AuditLogsInsert = {
+    tenant_id: user.tenant.id,
+    actor_id: user.id,
+    action: "journal.deleted",
+    entity: "journal_entries",
+    entity_id: entryId,
+    changes: { deleted: true },
+  };
+  await (supabase.from("audit_logs") as unknown as { insert: (v: AuditLogsInsert[]) => Promise<{ error: unknown }> }).insert([auditData]);
+
+  revalidatePath("/journals");
+  revalidatePath("/reports");
+  revalidatePath("/dashboard");
+  return { deleted: true };
 }
 

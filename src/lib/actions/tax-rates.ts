@@ -5,7 +5,6 @@ import { getCurrentUser } from "@/lib/data/users";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
-// Tax rate type definition (moved from data file to avoid server imports in client components)
 export interface TaxRate {
   id: string;
   tenant_id: string;
@@ -21,7 +20,11 @@ export interface TaxRate {
 
 const CreateTaxRateSchema = z.object({
   name: z.string().min(1, "Tax rate name is required"),
-  percentage: z.number().min(0).max(100),
+  percentage: z
+    .number()
+    .refine((n) => !Number.isNaN(n), "Enter a valid number")
+    .refine((n) => n > 0, "Rate must be greater than 0")
+    .refine((n) => n <= 100, "Rate cannot exceed 100"),
   tax_type: z.enum(["input", "output"]),
   output_vat_account_id: z.string().uuid().optional().nullable(),
   input_vat_account_id: z.string().uuid().optional().nullable(),
@@ -32,101 +35,266 @@ const UpdateTaxRateSchema = CreateTaxRateSchema.extend({
   is_active: z.boolean().optional(),
 });
 
+export type CreateTaxRateResult =
+  | { success: true; data: TaxRate }
+  | { success: false; error: string; fieldErrors?: Record<string, string> };
+
+export type UpdateTaxRateResult =
+  | { success: true; data: TaxRate }
+  | { success: false; error: string; fieldErrors?: Record<string, string> };
+
+export type DeleteTaxRateResult = { success: true } | { success: false; error: string };
+
+function zodFieldErrors(issues: z.ZodIssue[]): Record<string, string> {
+  const map: Record<string, string> = {};
+  for (const i of issues) {
+    const path = i.path.join(".");
+    if (path && i.message) map[path] = i.message;
+  }
+  return map;
+}
+
+async function getAccountType(
+  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
+  accountId: string
+): Promise<string | null> {
+  const { data } = await supabase
+    .from("chart_of_accounts")
+    .select("type")
+    .eq("id", accountId)
+    .maybeSingle();
+  return data?.type ?? null;
+}
+
 export async function listTaxRatesAction(): Promise<TaxRate[]> {
-  const user = await getCurrentUser();
-  if (!user?.tenant) {
+  try {
+    const user = await getCurrentUser();
+    if (!user?.tenant) return [];
+
+    const supabase = await createServerSupabaseClient();
+    const { data, error } = await (supabase.from("tax_rates" as any) as any)
+      .select("*")
+      .eq("tenant_id", user.tenant.id)
+      .eq("is_active", true)
+      .order("name", { ascending: true });
+
+    if (error) {
+      console.error("Failed to load tax rates", error);
+      return [];
+    }
+
+    return (data ?? []).map((rate: any) => {
+      const r = Number(rate.rate ?? rate.percentage / 100);
+      return { ...rate, percentage: Math.round(r * 10000) / 100 };
+    });
+  } catch (e) {
+    console.error("listTaxRatesAction", e);
     return [];
   }
-
-  const supabase = await createServerSupabaseClient();
-  // Use type assertion since tax_rates table may not be in generated types yet
-  const { data, error } = await (supabase.from("tax_rates" as any) as any)
-    .select("*")
-    .eq("tenant_id", user.tenant.id)
-    .eq("is_active", true)
-    .order("name", { ascending: true });
-
-  if (error) {
-    console.error("Failed to load tax rates", error);
-    throw error;
-  }
-
-  return (data ?? []).map((rate: any) => ({
-    ...rate,
-    percentage: Number(rate.percentage),
-  }));
 }
 
 export async function createTaxRateAction(
   input: z.infer<typeof CreateTaxRateSchema>
-) {
-  const user = await getCurrentUser();
-  if (!user?.tenant) {
-    throw new Error("User tenant not resolved.");
-  }
+): Promise<CreateTaxRateResult> {
+  try {
+    const user = await getCurrentUser();
+    if (!user?.tenant) {
+      return { success: false, error: "User tenant not resolved." };
+    }
 
-  const payload = CreateTaxRateSchema.parse(input);
-  const supabase = await createServerSupabaseClient();
+    const parsed = CreateTaxRateSchema.safeParse(input);
+    if (!parsed.success) {
+      return {
+        success: false,
+        error: "Validation failed",
+        fieldErrors: zodFieldErrors(parsed.error.issues),
+      };
+    }
 
-  // Check if tax rate with same name already exists
-  // Use type assertion since tax_rates table may not be in generated types yet
-  const { data: existing } = await (supabase.from("tax_rates" as any) as any)
-    .select("id")
-    .eq("tenant_id", user.tenant.id)
-    .eq("name", payload.name)
-    .maybeSingle();
+    const payload = parsed.data;
+    const supabase = await createServerSupabaseClient();
 
-  if (existing) {
-    throw new Error(`A tax rate named "${payload.name}" already exists.`);
-  }
+    const accountRequiredMessage =
+      "Please create and select a tax control account first.";
 
-  // Use type assertion since tax_rates table may not be in generated types yet
-  const { data, error } = await (supabase.from("tax_rates" as any) as any)
-    .insert({
+    if (payload.tax_type === "output") {
+      if (!payload.output_vat_account_id) {
+        return {
+          success: false,
+          error: accountRequiredMessage,
+          fieldErrors: { output_vat_account_id: accountRequiredMessage },
+        };
+      }
+      const accountType = await getAccountType(supabase, payload.output_vat_account_id);
+      if (accountType !== "liability") {
+        return {
+          success: false,
+          error: accountRequiredMessage,
+          fieldErrors: {
+            output_vat_account_id:
+              "Output VAT must link to a liability account.",
+          },
+        };
+      }
+    } else {
+      if (!payload.input_vat_account_id) {
+        return {
+          success: false,
+          error: accountRequiredMessage,
+          fieldErrors: { input_vat_account_id: accountRequiredMessage },
+        };
+      }
+      const accountType = await getAccountType(supabase, payload.input_vat_account_id);
+      if (accountType !== "asset") {
+        return {
+          success: false,
+          error: accountRequiredMessage,
+          fieldErrors: {
+            input_vat_account_id: "Input VAT must link to an asset account.",
+          },
+        };
+      }
+    }
+
+    const { data: existing } = await (supabase.from("tax_rates" as any) as any)
+      .select("id")
+      .eq("tenant_id", user.tenant.id)
+      .eq("name", payload.name)
+      .maybeSingle();
+
+    if (existing) {
+      return {
+        success: false,
+        error: `A tax rate named "${payload.name}" already exists.`,
+        fieldErrors: { name: `A tax rate named "${payload.name}" already exists.` },
+      };
+    }
+
+    const rateDecimal = payload.percentage / 100;
+    const insertPayload = {
       tenant_id: user.tenant.id,
       name: payload.name,
+      rate: rateDecimal,
       percentage: payload.percentage,
       tax_type: payload.tax_type,
-      output_vat_account_id: payload.output_vat_account_id,
-      input_vat_account_id: payload.input_vat_account_id,
+      output_vat_account_id: payload.tax_type === "output" ? payload.output_vat_account_id : null,
+      input_vat_account_id: payload.tax_type === "input" ? payload.input_vat_account_id : null,
       is_active: true,
-    })
-    .select()
-    .single();
+    };
 
-  if (error) {
-    console.error("Failed to create tax rate", error);
-    throw error;
+    const { data, error } = await (supabase.from("tax_rates" as any) as any)
+      .insert(insertPayload)
+      .select()
+      .single();
+
+    if (error) {
+      console.error("Failed to create tax rate", error);
+      return {
+        success: false,
+        error: error.message ?? "Failed to create tax rate.",
+      };
+    }
+
+    revalidatePath("/settings");
+    const r = Number(data.rate ?? data.percentage / 100);
+    return {
+      success: true,
+      data: { ...data, percentage: Math.round(r * 10000) / 100 },
+    };
+  } catch (e) {
+    console.error("createTaxRateAction", e);
+    return {
+      success: false,
+      error: e instanceof Error ? e.message : "Failed to create tax rate.",
+    };
   }
-
-  revalidatePath("/settings");
-  return data;
 }
 
 export async function updateTaxRateAction(
   input: z.infer<typeof UpdateTaxRateSchema>
-) {
-  const user = await getCurrentUser();
-  if (!user?.tenant) {
-    throw new Error("User tenant not resolved.");
-  }
+): Promise<UpdateTaxRateResult> {
+  try {
+    const user = await getCurrentUser();
+    if (!user?.tenant) {
+      return { success: false, error: "User tenant not resolved." };
+    }
 
-  const payload = UpdateTaxRateSchema.parse(input);
-  const supabase = await createServerSupabaseClient();
+    const parsed = UpdateTaxRateSchema.safeParse(input);
+    if (!parsed.success) {
+      return {
+        success: false,
+        error: "Validation failed",
+        fieldErrors: zodFieldErrors(parsed.error.issues),
+      };
+    }
 
-  // Verify tax rate belongs to tenant
-  // Use type assertion since tax_rates table may not be in generated types yet
-  const { data: existing } = await (supabase.from("tax_rates" as any) as any)
-    .select("id")
-    .eq("id", payload.id)
-    .eq("tenant_id", user.tenant.id)
-    .maybeSingle();
+    const payload = parsed.data;
+    const supabase = await createServerSupabaseClient();
 
-  if (!existing) {
-    throw new Error("Tax rate not found.");
-  }
+    const accountRequiredMessage =
+      "Please create and select a tax control account first.";
 
-    // Check if name change conflicts with existing tax rate
+    if (payload.tax_type === "output") {
+      if (!payload.output_vat_account_id) {
+        return {
+          success: false,
+          error: accountRequiredMessage,
+          fieldErrors: { output_vat_account_id: accountRequiredMessage },
+        };
+      }
+      const accountType = await getAccountType(supabase, payload.output_vat_account_id);
+      if (accountType !== "liability") {
+        return {
+          success: false,
+          error: accountRequiredMessage,
+          fieldErrors: {
+            output_vat_account_id:
+              "Output VAT must link to a liability account.",
+          },
+        };
+      }
+    } else {
+      if (!payload.input_vat_account_id) {
+        return {
+          success: false,
+          error: accountRequiredMessage,
+          fieldErrors: { input_vat_account_id: accountRequiredMessage },
+        };
+      }
+      const accountType = await getAccountType(supabase, payload.input_vat_account_id);
+      if (accountType !== "asset") {
+        return {
+          success: false,
+          error: accountRequiredMessage,
+          fieldErrors: {
+            input_vat_account_id: "Input VAT must link to an asset account.",
+          },
+        };
+      }
+    }
+
+    const { data: existing } = await (supabase.from("tax_rates" as any) as any)
+      .select("id")
+      .eq("id", payload.id)
+      .eq("tenant_id", user.tenant.id)
+      .maybeSingle();
+
+    if (!existing) {
+      return { success: false, error: "Tax rate not found." };
+    }
+
+    const { data: used } = await (supabase.rpc as any)(
+      "tax_rate_used_in_posted_drafts",
+      { p_tenant_id: user.tenant.id, p_rate_id: payload.id }
+    );
+    if (used === true) {
+      return {
+        success: false,
+        error:
+          "This tax rate cannot be edited because it has been used in posted transactions.",
+      };
+    }
+
     if (payload.name) {
       const { data: nameConflict } = await (supabase.from("tax_rates" as any) as any)
         .select("id")
@@ -135,55 +303,98 @@ export async function updateTaxRateAction(
         .neq("id", payload.id)
         .maybeSingle();
 
-    if (nameConflict) {
-      throw new Error(`A tax rate named "${payload.name}" already exists.`);
+      if (nameConflict) {
+        return {
+          success: false,
+          error: `A tax rate named "${payload.name}" already exists.`,
+          fieldErrors: { name: `A tax rate named "${payload.name}" already exists.` },
+        };
+      }
     }
-  }
 
-  // Use type assertion since tax_rates table may not be in generated types yet
-  const { data, error } = await (supabase.from("tax_rates" as any) as any)
-    .update({
+    const rateDecimal = payload.percentage / 100;
+    const updatePayload = {
       name: payload.name,
+      rate: rateDecimal,
       percentage: payload.percentage,
       tax_type: payload.tax_type,
-      output_vat_account_id: payload.output_vat_account_id,
-      input_vat_account_id: payload.input_vat_account_id,
-      is_active: payload.is_active,
+      output_vat_account_id: payload.tax_type === "output" ? payload.output_vat_account_id : null,
+      input_vat_account_id: payload.tax_type === "input" ? payload.input_vat_account_id : null,
+      ...(typeof payload.is_active === "boolean" && { is_active: payload.is_active }),
       updated_at: new Date().toISOString(),
-    })
-    .eq("id", payload.id)
-    .eq("tenant_id", user.tenant.id)
-    .select()
-    .single();
+    };
 
-  if (error) {
-    console.error("Failed to update tax rate", error);
-    throw error;
+    const { data, error } = await (supabase.from("tax_rates" as any) as any)
+      .update(updatePayload)
+      .eq("id", payload.id)
+      .eq("tenant_id", user.tenant.id)
+      .select()
+      .single();
+
+    if (error) {
+      console.error("Failed to update tax rate", error);
+      return {
+        success: false,
+        error: error.message ?? "Failed to update tax rate.",
+      };
+    }
+
+    revalidatePath("/settings");
+    const r = Number(data.rate ?? data.percentage / 100);
+    return {
+      success: true,
+      data: { ...data, percentage: Math.round(r * 10000) / 100 },
+    };
+  } catch (e) {
+    console.error("updateTaxRateAction", e);
+    return {
+      success: false,
+      error: e instanceof Error ? e.message : "Failed to update tax rate.",
+    };
   }
-
-  revalidatePath("/settings");
-  return data;
 }
 
-export async function deleteTaxRateAction(id: string) {
-  const user = await getCurrentUser();
-  if (!user?.tenant) {
-    throw new Error("User tenant not resolved.");
+export async function deleteTaxRateAction(id: string): Promise<DeleteTaxRateResult> {
+  try {
+    const user = await getCurrentUser();
+    if (!user?.tenant) {
+      return { success: false, error: "User tenant not resolved." };
+    }
+
+    const supabase = await createServerSupabaseClient();
+
+    const { data: used } = await (supabase.rpc as any)(
+      "tax_rate_used_in_posted_drafts",
+      { p_tenant_id: user.tenant.id, p_rate_id: id }
+    );
+    if (used === true) {
+      return {
+        success: false,
+        error:
+          "This tax rate cannot be deleted because it has been used in posted transactions.",
+      };
+    }
+
+    const { error } = await (supabase.from("tax_rates" as any) as any)
+      .update({ is_active: false, updated_at: new Date().toISOString() })
+      .eq("id", id)
+      .eq("tenant_id", user.tenant.id);
+
+    if (error) {
+      console.error("Failed to delete tax rate", error);
+      return {
+        success: false,
+        error: error.message ?? "Failed to delete tax rate.",
+      };
+    }
+
+    revalidatePath("/settings");
+    return { success: true };
+  } catch (e) {
+    console.error("deleteTaxRateAction", e);
+    return {
+      success: false,
+      error: e instanceof Error ? e.message : "Failed to delete tax rate.",
+    };
   }
-
-  const supabase = await createServerSupabaseClient();
-
-  // Soft delete by setting is_active to false
-  // Use type assertion since tax_rates table may not be in generated types yet
-  const { error } = await (supabase.from("tax_rates" as any) as any)
-    .update({ is_active: false, updated_at: new Date().toISOString() })
-    .eq("id", id)
-    .eq("tenant_id", user.tenant.id);
-
-  if (error) {
-    console.error("Failed to delete tax rate", error);
-    throw error;
-  }
-
-  revalidatePath("/settings");
 }

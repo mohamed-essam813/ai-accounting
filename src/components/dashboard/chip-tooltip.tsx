@@ -3,20 +3,26 @@
  * Professional, modern tooltip with individual chips for each data point
  */
 
+import React from "react";
 import { formatCurrency } from "@/lib/format";
 
-interface ChipTooltipProps {
+export interface ChipTooltipProps {
   active?: boolean;
   payload?: Array<{
-    name?: string;
-    value?: number;
-    dataKey?: string;
+    name?: string | number;
+    value?: number | string;
+    dataKey?: string | number;
     color?: string;
+    [key: string]: unknown;
   }>;
-  label?: string;
+  label?: string | number;
+  /** Display currency for amount formatting (symbol). */
+  displayCurrency?: string;
+  [key: string]: unknown;
 }
 
-export function ChipTooltip({ active, payload, label }: ChipTooltipProps) {
+export function ChipTooltip(props: ChipTooltipProps & Record<string, unknown>) {
+  const { active, payload, label, displayCurrency = "AED" } = props;
   if (!active || !payload || !payload.length) return null;
 
   return (
@@ -31,9 +37,9 @@ export function ChipTooltip({ active, payload, label }: ChipTooltipProps) {
       {/* Individual Chips for each data point */}
       <div className="space-y-1.5">
         {payload.map((entry, index) => {
-          const value = entry.value ?? 0;
-          const name = entry.name || entry.dataKey || "";
-          const dataKey = entry.dataKey || "";
+          const value = typeof entry.value === "number" ? entry.value : typeof entry.value === "string" ? parseFloat(entry.value) || 0 : 0;
+          const name = String(entry.name ?? entry.dataKey ?? "");
+          const dataKey = String(entry.dataKey ?? "");
           const barColor = entry.color || "#6b7280"; // Default to grey if no color
           
           // Handle percentage values (for profitability chart margin)
@@ -44,7 +50,7 @@ export function ChipTooltip({ active, payload, label }: ChipTooltipProps) {
           
           const displayValue = typeof value === "number" && isPercentage
             ? `${value.toFixed(1)}%`
-            : formatCurrency(value);
+            : formatCurrency(value, displayCurrency);
           
           // Convert hex to RGB for opacity calculation
           const hexToRgb = (hex: string) => {

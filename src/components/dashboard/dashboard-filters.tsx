@@ -1,204 +1,275 @@
 /**
  * Dashboard Period Filters
- * Allows users to select the period for comparison (presets or custom dates)
+ * Single Source of Truth: Period is the ONLY filter for date/time
+ * Custom Range is a Period option, not a separate filter
  */
 
 "use client";
 
 import { useRouter, useSearchParams } from "next/navigation";
 import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
-import { useState, useTransition } from "react";
-import { Filter, X, Calendar } from "lucide-react";
+import { useState, useTransition, useEffect, useCallback, useRef } from "react";
+import { Calendar } from "lucide-react";
 import { CurrencyFilter } from "@/components/filters/currency-filter";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+
+export type PeriodMode = 
+  | "THIS_MONTH" 
+  | "THIS_QUARTER" 
+  | "THIS_YEAR"
+  | "LAST_MONTH"
+  | "LAST_QUARTER"
+  | "LAST_YEAR"
+  | "CUSTOM";
+
+export type CompareMode = "NONE" | "PREVIOUS" | "SPLY" | "MULTI";
 
 type Props = {
-  initialPeriod?: string;
+  initialPeriodMode?: PeriodMode;
   initialStartDate?: string;
   initialEndDate?: string;
-  initialComparisonType?: "previous" | "lastYear";
+  initialCompareMode?: CompareMode;
+  initialMultiN?: 3 | 6 | 12;
+  initialMultiUnit?: "MONTH" | "QUARTER" | "YEAR";
   initialCurrency?: string;
+  /** Doc 12: Default display currency. Default = tenant base (e.g. USD). */
+  baseCurrency?: string;
   currencies?: string[];
 };
 
 export function DashboardFilters({
-  initialPeriod,
+  initialPeriodMode = "THIS_MONTH",
   initialStartDate,
   initialEndDate,
-  initialComparisonType = "previous",
+  initialCompareMode = "NONE",
+  initialMultiN = 3,
+  initialMultiUnit = "MONTH",
   initialCurrency,
+  baseCurrency = "USD",
   currencies = [],
 }: Props) {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [period, setPeriod] = useState(initialPeriod || "month");
+  const [periodMode, setPeriodMode] = useState<PeriodMode>(initialPeriodMode);
   const [startDate, setStartDate] = useState(initialStartDate || "");
   const [endDate, setEndDate] = useState(initialEndDate || "");
-  const [comparisonType, setComparisonType] = useState<"previous" | "lastYear">(initialComparisonType);
+  const [compareMode, setCompareMode] = useState<CompareMode>(initialCompareMode);
+  const [multiN, setMultiN] = useState<3 | 6 | 12>(initialMultiN);
+  const [multiUnit, setMultiUnit] = useState<"MONTH" | "QUARTER" | "YEAR">(initialMultiUnit);
   const [isPending, startTransition] = useTransition();
 
-  const isCustomDate = startDate || endDate;
+  const isCustomRange = periodMode === "CUSTOM";
+  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  const handlePeriodChange = (newPeriod: string) => {
-    setPeriod(newPeriod);
-    setStartDate("");
-    setEndDate("");
+  // Update URL params: preserve currency and any other existing params, only overwrite period/compare.
+  const updateParams = useCallback(() => {
     startTransition(() => {
-      const params = new URLSearchParams();
-      if (newPeriod !== "month") {
-        params.set("period", newPeriod);
+      const params = new URLSearchParams(searchParams.toString());
+
+      // Period mode
+      if (periodMode !== "THIS_MONTH") {
+        params.set("periodMode", periodMode);
+      } else {
+        params.delete("periodMode");
       }
-      if (comparisonType !== "previous") {
-        params.set("compare", comparisonType);
+
+      // Custom range dates
+      if (isCustomRange && startDate && endDate) {
+        params.set("startDate", startDate);
+        params.set("endDate", endDate);
+      } else {
+        params.delete("startDate");
+        params.delete("endDate");
       }
-      router.push(`/dashboard?${params.toString()}`);
+
+      // Compare mode
+      if (compareMode !== "NONE") {
+        params.set("compareMode", compareMode);
+      } else {
+        params.delete("compareMode");
+      }
+
+      // Multi-period settings
+      if (compareMode === "MULTI") {
+        params.set("multiN", multiN.toString());
+        params.set("multiUnit", multiUnit);
+      } else {
+        params.delete("multiN");
+        params.delete("multiUnit");
+      }
+
+      const query = params.toString();
+      router.push(query ? `/dashboard?${query}` : "/dashboard");
     });
+  }, [periodMode, startDate, endDate, compareMode, multiN, multiUnit, isCustomRange, router, searchParams]);
+
+  // Auto-update when filters change (with debounce)
+  useEffect(() => {
+    // Only auto-update if we have valid data
+    if (isCustomRange && (!startDate || !endDate)) {
+      return; // Don't update if custom range is selected but dates are incomplete
+    }
+
+    // Clear existing timeout
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+    }
+
+    // Set new timeout
+    timeoutRef.current = setTimeout(() => {
+      updateParams();
+    }, 500);
+
+    // Cleanup
+    return () => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+      }
+    };
+  }, [periodMode, startDate, endDate, compareMode, multiN, multiUnit, isCustomRange, updateParams]);
+
+  const handlePeriodChange = (newPeriod: PeriodMode) => {
+    setPeriodMode(newPeriod);
+    // Clear custom dates when switching away from custom range
+    if (newPeriod !== "CUSTOM") {
+      setStartDate("");
+      setEndDate("");
+    }
   };
 
-  const handleComparisonChange = (newType: "previous" | "lastYear") => {
-    setComparisonType(newType);
-    startTransition(() => {
-      const params = new URLSearchParams();
-      if (period !== "month") {
-        params.set("period", period);
-      }
-      if (startDate) params.set("startDate", startDate);
-      if (endDate) params.set("endDate", endDate);
-      if (newType !== "previous") {
-        params.set("compare", newType);
-      }
-      router.push(`/dashboard?${params.toString()}`);
-    });
+  const handleCompareChange = (newCompare: CompareMode) => {
+    setCompareMode(newCompare);
   };
 
-  const handleCustomDateApply = () => {
-    if (!startDate || !endDate) return;
-    
-    setPeriod("custom");
-    startTransition(() => {
-      const params = new URLSearchParams();
-      params.set("startDate", startDate);
-      params.set("endDate", endDate);
-      router.push(`/dashboard?${params.toString()}`);
-    });
+  const handleMultiNChange = (value: string) => {
+    setMultiN(parseInt(value, 10) as 3 | 6 | 12);
   };
 
-  const handleClear = () => {
-    setPeriod("month");
-    setStartDate("");
-    setEndDate("");
-    startTransition(() => {
-      router.push("/dashboard");
-    });
+  const handleMultiUnitChange = (value: "MONTH" | "QUARTER" | "YEAR") => {
+    setMultiUnit(value);
   };
 
   return (
-    <div className="space-y-3 rounded-lg border bg-card p-4">
-      {/* Currency Filter - Top Level */}
-      <CurrencyFilter initialCurrency={initialCurrency} currencies={currencies} />
-      
-      {/* Preset Period Buttons */}
-      <div className="flex items-center gap-3 flex-wrap">
+    <div className="rounded-lg border bg-card p-4">
+      {/* Single Row Layout: Period | Compare | Currency */}
+      <div className="flex flex-wrap items-center gap-4">
+        {/* Period Dropdown */}
         <div className="flex items-center gap-2">
           <Calendar className="h-4 w-4 text-muted-foreground" />
-          <span className="text-sm font-medium text-muted-foreground">Period:</span>
+          <span className="text-sm font-medium text-muted-foreground whitespace-nowrap">Period:</span>
+          <Select
+            value={periodMode}
+            onValueChange={handlePeriodChange}
+            disabled={isPending}
+          >
+            <SelectTrigger className="w-[180px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="THIS_MONTH">This Month</SelectItem>
+              <SelectItem value="THIS_QUARTER">This Quarter</SelectItem>
+              <SelectItem value="THIS_YEAR">This Year</SelectItem>
+              <SelectItem value="LAST_MONTH">Last Month</SelectItem>
+              <SelectItem value="LAST_QUARTER">Last Quarter</SelectItem>
+              <SelectItem value="LAST_YEAR">Last Year</SelectItem>
+              <SelectItem value="CUSTOM">Custom Range…</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
-        <div className="flex items-center gap-2">
-          <Button
-            variant={period === "month" && !isCustomDate ? "default" : "outline"}
-            size="sm"
-            onClick={() => handlePeriodChange("month")}
-            disabled={isPending}
-          >
-            This Month
-          </Button>
-          <Button
-            variant={period === "quarter" && !isCustomDate ? "default" : "outline"}
-            size="sm"
-            onClick={() => handlePeriodChange("quarter")}
-            disabled={isPending}
-          >
-            This Quarter
-          </Button>
-          <Button
-            variant={period === "year" && !isCustomDate ? "default" : "outline"}
-            size="sm"
-            onClick={() => handlePeriodChange("year")}
-            disabled={isPending}
-          >
-            This Year
-          </Button>
-        </div>
-        
-        {/* Comparison Type Toggle */}
-        <div className="flex items-center gap-2 ml-auto border-l pl-3">
-          <span className="text-xs text-muted-foreground">Compare with:</span>
-          <Button
-            variant={comparisonType === "previous" ? "default" : "outline"}
-            size="sm"
-            onClick={() => handleComparisonChange("previous")}
-            disabled={isPending}
-          >
-            Previous Period
-          </Button>
-          <Button
-            variant={comparisonType === "lastYear" ? "default" : "outline"}
-            size="sm"
-            onClick={() => handleComparisonChange("lastYear")}
-            disabled={isPending}
-          >
-            Same Period Last Year
-          </Button>
-        </div>
-      </div>
 
-      {/* Custom Date Range */}
-      <div className="flex flex-wrap items-end gap-4 border-t pt-3">
-        <div className="flex items-end gap-2">
-          <span className="text-xs text-muted-foreground mb-1.5">Custom Range:</span>
-        </div>
-        <div className="flex flex-col space-y-1">
-          <label className="text-xs text-muted-foreground">Start Date</label>
-          <Input
-            type="date"
-            value={startDate}
-            onChange={(e) => setStartDate(e.target.value)}
-            className="w-40"
-            placeholder="Start Date"
-          />
-        </div>
-        <div className="flex flex-col space-y-1">
-          <label className="text-xs text-muted-foreground">End Date</label>
-          <Input
-            type="date"
-            value={endDate}
-            onChange={(e) => setEndDate(e.target.value)}
-            className="w-40"
-            placeholder="End Date"
-          />
-        </div>
-        <Button
-          onClick={handleCustomDateApply}
-          size="sm"
-          disabled={isPending || !startDate || !endDate}
-          className="h-9"
-        >
-          <Filter className="h-4 w-4 mr-2" />
-          Apply
-        </Button>
-        {(isCustomDate || period !== "month") && (
-          <Button
-            onClick={handleClear}
-            variant="outline"
-            size="sm"
-            disabled={isPending}
-            className="h-9"
-          >
-            <X className="h-4 w-4" />
-          </Button>
+        {/* Custom Range Date Pickers (only shown when Custom Range is selected) */}
+        {isCustomRange && (
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-medium text-muted-foreground whitespace-nowrap">From:</span>
+            <Input
+              type="date"
+              value={startDate}
+              onChange={(e) => setStartDate(e.target.value)}
+              className="w-40 h-8"
+              placeholder="Start Date"
+            />
+            <span className="text-sm font-medium text-muted-foreground whitespace-nowrap">To:</span>
+            <Input
+              type="date"
+              value={endDate}
+              onChange={(e) => setEndDate(e.target.value)}
+              className="w-40 h-8"
+              placeholder="End Date"
+            />
+          </div>
         )}
+
+        {/* Compare Dropdown */}
+        <div className="flex items-center gap-2 border-l pl-4">
+          <span className="text-sm font-medium text-muted-foreground whitespace-nowrap">Compare:</span>
+          <Select
+            value={compareMode}
+            onValueChange={handleCompareChange}
+            disabled={isPending}
+          >
+            <SelectTrigger className="w-[200px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="NONE">None</SelectItem>
+              <SelectItem value="PREVIOUS">Previous Period</SelectItem>
+              <SelectItem value="SPLY">Same Period Last Year</SelectItem>
+              <SelectItem value="MULTI">Multi-Period…</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        {/* Multi-Period Controls (only shown when Multi-Period is selected) */}
+        {compareMode === "MULTI" && (
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground whitespace-nowrap">Show last:</span>
+            <Select
+              value={multiN.toString()}
+              onValueChange={handleMultiNChange}
+              disabled={isPending}
+            >
+              <SelectTrigger className="w-[80px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="3">3</SelectItem>
+                <SelectItem value="6">6</SelectItem>
+                <SelectItem value="12">12</SelectItem>
+              </SelectContent>
+            </Select>
+            <span className="text-xs text-muted-foreground whitespace-nowrap">Unit:</span>
+            <Select
+              value={multiUnit}
+              onValueChange={handleMultiUnitChange}
+              disabled={isPending}
+            >
+              <SelectTrigger className="w-[120px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="MONTH">Months</SelectItem>
+                <SelectItem value="QUARTER">Quarters</SelectItem>
+                <SelectItem value="YEAR">Years</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        )}
+
+        {/* Currency Filter */}
+        <div className="flex items-center gap-2 border-l pl-4 ml-auto">
+          <CurrencyFilter
+            initialCurrency={initialCurrency}
+            baseCurrency={baseCurrency}
+            currencies={currencies}
+          />
+        </div>
       </div>
     </div>
   );
 }
-

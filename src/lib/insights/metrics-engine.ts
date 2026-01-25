@@ -57,6 +57,7 @@ function calculateAPDays(
 
 /**
  * Generate structured recommendations based on financial metrics
+ * @param displayCurrency - Currency for formatting amounts (symbol)
  */
 export async function generateStructuredRecommendations(
   currentPeriod: PeriodFinancialData,
@@ -68,6 +69,7 @@ export async function generateStructuredRecommendations(
   arComparison: PeriodComparison,
   apComparison: PeriodComparison,
   daysInPeriod: number = 30,
+  displayCurrency: string = "AED",
 ): Promise<StructuredRecommendation[]> {
   const recommendations: StructuredRecommendation[] = [];
 
@@ -115,13 +117,13 @@ export async function generateStructuredRecommendations(
       id: "ar-days-increase",
       priority: "high",
       observation: `AR days increased from ${Math.round(previousARDays)} → ${Math.round(currentARDays)} days`,
-      riskOrOpportunity: `This is slowing cash inflow by ~${formatCurrency(cashImpact)}`,
+      riskOrOpportunity: `This is slowing cash inflow by ~${formatCurrency(cashImpact, displayCurrency)}`,
       action: topOverdueCustomers.length > 0
         ? `Focus on customers overdue >30 days. ${topOverdueCustomers.length > 1 && top2Percentage >= 70
-            ? `${topOverdueCustomers.length} customers account for ${Math.round(top2Percentage)}%. Follow up ${topOverdueCustomers[0].name} first (${formatCurrency(topOverdueCustomers[0].overdue)} overdue).`
-            : `Follow up ${topOverdueCustomers[0].name} first (${formatCurrency(topOverdueCustomers[0].overdue)} overdue).`}`
+            ? `${topOverdueCustomers.length} customers account for ${Math.round(top2Percentage)}%. Follow up ${topOverdueCustomers[0].name} first (${formatCurrency(topOverdueCustomers[0].overdue, displayCurrency)} overdue).`
+            : `Follow up ${topOverdueCustomers[0].name} first (${formatCurrency(topOverdueCustomers[0].overdue, displayCurrency)} overdue).`}`
         : "Review all overdue invoices and follow up with customers.",
-      impact: `Expected cash recovery: 2–3 weeks with active follow-up. This will improve cash flow by ~${formatCurrency(cashImpact)}.`,
+      impact: `Expected cash recovery: 2–3 weeks with active follow-up. This will improve cash flow by ~${formatCurrency(cashImpact, displayCurrency)}.`,
       metrics: {
         currentValue: currentARDays,
         previousValue: previousARDays,
@@ -143,12 +145,12 @@ export async function generateStructuredRecommendations(
     recommendations.push({
       id: "negative-cash-flow",
       priority: "high",
-      observation: `Cash flow is negative: ${formatCurrency(currentPeriod.cashFlow)}`,
-      riskOrOpportunity: `Burning ${formatCurrency(cashDeficit)} per period. ${runwayWeeks > 0
+      observation: `Cash flow is negative: ${formatCurrency(currentPeriod.cashFlow, displayCurrency)}`,
+      riskOrOpportunity: `Burning ${formatCurrency(cashDeficit, displayCurrency)} per period. ${runwayWeeks > 0
           ? `At this rate, cash will run out in ~${runwayWeeks} weeks.`
           : "Immediate action required."}`,
-      action: `1) Accelerate receivables collection (${overdueAR > 0 ? formatCurrency(overdueAR) : "review"} overdue), 2) Defer non-critical expenses, 3) Consider short-term financing if needed.`,
-      impact: `Improving collections could recover ${formatCurrency(overdueAR)} within 2-3 weeks, extending runway by ${Math.round((overdueAR / cashDeficit) * (daysInPeriod / 7))} weeks.`,
+      action: `1) Accelerate receivables collection (${overdueAR > 0 ? formatCurrency(overdueAR, displayCurrency) : "review"} overdue), 2) Defer non-critical expenses, 3) Consider short-term financing if needed.`,
+      impact: `Improving collections could recover ${formatCurrency(overdueAR, displayCurrency)} within 2-3 weeks, extending runway by ${Math.round((overdueAR / cashDeficit) * (daysInPeriod / 7))} weeks.`,
       metrics: {
         currentValue: currentPeriod.cashFlow,
         threshold: 0,
@@ -161,10 +163,10 @@ export async function generateStructuredRecommendations(
     recommendations.push({
       id: "declining-cash-flow",
       priority: "medium",
-      observation: `Cash flow decreased by ${Math.abs(cashFlowComparison.percentageChange).toFixed(1)}% (${formatCurrency(cashFlowDecline)})`,
+      observation: `Cash flow decreased by ${Math.abs(cashFlowComparison.percentageChange).toFixed(1)}% (${formatCurrency(cashFlowDecline, displayCurrency)})`,
       riskOrOpportunity: "Cash generation is slowing, which may impact operational flexibility.",
-      action: `Review receivables collection (${overdueAR > 0 ? `${formatCurrency(overdueAR)} overdue` : "check ageing report"}) and payment terms. Consider negotiating better payment terms with suppliers.`,
-      impact: `Improving collection by 10% could recover ~${formatCurrency(overdueAR * 0.1)} within 2-3 weeks.`,
+      action: `Review receivables collection (${overdueAR > 0 ? `${formatCurrency(overdueAR, displayCurrency)} overdue` : "check ageing report"}) and payment terms. Consider negotiating better payment terms with suppliers.`,
+      impact: `Improving collection by 10% could recover ~${formatCurrency(overdueAR * 0.1, displayCurrency)} within 2-3 weeks.`,
       metrics: {
         currentValue: currentPeriod.cashFlow,
         previousValue: previousPeriod.cashFlow,
@@ -182,10 +184,10 @@ export async function generateStructuredRecommendations(
     recommendations.push({
       id: "revenue-decline",
       priority: "high",
-      observation: `Revenue decreased by ${Math.abs(revenueComparison.percentageChange).toFixed(1)}% (${formatCurrency(revenueDecline)})`,
-      riskOrOpportunity: `This represents ${formatCurrency(revenueDecline)} in lost revenue. If this trend continues, profitability will be impacted.`,
+      observation: `Revenue decreased by ${Math.abs(revenueComparison.percentageChange).toFixed(1)}% (${formatCurrency(revenueDecline, displayCurrency)})`,
+      riskOrOpportunity: `This represents ${formatCurrency(revenueDecline, displayCurrency)} in lost revenue. If this trend continues, profitability will be impacted.`,
       action: "1) Review sales channels and identify underperforming areas, 2) Analyze customer acquisition costs, 3) Consider pricing strategy review, 4) Focus on high-value customer retention.",
-      impact: `Reversing this decline could add ${formatCurrency(revenueDecline)} back to revenue. Expected timeline: 1-2 months with focused sales efforts.`,
+      impact: `Reversing this decline could add ${formatCurrency(revenueDecline, displayCurrency)} back to revenue. Expected timeline: 1-2 months with focused sales efforts.`,
       metrics: {
         currentValue: currentPeriod.revenue,
         previousValue: previousPeriod.revenue,
@@ -203,10 +205,10 @@ export async function generateStructuredRecommendations(
     recommendations.push({
       id: "expense-increase",
       priority: "medium",
-      observation: `Expenses increased by ${expenseComparison.percentageChange.toFixed(1)}% (${formatCurrency(expenseIncrease)})`,
-      riskOrOpportunity: `This increase of ${formatCurrency(expenseIncrease)} is reducing profitability.`,
+      observation: `Expenses increased by ${expenseComparison.percentageChange.toFixed(1)}% (${formatCurrency(expenseIncrease, displayCurrency)})`,
+      riskOrOpportunity: `This increase of ${formatCurrency(expenseIncrease, displayCurrency)} is reducing profitability.`,
       action: "1) Review expense categories and identify largest increases, 2) Question whether increases are necessary or can be deferred, 3) Negotiate better terms with suppliers, 4) Review subscription and recurring costs.",
-      impact: `Reducing expenses by 10% could save ~${formatCurrency(expenseIncrease * 0.1)} per period, improving net income.`,
+      impact: `Reducing expenses by 10% could save ~${formatCurrency(expenseIncrease * 0.1, displayCurrency)} per period, improving net income.`,
       metrics: {
         currentValue: currentPeriod.expenses,
         previousValue: previousPeriod.expenses,
@@ -224,10 +226,10 @@ export async function generateStructuredRecommendations(
     recommendations.push({
       id: "high-receivables-ratio",
       priority: "medium",
-      observation: `Receivables represent ${receivablesRatio.toFixed(1)}% of revenue (${formatCurrency(currentPeriod.receivables)})`,
+      observation: `Receivables represent ${receivablesRatio.toFixed(1)}% of revenue (${formatCurrency(currentPeriod.receivables, displayCurrency)})`,
       riskOrOpportunity: "High receivables ratio indicates extended payment terms or slow collections, tying up working capital.",
-      action: `1) Review credit terms with customers, 2) Implement stricter payment terms for new customers, 3) Offer early payment discounts, 4) Follow up on ${overdueAR > 0 ? `${formatCurrency(overdueAR)} in overdue receivables` : "overdue invoices"}.`,
-      impact: `Reducing receivables by 20% would free up ~${formatCurrency(currentPeriod.receivables * 0.2)} in working capital.`,
+      action: `1) Review credit terms with customers, 2) Implement stricter payment terms for new customers, 3) Offer early payment discounts, 4) Follow up on ${overdueAR > 0 ? `${formatCurrency(overdueAR, displayCurrency)} in overdue receivables` : "overdue invoices"}.`,
+      impact: `Reducing receivables by 20% would free up ~${formatCurrency(currentPeriod.receivables * 0.2, displayCurrency)} in working capital.`,
       metrics: {
         currentValue: receivablesRatio,
         threshold: 30,
@@ -243,10 +245,10 @@ export async function generateStructuredRecommendations(
     recommendations.push({
       id: "operating-loss",
       priority: "high",
-      observation: `Operating at a loss: ${formatCurrency(currentPeriod.netIncome)}`,
-      riskOrOpportunity: `Losing ${formatCurrency(lossAmount)} per period. This is unsustainable and requires immediate action.`,
-      action: `1) Increase revenue (target: ${formatCurrency(lossAmount + currentPeriod.revenue * 0.1)} to break even), 2) Reduce expenses by ${formatCurrency(lossAmount * 0.6)} (focus on non-essential costs), 3) Review pricing strategy, 4) Consider cost restructuring.`,
-      impact: `Breaking even would require ${formatCurrency(lossAmount)} in additional revenue or expense reduction. Expected timeline: 2-3 months with focused efforts.`,
+      observation: `Operating at a loss: ${formatCurrency(currentPeriod.netIncome, displayCurrency)}`,
+      riskOrOpportunity: `Losing ${formatCurrency(lossAmount, displayCurrency)} per period. This is unsustainable and requires immediate action.`,
+      action: `1) Increase revenue (target: ${formatCurrency(lossAmount + currentPeriod.revenue * 0.1, displayCurrency)} to break even), 2) Reduce expenses by ${formatCurrency(lossAmount * 0.6, displayCurrency)} (focus on non-essential costs), 3) Review pricing strategy, 4) Consider cost restructuring.`,
+      impact: `Breaking even would require ${formatCurrency(lossAmount, displayCurrency)} in additional revenue or expense reduction. Expected timeline: 2-3 months with focused efforts.`,
       metrics: {
         currentValue: currentPeriod.netIncome,
         threshold: 0,
@@ -264,10 +266,10 @@ export async function generateStructuredRecommendations(
     recommendations.push({
       id: "low-cash-reserve",
       priority: "high",
-      observation: `Cash balance (${formatCurrency(currentPeriod.cashBalance)}) is ${cashReserveRatio.toFixed(0)}% of monthly expenses`,
-      riskOrOpportunity: `Recommended reserve: ${formatCurrency(recommendedReserve)} (1.5 months expenses). Current shortfall: ${formatCurrency(shortfall)}.`,
-      action: `1) Accelerate receivables collection (${overdueAR > 0 ? formatCurrency(overdueAR) : "review"} overdue), 2) Secure additional funding if needed, 3) Defer non-essential expenses, 4) Negotiate extended payment terms with suppliers.`,
-      impact: `Improving collections could recover ${formatCurrency(overdueAR)} within 2-3 weeks, reducing shortfall to ${formatCurrency(Math.max(0, shortfall - overdueAR))}.`,
+      observation: `Cash balance (${formatCurrency(currentPeriod.cashBalance, displayCurrency)}) is ${cashReserveRatio.toFixed(0)}% of monthly expenses`,
+      riskOrOpportunity: `Recommended reserve: ${formatCurrency(recommendedReserve, displayCurrency)} (1.5 months expenses). Current shortfall: ${formatCurrency(shortfall, displayCurrency)}.`,
+      action: `1) Accelerate receivables collection (${overdueAR > 0 ? formatCurrency(overdueAR, displayCurrency) : "review"} overdue), 2) Secure additional funding if needed, 3) Defer non-essential expenses, 4) Negotiate extended payment terms with suppliers.`,
+      impact: `Improving collections could recover ${formatCurrency(overdueAR, displayCurrency)} within 2-3 weeks, reducing shortfall to ${formatCurrency(Math.max(0, shortfall - overdueAR), displayCurrency)}.`,
       metrics: {
         currentValue: currentPeriod.cashBalance,
         threshold: recommendedReserve,

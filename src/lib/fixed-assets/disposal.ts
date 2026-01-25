@@ -149,11 +149,14 @@ export async function disposeAsset(
   const journalDescription =
     description || `Disposal of ${asset.name} - Proceeds: ${proceeds}, NBV: ${netBookValue}`;
 
-  const journalEntryId = await createJournalEntryAction({
-    date: disposalDate,
-    description: journalDescription,
-    lines: journalLines,
-  });
+  const journalEntryId = await createJournalEntryAction(
+    {
+      date: disposalDate,
+      description: journalDescription,
+      lines: journalLines,
+    },
+    { postImmediately: true },
+  );
 
   // Update asset record
   await supabase

@@ -16,9 +16,18 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { toast } from "sonner";
-import { X, Check, XCircle, Edit2, FileText, AlertCircle } from "lucide-react";
-import { updateDraftAction, approveDraftAction, postDraftAction } from "@/lib/actions/drafts";
-import { canApprove, canPost, type UserRole } from "@/lib/auth";
+import Link from "next/link";
+import { X, Check, XCircle, Edit2, FileText, AlertCircle, ExternalLink, Trash2, RotateCcw } from "lucide-react";
+import { updateDraftAction, approveDraftAction, postDraftAction, deleteDraftAction, convertPostedToDraftAction } from "@/lib/actions/drafts";
+import { listTaxRatesAction, type TaxRate } from "@/lib/actions/tax-rates";
+import { canApprove, canPost, canEditPosted, type UserRole } from "@/lib/auth";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { formatCurrency } from "@/lib/format";
 import type { DraftPayload } from "@/lib/ai/schema";
 import type { SourceDocument } from "@/lib/data/documents";
@@ -154,6 +163,7 @@ export function InlineDraftReviewPanel({
     return new Date().toISOString().slice(0, 10);
   };
 
+  const [taxRates, setTaxRates] = useState<TaxRate[]>([]);
   const form = useForm<DraftEditFormValues>({
     resolver: zodResolver(DraftEditFormSchema) as any,
     defaultValues: {
@@ -161,13 +171,38 @@ export function InlineDraftReviewPanel({
       date: getValidDate(),
       amount: typeof draft.entities.amount === "number" ? draft.entities.amount : 0,
       currency: draft.entities.currency ?? "USD",
-      tax_rate: draft.entities.tax?.rate ? String(draft.entities.tax.rate) : "",
-      tax_amount: draft.entities.tax?.amount ? String(draft.entities.tax.amount) : "",
+      tax_rate: (draft.entities.tax as { tax_rate_id?: string } | undefined)?.tax_rate_id ?? "",
+      tax_amount: draft.entities.tax?.amount != null ? String(draft.entities.tax.amount) : "",
       description: draft.entities.description ?? "",
       due_date: draft.entities.due_date ?? "",
       invoice_number: draft.entities.invoice_number ?? "",
     },
   });
+
+  useEffect(() => {
+    listTaxRatesAction().then(setTaxRates).catch(() => {});
+  }, []);
+
+  const tax = draft.entities.tax as { rate?: number; amount?: number; tax_rate_id?: string } | undefined;
+  useEffect(() => {
+    if (taxRates.length === 0 || !tax?.rate || tax.tax_rate_id) return;
+    const match = taxRates.find((r) => Math.abs(r.percentage - tax.rate!) < 0.01);
+    if (match) {
+      form.setValue("tax_rate", match.id);
+      form.setValue("tax_amount", tax.amount != null ? String(tax.amount) : "");
+    }
+  }, [taxRates, tax?.rate, tax?.amount, tax?.tax_rate_id, form]);
+
+  const taxRateValue = form.watch("tax_rate");
+  const amountValue = form.watch("amount");
+  useEffect(() => {
+    if (taxRateValue && taxRateValue !== "none") {
+      const r = taxRates.find((x) => x.id === taxRateValue);
+      if (r && amountValue) {
+        form.setValue("tax_amount", ((amountValue * r.percentage) / 100).toFixed(2));
+      }
+    }
+  }, [taxRateValue, amountValue, taxRates, form]);
 
   // Refresh draft data
   useEffect(() => {
@@ -193,6 +228,8 @@ export function InlineDraftReviewPanel({
 
   const canUserApprove = canApprove(userRole);
   const canUserPost = canPost(userRole);
+  const canUserDelete = draft.status !== "posted" && canApprove(userRole);
+  const canUserConvertToDraft = draft.status === "posted" && canEditPosted(userRole);
   const isLowConfidence = draft.confidence !== null && draft.confidence < 0.7;
   const hasMissingFields = !draft.entities.amount || !draft.entities.date || !draft.entities.currency;
 
@@ -219,10 +256,12 @@ export function InlineDraftReviewPanel({
   const handleSaveEdit = async (values: DraftEditFormValues) => {
     startProcessing(async () => {
       try {
-        const taxRate = values.tax_rate ? Number(values.tax_rate) : undefined;
+        const selectedRate = values.tax_rate
+          ? taxRates.find((r) => r.id === values.tax_rate)
+          : undefined;
+        const taxRatePct = selectedRate?.percentage;
         const taxAmount = values.tax_amount ? Number(values.tax_amount) : undefined;
 
-        // Calculate total amount from inventory line items if present, otherwise use form amount
         let finalAmount = values.amount;
         if (inventoryLineItems.length > 0) {
           finalAmount = inventoryLineItems.reduce((sum, item) => sum + item.total, 0);
@@ -241,15 +280,15 @@ export function InlineDraftReviewPanel({
             due_date: values.due_date || null,
             invoice_number: values.invoice_number || null,
             tax:
-              taxRate !== undefined || taxAmount !== undefined
+              taxRatePct !== undefined || taxAmount !== undefined
                 ? {
-                    rate: taxRate ?? 0,
+                    rate: taxRatePct ?? 0,
                     amount: taxAmount ?? null,
+                    tax_rate_id: selectedRate?.id ?? null,
                   }
                 : null,
-            // Store inventory line items in data_json for future use
             inventory_line_items: inventoryLineItems.length > 0 ? inventoryLineItems : undefined,
-          } as any, // Type assertion for inventory_line_items
+          } as any,
         });
 
         toast.success("Draft updated");
@@ -313,10 +352,52 @@ export function InlineDraftReviewPanel({
   };
 
   const handleReject = () => {
-    // Reject just closes the panel - draft remains in system
-    // User can manage it from Drafts & Approvals page
     onClose();
     toast.info("Draft review closed. You can manage it from Drafts & Approvals.");
+  };
+
+  const handleDelete = () => {
+    if (!window.confirm("Delete this draft? This cannot be undone.")) return;
+    startProcessing(async () => {
+      try {
+        await deleteDraftAction({ draftId: draft.id });
+        toast.success("Draft deleted");
+        onDraftUpdated?.();
+        onClose();
+      } catch (error) {
+        console.error(error);
+        toast.error("Failed to delete draft", {
+          description: error instanceof Error ? error.message : "Unknown error occurred.",
+        });
+      }
+    });
+  };
+
+  const handleConvertToDraft = () => {
+    if (
+      !window.confirm(
+        "This draft is posted. The journal entry will be voided and the draft reverted to draft status. A reason is required for audit. Continue?"
+      )
+    )
+      return;
+    const reason = window.prompt("Reason for unposting (required):");
+    if (!reason?.trim()) {
+      toast.error("Reason is required for unposting.");
+      return;
+    }
+    startProcessing(async () => {
+      try {
+        await convertPostedToDraftAction({ draftId: draft.id, reason: reason.trim() });
+        toast.success("Draft converted to draft");
+        onDraftUpdated?.();
+        onClose();
+      } catch (error) {
+        console.error(error);
+        toast.error("Failed to convert to draft", {
+          description: error instanceof Error ? error.message : "Unknown error occurred.",
+        });
+      }
+    });
   };
 
   const transactionSummary = `${intentLabels[draft.intent] || "Transaction"}${draft.entities.counterparty ? ` for ${draft.entities.counterparty}` : ""}${draft.entities.amount ? ` - ${formatCurrency(draft.entities.amount, draft.entities.currency || "USD")}` : ""}`;
@@ -335,16 +416,25 @@ export function InlineDraftReviewPanel({
             <X className="h-4 w-4" />
           </Button>
         </div>
-        <div className="flex items-center gap-2 mt-4">
-          <Badge variant={statusLabels[draft.status]?.variant || "secondary"}>
-            {statusLabels[draft.status]?.label || draft.status}
-          </Badge>
-          {isLowConfidence && (
-            <Badge variant="outline" className="text-amber-600 border-amber-600">
-              <AlertCircle className="h-3 w-3 mr-1" />
-              Low Confidence
+        <div className="flex flex-wrap items-center justify-between gap-2 mt-4">
+          <div className="flex items-center gap-2">
+            <Badge variant={statusLabels[draft.status]?.variant || "secondary"}>
+              {statusLabels[draft.status]?.label || draft.status}
             </Badge>
-          )}
+            {isLowConfidence && (
+              <Badge variant="outline" className="text-amber-600 border-amber-600">
+                <AlertCircle className="h-3 w-3 mr-1" />
+                Low Confidence
+              </Badge>
+            )}
+          </div>
+          <Link
+            href="/drafts"
+            className="text-xs text-muted-foreground hover:text-foreground inline-flex items-center gap-1"
+          >
+            View in Drafts & Approvals
+            <ExternalLink className="h-3 w-3" />
+          </Link>
         </div>
       </CardHeader>
 
@@ -404,12 +494,38 @@ export function InlineDraftReviewPanel({
                 <Input {...form.register("currency")} placeholder="USD" />
               </div>
               <div>
-                <label className="text-sm font-medium mb-1 block">Tax Rate (%)</label>
-                <Input type="number" step="0.01" {...form.register("tax_rate")} />
+                <label className="text-sm font-medium mb-1 block">Tax Rate</label>
+                <Select
+                  value={form.watch("tax_rate") || "none"}
+                  onValueChange={(v) => form.setValue("tax_rate", v === "none" ? "" : v)}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select tax rate" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">None</SelectItem>
+                    {taxRates.map((rate) => (
+                      <SelectItem key={rate.id} value={rate.id}>
+                        {rate.name} ({rate.percentage}%)
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
               <div>
                 <label className="text-sm font-medium mb-1 block">Tax Amount</label>
-                <Input type="number" step="0.01" {...form.register("tax_amount")} />
+                <Input
+                  type="number"
+                  step="0.01"
+                  {...form.register("tax_amount")}
+                  readOnly={!!taxRateValue && taxRateValue !== "none"}
+                  className={!!taxRateValue && taxRateValue !== "none" ? "bg-muted cursor-not-allowed" : ""}
+                />
+                {taxRateValue && taxRateValue !== "none" && (
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Auto-calculated from amount and tax rate
+                  </p>
+                )}
               </div>
               {draft.intent === "create_invoice" && (
                 <div>
@@ -598,6 +714,30 @@ export function InlineDraftReviewPanel({
             >
               <XCircle className="h-3 w-3 mr-2" />
               Close Panel
+            </Button>
+          )}
+          {canUserConvertToDraft && (
+            <Button
+              onClick={handleConvertToDraft}
+              disabled={isProcessing}
+              variant="outline"
+              className="w-full"
+              size="sm"
+            >
+              <RotateCcw className="h-3 w-3 mr-2" />
+              Convert to Draft
+            </Button>
+          )}
+          {canUserDelete && (
+            <Button
+              onClick={handleDelete}
+              disabled={isProcessing}
+              variant="outline"
+              className="w-full border-destructive/50 text-destructive hover:bg-destructive/10"
+              size="sm"
+            >
+              <Trash2 className="h-3 w-3 mr-2" />
+              Delete Draft
             </Button>
           )}
           </div>

@@ -1,9 +1,9 @@
 import { ReactNode } from "react";
 import { redirect } from "next/navigation";
-import { Sidebar } from "@/components/layout/sidebar";
-import { Topbar } from "@/components/layout/topbar";
+import { SidebarProvider } from "@/contexts/sidebar-context";
 import { getCurrentUser } from "@/lib/data/users";
 import { ProgressBar } from "@/components/ui/progress-bar";
+import { SidebarLayout } from "@/components/layout/sidebar-layout";
 
 export default async function AppLayout({ children }: { children: ReactNode }) {
   // This layout only renders for authenticated routes
@@ -17,14 +17,14 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
   }
 
   return (
-    <div className="flex min-h-screen bg-background">
-      <ProgressBar />
-      <Sidebar tenant={user?.tenant ?? null} />
-      <div className="flex min-h-screen flex-1 flex-col ml-64">
-        <Topbar user={user} />
-        <main className="flex-1 overflow-y-auto overflow-x-auto bg-muted/10 p-6 pt-20">{children}</main>
+    <SidebarProvider defaultState="expanded">
+      <div className="flex min-h-screen bg-background">
+        <ProgressBar />
+        <SidebarLayout tenant={user?.tenant ?? null} user={user}>
+          {children}
+        </SidebarLayout>
       </div>
-    </div>
+    </SidebarProvider>
   );
 }
 

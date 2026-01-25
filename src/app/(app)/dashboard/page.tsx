@@ -33,21 +33,36 @@ import {
 import {
   getCurrentMonth,
   getPreviousMonth,
+  getLastMonth,
   getCurrentQuarter,
   getPreviousQuarter,
+  getLastQuarter,
   getCurrentYear,
   getPreviousYear,
+  getLastYear,
   getPreviousPeriodRange,
   getSamePeriodLastYear,
   calculateComparison,
   type DateRange,
 } from "@/lib/utils/period-comparison";
-import { DashboardFilters } from "@/components/dashboard/dashboard-filters";
+import { DashboardFilters, type PeriodMode, type CompareMode } from "@/components/dashboard/dashboard-filters";
 import { AIRecommendations } from "@/components/dashboard/ai-recommendations";
 import { getDashboardRecommendations } from "@/lib/insights/recommendations";
-import { MultiPeriodSelector } from "@/components/dashboard/multi-period-selector";
-import { getMultiPeriodData, getLastNMonths, getLastNQuarters, getLastNYears } from "@/lib/data/multi-period-comparison";
+import { getMultiPeriodData, getLastNMonths, getLastNQuarters, getLastNYears, getMultiPeriodFromCustomRange } from "@/lib/data/multi-period-comparison";
 import { RevenueExpenseChartMulti } from "@/components/dashboard/revenue-expense-chart-multi";
+import { 
+  buildFilterContract, 
+  deriveRanges, 
+  getRevenueTrendChart, 
+  getExpenseTrendChart, 
+  getCashFlowChart,
+  getARAPAgeingChart,
+  getProfitabilityChart
+} from "@/lib/data/dashboard-metrics-service";
+import { DashboardWrapper } from "@/components/dashboard/dashboard-wrapper";
+import { getCurrentUser } from "@/lib/data/users";
+import { getTenantBaseCurrency } from "@/lib/utils/currency-conversion";
+import { normaliseCurrencyCode } from "@/lib/currencies";
 
 export const revalidate = 60;
 
@@ -55,26 +70,52 @@ export default async function DashboardPage({
   searchParams,
 }: {
   searchParams: Promise<{ 
-    period?: string; 
+    periodMode?: PeriodMode;
     startDate?: string; 
     endDate?: string; 
-    compare?: "previous" | "lastYear"; 
+    compareMode?: CompareMode;
+    multiN?: string;
+    multiUnit?: "MONTH" | "QUARTER" | "YEAR";
     currency?: string;
+    // Legacy params for backward compatibility
+    period?: string;
+    compare?: "previous" | "lastYear";
     periodCount?: string;
     periodType?: "months" | "quarters" | "years";
   }>;
 }) {
   const params = await searchParams;
-  const period = params.period || "month";
+  const user = await getCurrentUser();
+  const baseCurrency = user?.tenant
+    ? await getTenantBaseCurrency(user.tenant.id)
+    : "USD";
+
+  // New filter structure (with fallback to legacy)
+  const periodMode: PeriodMode = params.periodMode || 
+    (params.period === "quarter" ? "THIS_QUARTER" : 
+     params.period === "year" ? "THIS_YEAR" : "THIS_MONTH");
   const startDate = params.startDate;
   const endDate = params.endDate;
-  const comparisonType = params.compare || "previous";
-  const currency = params.currency;
-  const periodCount = params.periodCount;
-  const periodType = params.periodType || "months";
-  
+  const compareMode: CompareMode = params.compareMode || 
+    (params.compare === "lastYear" ? "SPLY" : 
+     params.compare === "previous" ? "PREVIOUS" : "NONE");
+  const multiN = (params.multiN ? parseInt(params.multiN, 10) : parseInt(params.periodCount || "3", 10)) as 3 | 6 | 12;
+  const multiUnit: "MONTH" | "QUARTER" | "YEAR" = params.multiUnit || 
+    (params.periodType === "quarters" ? "QUARTER" : 
+     params.periodType === "years" ? "YEAR" : "MONTH");
+  const rawCurrency = params.currency;
+  // Normalise typos (e.g. ALD, ATD → AED). "all" / empty stay as-is.
+  const currency =
+    rawCurrency && rawCurrency !== "all"
+      ? normaliseCurrencyCode(rawCurrency)
+      : rawCurrency;
+  // "all" = no conversion (show base). Pass undefined so buildFilterContract uses base.
+  const currencyForFetch = currency && currency !== "all" ? currency : undefined;
+  /** Display currency for formatting: symbol matches converted amounts. */
+  const displayCurrency = currencyForFetch ?? baseCurrency;
+
   // Determine if multi-period mode is enabled
-  const isMultiPeriodMode = !!periodCount;
+  const isMultiPeriodMode = compareMode === "MULTI";
 
   // Handle errors gracefully - if data fetching fails, show empty state
   const defaultPeriodData: PeriodFinancialData = {
@@ -94,79 +135,131 @@ export default async function DashboardPage({
   let previousPeriodData: PeriodFinancialData = defaultPeriodData;
   let multiPeriodData: Awaited<ReturnType<typeof getMultiPeriodData>> | null = null;
   
+  // New unified chart data (using new service)
+  let revenueChartData: Awaited<ReturnType<typeof getRevenueTrendChart>> | null = null;
+  let expenseChartData: Awaited<ReturnType<typeof getExpenseTrendChart>> | null = null;
+  let cashFlowChartData: Awaited<ReturnType<typeof getCashFlowChart>> | null = null;
+  let ageingChartData: Awaited<ReturnType<typeof getARAPAgeingChart>> | null = null;
+  let profitabilityChartData: Awaited<ReturnType<typeof getProfitabilityChart>> | null = null;
+  
   try {
-    // Get current and comparison period data based on filter
+    // Build filter contract and derive ranges for new chart service
+    try {
+      const filterContract = await buildFilterContract(
+        periodMode,
+        startDate,
+        endDate,
+        compareMode,
+        multiN,
+        multiUnit,
+        currencyForFetch
+      );
+      const ranges = deriveRanges(filterContract);
+      
+      // Fetch new chart data in parallel
+      [revenueChartData, expenseChartData, cashFlowChartData, ageingChartData, profitabilityChartData] = await Promise.all([
+        getRevenueTrendChart(filterContract, ranges).catch(err => {
+          console.error("Failed to fetch revenue chart:", err);
+          return null;
+        }),
+        getExpenseTrendChart(filterContract, ranges).catch(err => {
+          console.error("Failed to fetch expense chart:", err);
+          return null;
+        }),
+        getCashFlowChart(filterContract, ranges).catch(err => {
+          console.error("Failed to fetch cash flow chart:", err);
+          return null;
+        }),
+        getARAPAgeingChart(filterContract, ranges).catch(err => {
+          console.error("Failed to fetch ageing chart:", err);
+          return null;
+        }),
+        getProfitabilityChart(filterContract, ranges).catch(err => {
+          console.error("Failed to fetch profitability chart:", err);
+          return null;
+        }),
+      ]);
+    } catch (chartError) {
+      console.error("Failed to build filter contract or fetch chart data:", chartError);
+      // Continue with legacy data fetching
+    }
+    // Get current period based on periodMode
     let currentPeriod: DateRange;
-    let comparisonPeriod: DateRange;
     
-    if (startDate && endDate) {
+    if (periodMode === "CUSTOM" && startDate && endDate) {
       // Custom date range
       currentPeriod = {
         startDate,
         endDate,
       };
-      // Use comparison type to determine comparison period
-      if (comparisonType === "lastYear") {
-        comparisonPeriod = getSamePeriodLastYear(startDate, endDate);
-      } else {
-        comparisonPeriod = getPreviousPeriodRange(startDate, endDate);
-      }
     } else {
       // Preset periods
-      switch (period) {
-        case "quarter":
+      switch (periodMode) {
+        case "THIS_QUARTER":
           currentPeriod = getCurrentQuarter();
-          if (comparisonType === "lastYear") {
-            comparisonPeriod = getSamePeriodLastYear(currentPeriod.startDate, currentPeriod.endDate);
-          } else {
-            comparisonPeriod = getPreviousQuarter();
-          }
           break;
-        case "year":
+        case "THIS_YEAR":
           currentPeriod = getCurrentYear();
-          if (comparisonType === "lastYear") {
-            comparisonPeriod = getSamePeriodLastYear(currentPeriod.startDate, currentPeriod.endDate);
-          } else {
-            comparisonPeriod = getPreviousYear();
-          }
           break;
-        default: // "month"
+        case "LAST_MONTH":
+          currentPeriod = getLastMonth();
+          break;
+        case "LAST_QUARTER":
+          currentPeriod = getLastQuarter();
+          break;
+        case "LAST_YEAR":
+          currentPeriod = getLastYear();
+          break;
+        default: // "THIS_MONTH"
           currentPeriod = getCurrentMonth();
-          if (comparisonType === "lastYear") {
-            comparisonPeriod = getSamePeriodLastYear(currentPeriod.startDate, currentPeriod.endDate);
-          } else {
-            comparisonPeriod = getPreviousMonth();
-          }
       }
     }
+    
+    // Get comparison period based on compareMode
+    let comparisonPeriod: DateRange | null = null;
+    
+    if (compareMode === "PREVIOUS") {
+      comparisonPeriod = getPreviousPeriodRange(currentPeriod.startDate, currentPeriod.endDate);
+    } else if (compareMode === "SPLY") {
+      comparisonPeriod = getSamePeriodLastYear(currentPeriod.startDate, currentPeriod.endDate);
+    }
+    // NONE and MULTI don't need comparisonPeriod
     
     // Fetch data based on mode
     
     if (isMultiPeriodMode) {
       // Multi-period mode: fetch data for N periods
-      const count = parseInt(periodCount || "3", 10);
       let dateRanges: Array<{ label: string; dateRange: DateRange }>;
       
-      if (periodType === "quarters") {
-        dateRanges = getLastNQuarters(count);
-      } else if (periodType === "years") {
-        dateRanges = getLastNYears(count);
+      if (periodMode === "CUSTOM" && startDate && endDate) {
+        // Multi-period from custom range
+        dateRanges = getMultiPeriodFromCustomRange(
+          currentPeriod,
+          multiN,
+          multiUnit
+        );
       } else {
-        dateRanges = getLastNMonths(count);
+        // Multi-period from preset periods
+        if (multiUnit === "QUARTER") {
+          dateRanges = getLastNQuarters(multiN);
+        } else if (multiUnit === "YEAR") {
+          dateRanges = getLastNYears(multiN);
+        } else {
+          dateRanges = getLastNMonths(multiN);
+        }
       }
       
       const [pulseResult, signalsResult, eventsResult, multiPeriodResult] = await Promise.all([
-        getFinancialPulse(currency),
-        getAttentionSignals(currency),
-        getRecentFinancialEvents(5, currency),
-        getMultiPeriodData(dateRanges, currency),
+        getFinancialPulse(currencyForFetch),
+        getAttentionSignals(currencyForFetch),
+        getRecentFinancialEvents(5, currencyForFetch),
+        getMultiPeriodData(dateRanges, currencyForFetch),
       ]);
       
       pulse = pulseResult;
       signals = signalsResult;
       events = eventsResult;
-      const updatedMultiPeriodData = multiPeriodResult;
-      multiPeriodData = updatedMultiPeriodData;
+      multiPeriodData = multiPeriodResult;
       
       // Use last period as current, second-to-last as previous for comparisons
       if (multiPeriodResult.periods.length > 0) {
@@ -176,26 +269,30 @@ export default async function DashboardPage({
           : currentPeriodData;
       } else {
         // Fallback if no periods
-        currentPeriodData = {
-          revenue: 0,
-          expenses: 0,
-          netIncome: 0,
-          cashBalance: 0,
-          receivables: 0,
-          payables: 0,
-          cashFlow: 0,
-        };
-        previousPeriodData = currentPeriodData;
+        currentPeriodData = defaultPeriodData;
+        previousPeriodData = defaultPeriodData;
       }
     } else {
-      // Standard 2-period mode
-      [pulse, signals, events, currentPeriodData, previousPeriodData] = await Promise.all([
-        getFinancialPulse(currency),
-        getAttentionSignals(currency),
-        getRecentFinancialEvents(5, currency),
-        getPeriodFinancialData(currentPeriod, currency),
-        getPeriodFinancialData(comparisonPeriod, currency),
-      ]);
+      // Standard 2-period mode (or NONE comparison)
+      const dataPromises = [
+        getFinancialPulse(currencyForFetch),
+        getAttentionSignals(currencyForFetch),
+        getRecentFinancialEvents(5, currencyForFetch),
+        getPeriodFinancialData(currentPeriod, currencyForFetch),
+      ];
+      
+      if (comparisonPeriod) {
+        dataPromises.push(getPeriodFinancialData(comparisonPeriod, currencyForFetch));
+      } else {
+        dataPromises.push(Promise.resolve(defaultPeriodData));
+      }
+      
+      const results = await Promise.all(dataPromises);
+      pulse = results[0] as FinancialPulse;
+      signals = results[1] as AttentionSignal[];
+      events = results[2] as RecentFinancialEvent[];
+      currentPeriodData = results[3] as PeriodFinancialData;
+      previousPeriodData = results[4] as PeriodFinancialData;
     }
   } catch (error) {
     console.error("Dashboard data fetch failed:", error);
@@ -249,7 +346,9 @@ export default async function DashboardPage({
   try {
     const daysInPeriod = startDate && endDate
       ? Math.ceil((new Date(endDate).getTime() - new Date(startDate).getTime()) / (1000 * 60 * 60 * 24))
-      : period === "quarter" ? 90 : period === "year" ? 365 : 30;
+      : periodMode === "THIS_QUARTER" || periodMode === "LAST_QUARTER" ? 90 
+      : periodMode === "THIS_YEAR" || periodMode === "LAST_YEAR" ? 365 
+      : 30;
     
     structuredRecommendations = await getDashboardRecommendations(
       currentPeriodData,
@@ -261,29 +360,27 @@ export default async function DashboardPage({
       arComparison,
       apComparison,
       daysInPeriod,
+      displayCurrency,
     );
   } catch (error) {
     console.error("Failed to generate recommendations:", error);
   }
 
   return (
-    <div className="space-y-6 pb-6">
-      {/* Dashboard Filters */}
-      <DashboardFilters
-        initialPeriod={period}
+    <DashboardWrapper>
+      <div className="space-y-6 pb-6">
+        {/* Dashboard Filters */}
+        <DashboardFilters
+        initialPeriodMode={periodMode}
         initialStartDate={startDate}
         initialEndDate={endDate}
-        initialComparisonType={comparisonType}
+        initialCompareMode={compareMode}
+        initialMultiN={multiN}
+        initialMultiUnit={multiUnit}
         initialCurrency={currency}
+        baseCurrency={baseCurrency}
+        currencies={[]}
       />
-      
-      {/* Multi-Period Selector (optional) */}
-      {!startDate && !endDate && (
-        <MultiPeriodSelector 
-          initialPeriodCount={periodCount || "3"}
-          initialPeriodType={periodType}
-        />
-      )}
 
       {/* Section 1: Financial Pulse (Top Narrative) */}
       <FinancialPulseCard pulse={pulse} />
@@ -298,7 +395,13 @@ export default async function DashboardPage({
             </div>
             <div className="grid gap-4 sm:grid-cols-2 items-stretch">
             {isMultiPeriodMode && multiPeriodData ? (
-              <RevenueExpenseChartMulti multiPeriodData={multiPeriodData} />
+              <RevenueExpenseChartMulti multiPeriodData={multiPeriodData} displayCurrency={displayCurrency} />
+            ) : revenueChartData && expenseChartData ? (
+              <RevenueExpenseChart
+                revenueChart={revenueChartData}
+                expenseChart={expenseChartData}
+                displayCurrency={displayCurrency}
+              />
             ) : (
               <RevenueExpenseChart
                 currentRevenue={currentPeriodData.revenue}
@@ -307,6 +410,7 @@ export default async function DashboardPage({
                 previousExpenses={previousPeriodData.expenses}
                 revenueComparison={revenueComparison}
                 expenseComparison={expenseComparison}
+                displayCurrency={displayCurrency}
               />
             )}
             <div className="flex flex-col gap-4 h-full">
@@ -318,16 +422,16 @@ export default async function DashboardPage({
                   <div className="space-y-2">
                     <div className="flex justify-between items-center">
                       <span className="text-sm text-muted-foreground">Current Revenue</span>
-                      <span className="text-sm font-semibold">{formatCurrency(currentPeriodData.revenue)}</span>
+                      <span className="text-sm font-semibold">{formatCurrency(currentPeriodData.revenue, displayCurrency)}</span>
                     </div>
                     <div className="flex justify-between items-center">
                       <span className="text-sm text-muted-foreground">Current Expenses</span>
-                      <span className="text-sm font-semibold">{formatCurrency(currentPeriodData.expenses)}</span>
+                      <span className="text-sm font-semibold">{formatCurrency(currentPeriodData.expenses, displayCurrency)}</span>
                     </div>
                     <div className="flex justify-between items-center pt-2 border-t">
                       <span className="text-sm font-medium">Net Income</span>
                       <span className={`text-sm font-bold ${currentPeriodData.netIncome >= 0 ? "text-green-600" : "text-red-600"}`}>
-                        {formatCurrency(currentPeriodData.netIncome)}
+                        {formatCurrency(currentPeriodData.netIncome, displayCurrency)}
                       </span>
                     </div>
                   </div>
@@ -372,11 +476,16 @@ export default async function DashboardPage({
               <p className="text-sm text-muted-foreground">Cash generation and liquidity trends</p>
             </div>
             <div className="grid gap-4 sm:grid-cols-2 items-stretch">
-            <CashFlowChart
-              currentCashFlow={currentPeriodData.cashFlow}
-              previousCashFlow={previousPeriodData.cashFlow}
-              comparison={cashFlowComparison}
-            />
+            {cashFlowChartData ? (
+              <CashFlowChart cashFlowChart={cashFlowChartData} displayCurrency={displayCurrency} />
+            ) : (
+              <CashFlowChart
+                currentCashFlow={currentPeriodData.cashFlow}
+                previousCashFlow={previousPeriodData.cashFlow}
+                comparison={cashFlowComparison}
+                displayCurrency={displayCurrency}
+              />
+            )}
             <div className="flex flex-col gap-4 h-full">
               <Card className="flex-1">
                 <CardHeader>
@@ -387,16 +496,16 @@ export default async function DashboardPage({
                     <div className="flex justify-between items-center">
                       <span className="text-sm text-muted-foreground">Current Cash Flow</span>
                       <span className={`text-sm font-semibold ${currentPeriodData.cashFlow >= 0 ? "text-green-600" : "text-red-600"}`}>
-                        {formatCurrency(currentPeriodData.cashFlow)}
+                        {formatCurrency(currentPeriodData.cashFlow, displayCurrency)}
                       </span>
                     </div>
                     <div className="flex justify-between items-center">
                       <span className="text-sm text-muted-foreground">Previous Cash Flow</span>
-                      <span className="text-sm font-medium">{formatCurrency(previousPeriodData.cashFlow)}</span>
+                      <span className="text-sm font-medium">{formatCurrency(previousPeriodData.cashFlow, displayCurrency)}</span>
                     </div>
                     <div className="flex justify-between items-center pt-2 border-t">
                       <span className="text-sm font-medium">Cash Balance</span>
-                      <span className="text-sm font-bold">{formatCurrency(currentPeriodData.cashBalance)}</span>
+                      <span className="text-sm font-bold">{formatCurrency(currentPeriodData.cashBalance, displayCurrency)}</span>
                     </div>
                   </div>
                   <div className="pt-2 border-t">
@@ -429,14 +538,19 @@ export default async function DashboardPage({
               <p className="text-sm text-muted-foreground">AR/AP ageing and working capital management</p>
             </div>
             <div className="grid gap-4 sm:grid-cols-2 items-stretch">
-            <ARAPAgeingChart
-              currentAR={currentPeriodData.receivables}
-              previousAR={previousPeriodData.receivables}
-              currentAP={currentPeriodData.payables}
-              previousAP={previousPeriodData.payables}
-              arComparison={arComparison}
-              apComparison={apComparison}
-            />
+            {ageingChartData ? (
+              <ARAPAgeingChart ageingData={ageingChartData} displayCurrency={displayCurrency} />
+            ) : (
+              <ARAPAgeingChart
+                currentAR={currentPeriodData.receivables}
+                previousAR={previousPeriodData.receivables}
+                currentAP={currentPeriodData.payables}
+                previousAP={previousPeriodData.payables}
+                arComparison={arComparison}
+                apComparison={apComparison}
+                displayCurrency={displayCurrency}
+              />
+            )}
             <div className="flex flex-col gap-4 h-full">
               <Card className="flex-1">
                 <CardHeader>
@@ -446,16 +560,16 @@ export default async function DashboardPage({
                   <div className="space-y-2">
                     <div className="flex justify-between items-center">
                       <span className="text-sm text-muted-foreground">Receivables (AR)</span>
-                      <span className="text-sm font-semibold">{formatCurrency(currentPeriodData.receivables)}</span>
+                      <span className="text-sm font-semibold">{formatCurrency(currentPeriodData.receivables, displayCurrency)}</span>
                     </div>
                     <div className="flex justify-between items-center">
                       <span className="text-sm text-muted-foreground">Payables (AP)</span>
-                      <span className="text-sm font-semibold">{formatCurrency(currentPeriodData.payables)}</span>
+                      <span className="text-sm font-semibold">{formatCurrency(currentPeriodData.payables, displayCurrency)}</span>
                     </div>
                     <div className="flex justify-between items-center pt-2 border-t">
                       <span className="text-sm font-medium">Net Working Capital</span>
                       <span className={`text-sm font-bold ${(currentPeriodData.receivables - currentPeriodData.payables) >= 0 ? "text-green-600" : "text-red-600"}`}>
-                        {formatCurrency(currentPeriodData.receivables - currentPeriodData.payables)}
+                        {formatCurrency(currentPeriodData.receivables - currentPeriodData.payables, displayCurrency)}
                       </span>
                     </div>
                   </div>
@@ -500,13 +614,22 @@ export default async function DashboardPage({
               <p className="text-sm text-muted-foreground">Net income margin and profitability trends</p>
             </div>
             <div className="grid gap-4 sm:grid-cols-2 items-stretch">
-            <ProfitabilityChart
-              currentRevenue={currentPeriodData.revenue}
-              previousRevenue={previousPeriodData.revenue}
-              currentNetIncome={currentPeriodData.netIncome}
-              previousNetIncome={previousPeriodData.netIncome}
-              netIncomeComparison={netIncomeComparison}
-            />
+            {profitabilityChartData && revenueChartData ? (
+              <ProfitabilityChart
+                profitabilityChart={profitabilityChartData}
+                revenueChart={revenueChartData}
+                displayCurrency={displayCurrency}
+              />
+            ) : (
+              <ProfitabilityChart
+                currentRevenue={currentPeriodData.revenue}
+                previousRevenue={previousPeriodData.revenue}
+                currentNetIncome={currentPeriodData.netIncome}
+                previousNetIncome={previousPeriodData.netIncome}
+                netIncomeComparison={netIncomeComparison}
+                displayCurrency={displayCurrency}
+              />
+            )}
             <div className="flex flex-col gap-4 h-full">
               <Card className="flex-1">
                 <CardHeader>
@@ -517,12 +640,12 @@ export default async function DashboardPage({
                     <div className="flex justify-between items-center">
                       <span className="text-sm text-muted-foreground">Net Income</span>
                       <span className={`text-sm font-semibold ${currentPeriodData.netIncome >= 0 ? "text-green-600" : "text-red-600"}`}>
-                        {formatCurrency(currentPeriodData.netIncome)}
+                        {formatCurrency(currentPeriodData.netIncome, displayCurrency)}
                       </span>
                     </div>
                     <div className="flex justify-between items-center">
                       <span className="text-sm text-muted-foreground">Revenue</span>
-                      <span className="text-sm font-medium">{formatCurrency(currentPeriodData.revenue)}</span>
+                      <span className="text-sm font-medium">{formatCurrency(currentPeriodData.revenue, displayCurrency)}</span>
                     </div>
                     <div className="flex justify-between items-center pt-2 border-t">
                       <span className="text-sm font-medium">Profit Margin</span>
@@ -585,6 +708,7 @@ export default async function DashboardPage({
         </CardContent>
       </Card>
       </Link>
-    </div>
+      </div>
+    </DashboardWrapper>
   );
 }

@@ -25,9 +25,10 @@ type Props = {
   };
   startDate?: string;
   endDate?: string;
+  displayCurrency?: string;
 };
 
-export function ProfitLossTable({ data, startDate, endDate }: Props) {
+export function ProfitLossTable({ data, startDate, endDate, displayCurrency = "AED" }: Props) {
   const {
     revenue,
     costOfSales,
@@ -73,7 +74,7 @@ export function ProfitLossTable({ data, startDate, endDate }: Props) {
                     className="hover:text-primary hover:underline decoration-dotted cursor-pointer transition-colors font-medium"
                     title="Click to view ledger transactions for this account"
                   >
-                    {formatCurrency(item.amount)}
+                    {formatCurrency(item.amount, displayCurrency)}
                   </Link>
                 </TableCell>
               </TableRow>
@@ -91,7 +92,7 @@ export function ProfitLossTable({ data, startDate, endDate }: Props) {
                "Subtotal"}
             </TableCell>
             <TableCell className={`text-right py-3 ${isHighlight ? "text-primary" : ""}`}>
-              <span className="cursor-default">{formatCurrency(subtotal)}</span>
+              <span className="cursor-default">{formatCurrency(subtotal, displayCurrency)}</span>
             </TableCell>
           </TableRow>
         )}
@@ -120,7 +121,7 @@ export function ProfitLossTable({ data, startDate, endDate }: Props) {
           <TableRow className="bg-muted/50 font-semibold">
             <TableCell colSpan={2} className="py-3">Gross Profit</TableCell>
             <TableCell className="text-right py-3">
-              <span className="cursor-default">{formatCurrency(totals.grossProfit)}</span>
+              <span className="cursor-default">{formatCurrency(totals.grossProfit, displayCurrency)}</span>
             </TableCell>
           </TableRow>
 
@@ -131,7 +132,7 @@ export function ProfitLossTable({ data, startDate, endDate }: Props) {
           <TableRow className="bg-muted/50 font-semibold">
             <TableCell colSpan={2} className="py-3">Operating Profit</TableCell>
             <TableCell className="text-right py-3">
-              <span className="cursor-default">{formatCurrency(totals.operatingProfit)}</span>
+              <span className="cursor-default">{formatCurrency(totals.operatingProfit, displayCurrency)}</span>
             </TableCell>
           </TableRow>
 
@@ -147,7 +148,7 @@ export function ProfitLossTable({ data, startDate, endDate }: Props) {
               Net Profit
             </TableCell>
             <TableCell className="text-right text-primary text-lg py-4">
-              {formatCurrency(totals.netProfit)}
+              {formatCurrency(totals.netProfit, displayCurrency)}
             </TableCell>
           </TableRow>
         </TableBody>

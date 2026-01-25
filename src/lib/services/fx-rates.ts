@@ -14,6 +14,7 @@
  */
 
 import { createServiceSupabaseClient } from "@/lib/supabase/service";
+import { isSupportedCurrency, normaliseCurrencyCode } from "@/lib/currencies";
 
 // Access env vars directly since they're optional
 const getEnvVar = (key: string): string | undefined => {
@@ -35,10 +36,12 @@ interface FXRateResponse {
  * Fetch rates from ExchangeRate-API (free tier)
  * Free: 1,500 requests/month, no API key needed for basic usage
  * Docs: https://www.exchangerate-api.com/docs/free
+ * When no key (v4): returns ALL rates for base. We use all so conversion works for any dropdown selection.
  */
 async function fetchFromExchangeRateAPI(
   baseCurrency: string,
   targetCurrencies: string[],
+  useAllRates = false,
 ): Promise<FXRateResponse> {
   const apiKey = getEnvVar("EXCHANGERATE_API_KEY");
   const url = apiKey
@@ -51,12 +54,29 @@ async function fetchFromExchangeRateAPI(
   }
 
   const data = await response.json();
-  
-  // Filter to only requested currencies
+
+  if (data && data.result === "error") {
+    const errType = data["error-type"] || "unknown";
+    throw new Error(
+      `ExchangeRate-API: ${errType} (base: ${baseCurrency}). Use ISO 4217 codes (e.g. AED, USD).`,
+    );
+  }
+
   const rates: Record<string, number> = {};
-  for (const currency of targetCurrencies) {
-    if (data.rates && data.rates[currency]) {
-      rates[currency] = data.rates[currency];
+  const source = data.rates && typeof data.rates === "object" ? data.rates : {};
+
+  if (useAllRates || targetCurrencies.length === 0) {
+    // Store all rates (free tier / full dropdown support)
+    for (const [currency, value] of Object.entries(source)) {
+      if (currency !== baseCurrency && typeof value === "number") {
+        rates[currency] = value;
+      }
+    }
+  } else {
+    for (const currency of targetCurrencies) {
+      if (source[currency] != null) {
+        rates[currency] = Number(source[currency]);
+      }
     }
   }
 
@@ -180,30 +200,43 @@ async function getTenantCurrencies(tenantId: string): Promise<string[]> {
 
 /**
  * Fetch and store FX rates for a tenant
- * 
+ *
  * @param tenantId - Tenant ID
  * @param baseCurrency - Base currency (default: USD)
  * @param provider - FX rate provider to use
  * @param targetDate - Date for rates (default: today)
+ * @param extraCurrencies - Additional currencies to fetch (e.g. user-selected from dropdown). Ensures requested pair is always available.
  */
 export async function fetchAndStoreFXRates(
   tenantId: string,
   baseCurrency: string = "USD",
   provider: FXRateProvider = "exchangerate-api",
   targetDate?: string,
+  extraCurrencies: string[] = [],
 ): Promise<{ fetched: number; stored: number; errors: string[] }> {
   const supabase = createServiceSupabaseClient();
   const date = targetDate || new Date().toISOString().split("T")[0];
-  
-  // Get currencies used by this tenant
-  const targetCurrencies = await getTenantCurrencies(tenantId);
-  
-  // Remove base currency from targets
-  const currenciesToFetch = targetCurrencies.filter(
-    (c) => c.toUpperCase() !== baseCurrency.toUpperCase(),
-  );
+  const base = normaliseCurrencyCode(baseCurrency);
 
-  if (currenciesToFetch.length === 0) {
+  if (!isSupportedCurrency(base)) {
+    const err = `Unsupported base currency: ${baseCurrency}. Use ISO 4217 (e.g. AED, USD). Common typo: ATD -> AED.`;
+    console.warn(`FX: ${err}`);
+    return { fetched: 0, stored: 0, errors: [err] };
+  }
+
+  const tenantList = await getTenantCurrencies(tenantId);
+  const merged = new Set([
+    ...tenantList.map((c) => normaliseCurrencyCode(c)),
+    ...extraCurrencies.map((c) => normaliseCurrencyCode(c)),
+  ]);
+  merged.delete(base);
+
+  const currenciesToFetch = Array.from(merged).filter((c) => isSupportedCurrency(c));
+
+  // Free ExchangeRate-API (no key): fetch all rates so any dropdown selection has a rate
+  const useAllRates =
+    provider === "exchangerate-api" && !getEnvVar("EXCHANGERATE_API_KEY");
+  if (!useAllRates && currenciesToFetch.length === 0) {
     return { fetched: 0, stored: 0, errors: [] };
   }
 
@@ -211,16 +244,19 @@ export async function fetchAndStoreFXRates(
   const errors: string[] = [];
 
   try {
-    // Fetch rates from provider
     switch (provider) {
       case "exchangerate-api":
-        rateData = await fetchFromExchangeRateAPI(baseCurrency, currenciesToFetch);
+        rateData = await fetchFromExchangeRateAPI(
+          base,
+          currenciesToFetch,
+          useAllRates,
+        );
         break;
       case "fixer":
-        rateData = await fetchFromFixer(baseCurrency, currenciesToFetch);
+        rateData = await fetchFromFixer(base, currenciesToFetch);
         break;
       case "currencyapi":
-        rateData = await fetchFromCurrencyAPI(baseCurrency, currenciesToFetch);
+        rateData = await fetchFromCurrencyAPI(base, currenciesToFetch);
         break;
       default:
         throw new Error(`Unknown provider: ${provider}`);
@@ -230,22 +266,21 @@ export async function fetchAndStoreFXRates(
       throw new Error("Failed to fetch rates from provider");
     }
 
-    // Store rates in database
+    const rateDate = rateData.date || date;
     const ratesToStore = Object.entries(rateData.rates).map(([currency, rate]) => ({
       tenant_id: tenantId,
-      from_currency: baseCurrency.toUpperCase(),
+      from_currency: base,
       to_currency: currency.toUpperCase(),
       rate: Number(rate),
-      date: rateData.date || date,
+      date: rateDate,
     }));
 
-    // Also store reverse rates (e.g., if USD->EUR = 0.85, then EUR->USD = 1/0.85)
     const reverseRates = Object.entries(rateData.rates).map(([currency, rate]) => ({
       tenant_id: tenantId,
       from_currency: currency.toUpperCase(),
-      to_currency: baseCurrency.toUpperCase(),
+      to_currency: base,
       rate: 1 / Number(rate),
-      date: rateData.date || date,
+      date: rateDate,
     }));
 
     const allRates = [...ratesToStore, ...reverseRates];
@@ -269,10 +304,12 @@ export async function fetchAndStoreFXRates(
       errors: [],
     };
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : "Unknown error";
+    const errorMessage = error instanceof Error ? error.message : String(error);
     errors.push(errorMessage);
-    console.error(`Failed to fetch FX rates for tenant ${tenantId}:`, error);
-    
+    console.error(
+      `FX: Failed to fetch/store rates for tenant ${tenantId} (base: ${base}):`,
+      errorMessage,
+    );
     return {
       fetched: 0,
       stored: 0,

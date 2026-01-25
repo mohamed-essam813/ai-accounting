@@ -23,6 +23,7 @@ type TrialBalanceRow = Database["public"]["Views"]["v_trial_balance"]["Row"];
 
 interface Props {
   data: TrialBalanceRow[];
+  displayCurrency?: string;
 }
 
 type AccountType = "asset" | "liability" | "equity" | "revenue" | "expense";
@@ -35,7 +36,7 @@ interface GroupedAccount {
   expanded: boolean;
 }
 
-export function TrialBalanceTable({ data }: Props) {
+export function TrialBalanceTable({ data, displayCurrency = "AED" }: Props) {
   const [expandedGroups, setExpandedGroups] = useState<Set<AccountType>>(
     new Set(["asset", "liability"]), // Default: expand assets and liabilities
   );
@@ -129,13 +130,13 @@ export function TrialBalanceTable({ data }: Props) {
                     {group.type === "asset" ? "Assets" : group.type === "liability" ? "Liabilities" : group.type === "equity" ? "Equity" : group.type === "revenue" ? "Revenue" : "Expenses"}
                   </TableCell>
                   <TableCell className="text-right font-mono">
-                    {formatCurrency(group.totalDebit)}
+                    {formatCurrency(group.totalDebit, displayCurrency)}
                   </TableCell>
                   <TableCell className="text-right font-mono">
-                    {formatCurrency(group.totalCredit)}
+                    {formatCurrency(group.totalCredit, displayCurrency)}
                   </TableCell>
                   <TableCell className="text-right font-mono font-semibold">
-                    {formatCurrency(groupBalance)}
+                    {formatCurrency(groupBalance, displayCurrency)}
                   </TableCell>
                   <TableCell></TableCell>
                 </TableRow>
@@ -154,12 +155,12 @@ export function TrialBalanceTable({ data }: Props) {
                         <TableCell className="pl-6">{account.name}</TableCell>
                         <TableCell className="text-right font-mono text-sm">
                           {Number(account.total_debit ?? 0) > 0
-                            ? formatCurrency(Number(account.total_debit))
+                            ? formatCurrency(Number(account.total_debit), displayCurrency)
                             : "—"}
                         </TableCell>
                         <TableCell className="text-right font-mono text-sm">
                           {Number(account.total_credit ?? 0) > 0
-                            ? formatCurrency(Number(account.total_credit))
+                            ? formatCurrency(Number(account.total_credit), displayCurrency)
                             : "—"}
                         </TableCell>
                         <TableCell className="text-right font-mono text-sm">
@@ -168,7 +169,7 @@ export function TrialBalanceTable({ data }: Props) {
                             className="hover:text-primary hover:underline decoration-dotted"
                             title="View ledger transactions"
                           >
-                            {formatCurrency(balance)}
+                            {formatCurrency(balance, displayCurrency)}
                           </Link>
                         </TableCell>
                         <TableCell>
@@ -191,13 +192,13 @@ export function TrialBalanceTable({ data }: Props) {
               Grand Total
             </TableCell>
             <TableCell className="text-right font-mono font-semibold">
-              {formatCurrency(grandTotalDebit)}
+              {formatCurrency(grandTotalDebit, displayCurrency)}
             </TableCell>
             <TableCell className="text-right font-mono font-semibold">
-              {formatCurrency(grandTotalCredit)}
+              {formatCurrency(grandTotalCredit, displayCurrency)}
             </TableCell>
             <TableCell className="text-right font-mono font-semibold">
-              {formatCurrency(grandTotalDebit - grandTotalCredit)}
+              {formatCurrency(grandTotalDebit - grandTotalCredit, displayCurrency)}
             </TableCell>
             <TableCell></TableCell>
           </TableRow>

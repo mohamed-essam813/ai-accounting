@@ -1407,6 +1407,82 @@ export type Database = {
           },
         ]
       }
+      prompt_sessions: {
+        Row: {
+          created_at: string
+          created_by: string
+          created_dependencies: Json | null
+          data_json: Json | null
+          detected_intent: string | null
+          document_ids: Json | null
+          draft_id: string | null
+          error_message: string | null
+          id: string
+          original_prompt_text: string
+          pending_questions: Json | null
+          resolved_fields: Json | null
+          status: string
+          tenant_id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          created_by: string
+          created_dependencies?: Json | null
+          data_json?: Json | null
+          detected_intent?: string | null
+          document_ids?: Json | null
+          draft_id?: string | null
+          error_message?: string | null
+          id?: string
+          original_prompt_text: string
+          pending_questions?: Json | null
+          resolved_fields?: Json | null
+          status?: string
+          tenant_id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string
+          created_dependencies?: Json | null
+          data_json?: Json | null
+          detected_intent?: string | null
+          document_ids?: Json | null
+          draft_id?: string | null
+          error_message?: string | null
+          id?: string
+          original_prompt_text?: string
+          pending_questions?: Json | null
+          resolved_fields?: Json | null
+          status?: string
+          tenant_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "prompt_sessions_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "app_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "prompt_sessions_draft_id_fkey"
+            columns: ["draft_id"]
+            isOneToOne: false
+            referencedRelation: "drafts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "prompt_sessions_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       source_documents: {
         Row: {
           created_at: string
@@ -1609,6 +1685,7 @@ export type Database = {
           name: string
           output_vat_account_id: string | null
           percentage: number
+          rate: number
           tax_type: string
           tenant_id: string
           updated_at: string
@@ -1621,6 +1698,7 @@ export type Database = {
           name: string
           output_vat_account_id?: string | null
           percentage: number
+          rate: number
           tax_type: string
           tenant_id: string
           updated_at?: string
@@ -1633,6 +1711,7 @@ export type Database = {
           name?: string
           output_vat_account_id?: string | null
           percentage?: number
+          rate?: number
           tax_type?: string
           tenant_id?: string
           updated_at?: string
@@ -2170,6 +2249,10 @@ export type Database = {
           metadata: Json
           similarity: number
         }[]
+      }
+      tax_rate_used_in_posted_drafts: {
+        Args: { p_rate_id: string; p_tenant_id: string }
+        Returns: boolean
       }
       update_inventory_ageing: {
         Args: { p_tenant_id: string }

@@ -41,27 +41,27 @@ export function BankAccountSelector({ accounts, selectedAccountId }: Props) {
         <div className="space-y-2">
           <div className="flex items-center gap-4">
             <label htmlFor="bank-account" className="text-sm font-medium">
-              Select bank or cash account to reconcile:
+              Select bank account to reconcile
             </label>
             <Select
               value={selectedAccountId ?? "all"}
               onValueChange={handleChange}
             >
               <SelectTrigger id="bank-account" className="w-[300px]">
-                <SelectValue placeholder="Select bank or cash account" />
+                <SelectValue placeholder="Select bank account to reconcile" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All Bank Accounts</SelectItem>
+                <SelectItem value="all">All bank accounts</SelectItem>
                 {accounts.map((account) => (
                   <SelectItem key={account.id} value={account.id}>
-                    {account.code} · {account.name}
+                    {account.code} — {account.name}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
           </div>
           <p className="text-xs text-muted-foreground">
-            Only bank and cash accounts can be reconciled.
+            Only bank accounts with external statements can be reconciled.
           </p>
         </div>
       </CardContent>

@@ -1,6 +1,18 @@
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { getCurrentUser } from "./users";
+import { convertCurrency, getTenantBaseCurrency } from "@/lib/utils/currency-conversion";
 import type { Database } from "../database.types";
+
+async function convertAmount(
+  n: number,
+  base: string,
+  target: string,
+  date: string,
+  tenantId: string,
+): Promise<number> {
+  if (base.toUpperCase() === target.toUpperCase()) return n;
+  return convertCurrency(n, base, target, date, tenantId);
+}
 
 type ProfitAndLoss = Database["public"]["Views"]["v_profit_and_loss"]["Row"];
 type BalanceSheet = Database["public"]["Views"]["v_balance_sheet"]["Row"];
@@ -40,7 +52,14 @@ export async function getBalanceSheet(): Promise<BalanceSheet | null> {
   return data;
 }
 
-export async function getTrialBalance(): Promise<TrialBalance[]> {
+/**
+ * @param targetCurrency - Optional. When set with asOfDate, amounts are converted from base.
+ * @param asOfDate - Optional. Date used for FX.
+ */
+export async function getTrialBalance(
+  targetCurrency?: string,
+  asOfDate?: string,
+): Promise<TrialBalance[]> {
   const user = await getCurrentUser();
   if (!user?.tenant) {
     return [];
@@ -54,7 +73,21 @@ export async function getTrialBalance(): Promise<TrialBalance[]> {
     .order("code");
 
   if (error) throw error;
-  return data ?? [];
+  const rows = data ?? [];
+
+  if (!targetCurrency || !asOfDate) return rows;
+
+  const base = await getTenantBaseCurrency(user.tenant.id);
+  const conv = (n: number) => convertAmount(n, base, targetCurrency, asOfDate, user.tenant!.id);
+
+  const out: TrialBalance[] = [];
+  for (const r of rows) {
+    const debit = Number(r.total_debit ?? 0);
+    const credit = Number(r.total_credit ?? 0);
+    const [d, c] = await Promise.all([conv(debit), conv(credit)]);
+    out.push({ ...r, total_debit: d, total_credit: c } as TrialBalance);
+  }
+  return out;
 }
 
 type CashFlow = { tenant_id: string; net_cash_flow: number | null };
@@ -189,14 +222,20 @@ export async function getJournalLedger(startDate?: string, endDate?: string, cur
   return result;
 }
 
-export async function getVATReport(): Promise<VATReport | null> {
+/**
+ * @param targetCurrency - Optional. When set with asOfDate, amounts are converted from base.
+ * @param asOfDate - Optional. Date used for FX.
+ */
+export async function getVATReport(
+  targetCurrency?: string,
+  asOfDate?: string,
+): Promise<VATReport | null> {
   const user = await getCurrentUser();
   if (!user?.tenant) {
     return null;
   }
 
   const supabase = await createServerSupabaseClient();
-  // Type assertion for new view (not yet in database types)
   const table = (supabase as any).from("v_vat_report") as {
     select: (columns: string) => {
       eq: (column: string, value: string) => {
@@ -207,6 +246,22 @@ export async function getVATReport(): Promise<VATReport | null> {
   const { data, error } = await table.select("*").eq("tenant_id", user.tenant.id).maybeSingle();
 
   if (error) throw error;
-  return data;
+  if (!data) return null;
+
+  if (!targetCurrency || !asOfDate) return data;
+
+  const base = await getTenantBaseCurrency(user.tenant.id);
+  const conv = (n: number) => convertAmount(n, base, targetCurrency, asOfDate, user.tenant!.id);
+  const [outTax, inTax, payable] = await Promise.all([
+    conv(Number(data.vat_output_tax ?? 0)),
+    conv(Number(data.vat_input_tax ?? 0)),
+    conv(Number(data.vat_payable ?? 0)),
+  ]);
+  return {
+    ...data,
+    vat_output_tax: outTax,
+    vat_input_tax: inTax,
+    vat_payable: payable,
+  };
 }
 

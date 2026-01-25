@@ -155,24 +155,27 @@ export async function generateDepreciationJournal(
   const periodDate = new Date(periodStart);
   const description = `Monthly depreciation: ${assetName} - ${periodDate.toLocaleDateString("en-GB", { month: "long", year: "numeric" })}`;
 
-  const journalEntryId = await createJournalEntryAction({
-    date: periodStart,
-    description,
-    lines: [
-      {
-        account_id: depreciationExpenseAccount.id,
-        debit: depreciationAmount,
-        credit: 0,
-        memo: `Depreciation for ${assetName}`,
-      },
-      {
-        account_id: accumulatedDepreciationAccount.id,
-        debit: 0,
-        credit: depreciationAmount,
-        memo: `Accumulated depreciation for ${assetName}`,
-      },
-    ],
-  });
+  const journalEntryId = await createJournalEntryAction(
+    {
+      date: periodStart,
+      description,
+      lines: [
+        {
+          account_id: depreciationExpenseAccount.id,
+          debit: depreciationAmount,
+          credit: 0,
+          memo: `Depreciation for ${assetName}`,
+        },
+        {
+          account_id: accumulatedDepreciationAccount.id,
+          debit: 0,
+          credit: depreciationAmount,
+          memo: `Accumulated depreciation for ${assetName}`,
+        },
+      ],
+    },
+    { postImmediately: true },
+  );
 
   return journalEntryId;
 }

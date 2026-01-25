@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { useForm, useWatch } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -34,15 +35,21 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { formatCurrency, formatDate } from "@/lib/format";
-import { approveDraftAction, postDraftAction, updateDraftAction } from "@/lib/actions/drafts";
+import { approveDraftAction, postDraftAction, updateDraftAction, deleteDraftAction, convertPostedToDraftAction } from "@/lib/actions/drafts";
 import { PromptIntentEnum } from "@/lib/ai/schema";
 import { toast } from "sonner";
 import { JournalPreview } from "./journal-preview";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { Database } from "@/lib/database.types";
 import { listTaxRatesAction, type TaxRate } from "@/lib/actions/tax-rates";
-import { canEditPosted, type UserRole } from "@/lib/auth";
-import { Lock } from "lucide-react";
+import { canApprove, canEditPosted, type UserRole } from "@/lib/auth";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { Lock, Trash2, RotateCcw } from "lucide-react";
 
 type Account = Database["public"]["Tables"]["chart_of_accounts"]["Row"];
 
@@ -75,10 +82,18 @@ type DraftTableProps = {
 };
 
 export function DraftsTable({ drafts, accounts = [], userRole, displayCurrency }: DraftTableProps) {
+  const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [editorDraft, setEditorDraft] = useState<DraftTableItem | null>(null);
   const [isEditorOpen, setIsEditorOpen] = useState(false);
-  
+  const [draftToDelete, setDraftToDelete] = useState<DraftTableItem | null>(null);
+  const [draftToConvert, setDraftToConvert] = useState<DraftTableItem | null>(null);
+  const [convertReason, setConvertReason] = useState("");
+
+  const canDelete = (d: DraftTableItem) => d.status !== "posted" && canApprove(userRole as UserRole);
+  const canConvertToDraft = (d: DraftTableItem) =>
+    d.status === "posted" && canEditPosted(userRole as UserRole);
+
   // Pagination
   const {
     currentItems: paginatedDrafts,
@@ -113,7 +128,7 @@ export function DraftsTable({ drafts, accounts = [], userRole, displayCurrency }
               <TableHead>Description</TableHead>
               <TableHead className="text-right">Amount</TableHead>
               <TableHead>Status</TableHead>
-              <TableHead className="w-64 text-right">Actions</TableHead>
+              <TableHead className="min-w-[280px] w-72 text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -152,7 +167,7 @@ export function DraftsTable({ drafts, accounts = [], userRole, displayCurrency }
                   <TableCell className="text-right font-mono text-sm">
                     {formatCurrency(
                       draft.entities.amount ?? 0,
-                      displayCurrency || draft.entities.currency || "AED"
+                      (displayCurrency && displayCurrency !== "all" ? displayCurrency : draft.entities.currency) || "AED"
                     )}
                     {(draft.entities as any)?._converted && (
                       <span className="text-xs text-muted-foreground ml-1" title={`Converted from ${(draft.entities as any)._originalCurrency}`}>
@@ -174,17 +189,29 @@ export function DraftsTable({ drafts, accounts = [], userRole, displayCurrency }
                         {draft.status}
                       </Badge>
                       {draft.status === "posted" && (
-                        <Lock className="h-4 w-4 text-muted-foreground" />
+                        <TooltipProvider delayDuration={0}>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span className="inline-flex">
+                                <Lock className="h-4 w-4 text-muted-foreground" />
+                              </span>
+                            </TooltipTrigger>
+                            <TooltipContent side="top" className="max-w-xs">
+                              Posted entries are locked. Create an adjustment or unpost (Admin only).
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
                       )}
                     </div>
                   </TableCell>
                   <TableCell 
-                    className="flex flex-wrap items-center justify-end gap-2"
+                    className="flex flex-nowrap items-center justify-end gap-2"
                     onClick={(e) => e.stopPropagation()} // Prevent row click when clicking actions
                   >
                     <Button
                       size="sm"
                       variant="outline"
+                      className="shrink-0"
                       disabled={draft.status !== "draft" || isPending}
                       onClick={() =>
                         startTransition(async () => {
@@ -203,30 +230,36 @@ export function DraftsTable({ drafts, accounts = [], userRole, displayCurrency }
                     >
                       Approve
                     </Button>
+                    {draft.status === "posted" ? (
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        className="shrink-0"
+                        onClick={() => handleOpenEditor(draft)}
+                        title="View (read-only). Unpost first to edit."
+                      >
+                        View
+                      </Button>
+                    ) : (
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        className="shrink-0"
+                        onClick={() => handleOpenEditor(draft)}
+                      >
+                        Edit
+                      </Button>
+                    )}
                     <Button
                       size="sm"
-                      variant="secondary"
-                      onClick={() => handleOpenEditor(draft)}
-                      disabled={
-                        draft.status === "posted" &&
-                        (!userRole || !canEditPosted(userRole as UserRole))
-                      }
-                      title={
-                        draft.status === "posted" && (!userRole || !canEditPosted(userRole as UserRole))
-                          ? "Posted entries can only be edited by administrators or auditors"
-                          : undefined
-                      }
-                    >
-                      Edit
-                    </Button>
-                    <Button
-                      size="sm"
+                      className="shrink-0"
                       disabled={draft.status === "posted" || draft.status === "draft" || isPending}
                       onClick={() =>
                         startTransition(async () => {
                           try {
                             await postDraftAction({ draftId: draft.id });
                             toast.success("Journal entry posted");
+                            router.refresh();
                           } catch (error) {
                             console.error(error);
                             toast.error("Failed to post journal entry", {
@@ -239,6 +272,37 @@ export function DraftsTable({ drafts, accounts = [], userRole, displayCurrency }
                     >
                       Post Entry
                     </Button>
+                    {canConvertToDraft(draft) && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="shrink-0"
+                        disabled={isPending}
+                        title="Convert to draft (void journal entry); admin/auditor only"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setDraftToConvert(draft);
+                        }}
+                      >
+                        <RotateCcw className="h-4 w-4 mr-1" />
+                        Convert to Draft
+                      </Button>
+                    )}
+                    {canDelete(draft) && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="shrink-0 text-destructive hover:text-destructive hover:bg-destructive/10"
+                        disabled={isPending}
+                        title="Delete draft"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setDraftToDelete(draft);
+                        }}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    )}
                   </TableCell>
                 </TableRow>
               ))
@@ -258,7 +322,122 @@ export function DraftsTable({ drafts, accounts = [], userRole, displayCurrency }
         />
       )}
 
-      <DraftEditorDialog draft={editorDraft} open={isEditorOpen} onOpenChange={handleEditorChange} accounts={accounts} />
+      <DraftEditorDialog
+        draft={editorDraft}
+        open={isEditorOpen}
+        onOpenChange={handleEditorChange}
+        accounts={accounts}
+        readOnly={editorDraft?.status === "posted"}
+      />
+
+      <Dialog open={!!draftToDelete} onOpenChange={(open) => !open && setDraftToDelete(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete draft</DialogTitle>
+            <DialogDescription>
+              This draft will be permanently deleted. This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDraftToDelete(null)} disabled={isPending}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={isPending}
+              onClick={() => {
+                if (!draftToDelete) return;
+                startTransition(async () => {
+                  try {
+                    await deleteDraftAction({ draftId: draftToDelete.id });
+                    toast.success("Draft deleted");
+                    setDraftToDelete(null);
+                    router.refresh();
+                  } catch (error) {
+                    console.error(error);
+                    toast.error("Failed to delete draft", {
+                      description: error instanceof Error ? error.message : "Unknown error occurred.",
+                    });
+                  }
+                });
+              }}
+            >
+              {isPending ? "Deleting…" : "Delete"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={!!draftToConvert}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDraftToConvert(null);
+            setConvertReason("");
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Convert to draft (unpost)</DialogTitle>
+            <DialogDescription>
+              This draft is posted. The journal entry will be voided (excluded from reports and
+              calculations) and the draft reverted to draft status. You can then edit or delete it.
+              A reason is required for audit.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <label htmlFor="convert-reason" className="text-sm font-medium">
+              Reason for unposting *
+            </label>
+            <Textarea
+              id="convert-reason"
+              placeholder="e.g. Correction required; duplicate entry"
+              value={convertReason}
+              onChange={(e) => setConvertReason(e.target.value)}
+              rows={3}
+              className="resize-none"
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setDraftToConvert(null);
+                setConvertReason("");
+              }}
+              disabled={isPending}
+            >
+              Cancel
+            </Button>
+            <Button
+              disabled={isPending || !convertReason.trim()}
+              onClick={() => {
+                if (!draftToConvert || !convertReason.trim()) return;
+                startTransition(async () => {
+                  try {
+                    await convertPostedToDraftAction({
+                      draftId: draftToConvert.id,
+                      reason: convertReason.trim(),
+                    });
+                    toast.success("Draft converted to draft");
+                    setDraftToConvert(null);
+                    setConvertReason("");
+                    router.refresh();
+                  } catch (error) {
+                    console.error(error);
+                    toast.error("Failed to convert to draft", {
+                      description: error instanceof Error ? error.message : "Unknown error occurred.",
+                    });
+                  }
+                });
+              }}
+            >
+              {isPending ? "Converting…" : "Convert to Draft"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
@@ -268,6 +447,7 @@ type DraftEditorDialogProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   accounts?: Account[];
+  readOnly?: boolean;
 };
 
 const DraftIntentOptions = PromptIntentEnum.options;
@@ -322,13 +502,6 @@ const DraftEditFormSchema = z
       }
     }
 
-    if (values.tax_rate && Number.isNaN(Number(values.tax_rate))) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["tax_rate"],
-        message: "Enter a valid number",
-      });
-    }
     if (values.tax_amount && Number.isNaN(Number(values.tax_amount))) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -355,6 +528,7 @@ function getDefaultValues(draft: DraftTableItem): DraftEditFormValues {
     }
   }
 
+  const tax = draft.entities.tax as { rate?: number; amount?: number; tax_rate_id?: string } | undefined;
   return {
     intent: (draft.intent as DraftEditFormValues["intent"]) ?? "create_invoice",
     amount: typeof draft.entities.amount === "number" ? draft.entities.amount : 0,
@@ -364,22 +538,16 @@ function getDefaultValues(draft: DraftTableItem): DraftEditFormValues {
     counterparty: typeof draft.entities.counterparty === "string" ? draft.entities.counterparty : "",
     invoice_number: typeof draft.entities.invoice_number === "string" ? draft.entities.invoice_number : "",
     description: typeof draft.entities.description === "string" ? draft.entities.description : "",
-    tax_rate:
-      draft.entities.tax && typeof draft.entities.tax.rate === "number"
-        ? String(draft.entities.tax.rate)
-        : "",
+    tax_rate: tax?.tax_rate_id ?? "",
     tax_amount:
-      draft.entities.tax && typeof draft.entities.tax.amount === "number"
-        ? String(draft.entities.tax.amount)
-        : "",
+      tax && typeof tax.amount === "number" ? String(tax.amount) : "",
   };
 }
 
-function DraftEditorDialog({ draft, open, onOpenChange, accounts = [] }: DraftEditorDialogProps) {
+function DraftEditorDialog({ draft, open, onOpenChange, accounts = [], readOnly = false }: DraftEditorDialogProps) {
   const [isSaving, startTransition] = useTransition();
   const [taxRates, setTaxRates] = useState<TaxRate[]>([]);
-  const [taxAmountOverride, setTaxAmountOverride] = useState(false);
-  
+
   const defaultValues = useMemo(() => (draft ? getDefaultValues(draft) : undefined), [draft]);
   const form = useForm<DraftEditFormValues>({
     resolver: zodResolver(DraftEditFormSchema) as any,
@@ -401,18 +569,16 @@ function DraftEditorDialog({ draft, open, onOpenChange, accounts = [] }: DraftEd
     }
   }, [open]);
 
-  // Auto-calculate tax amount when tax rate or amount changes
+  // Auto-calculate tax amount from selected tax rate (selector-only; no manual rate)
   useEffect(() => {
-    if (taxRateValue && !taxAmountOverride) {
-      const selectedRate = taxRates.find(
-        (rate) => rate.id === taxRateValue || String(rate.percentage) === taxRateValue
-      );
+    if (taxRateValue && taxRateValue !== "none") {
+      const selectedRate = taxRates.find((rate) => rate.id === taxRateValue);
       if (selectedRate && amountValue) {
         const calculatedAmount = (amountValue * selectedRate.percentage) / 100;
         form.setValue("tax_amount", calculatedAmount.toFixed(2));
       }
     }
-  }, [taxRateValue, amountValue, taxRates, taxAmountOverride, form]);
+  }, [taxRateValue, amountValue, taxRates, form]);
 
   useEffect(() => {
     if (draft) {
@@ -420,30 +586,36 @@ function DraftEditorDialog({ draft, open, onOpenChange, accounts = [] }: DraftEd
     }
   }, [draft, form]);
 
+  // Hydrate legacy drafts: tax.rate but no tax_rate_id → match by percentage and set selector
+  useEffect(() => {
+    if (!draft || taxRates.length === 0 || !open) return;
+    const tax = draft.entities.tax as { rate?: number; amount?: number; tax_rate_id?: string } | undefined;
+    if (tax?.rate != null && !tax.tax_rate_id) {
+      const match = taxRates.find((r) => Math.abs(r.percentage - tax.rate!) < 0.01);
+      if (match) {
+        form.setValue("tax_rate", match.id);
+        const amt = typeof draft.entities.amount === "number" ? draft.entities.amount : 0;
+        const amount = tax.amount != null ? String(tax.amount) : ((amt * match.percentage) / 100).toFixed(2);
+        form.setValue("tax_amount", amount);
+      }
+    }
+  }, [draft, taxRates, open, form]);
+
   const onSubmit = (values: DraftEditFormValues) => {
     if (!draft) return;
 
     startTransition(async () => {
       try {
-        // If tax_rate is a tax rate ID, get the percentage from the tax rate
-        let taxRatePercentage: number | undefined = undefined;
-        if (values.tax_rate) {
-          if (values.tax_rate === "manual") {
-            // Manual entry - use the value from form if it's a number string
-            const manualRate = form.getValues("tax_rate");
-            taxRatePercentage = manualRate && manualRate !== "manual" ? Number(manualRate) : undefined;
-          } else {
-            // It's a tax rate ID - find the percentage
-            const selectedRate = taxRates.find((rate) => rate.id === values.tax_rate);
-            taxRatePercentage = selectedRate ? selectedRate.percentage : Number(values.tax_rate);
-          }
-        }
+        const selectedRate = values.tax_rate
+          ? taxRates.find((rate) => rate.id === values.tax_rate)
+          : undefined;
+        const taxRatePercentage = selectedRate?.percentage;
         const taxAmount = values.tax_amount ? Number(values.tax_amount) : undefined;
 
         await updateDraftAction({
           draftId: draft.id,
           intent: values.intent,
-          confidence: draft.confidence ?? 0.8, // Keep existing confidence, don't expose to user
+          confidence: draft.confidence ?? 0.8,
           entities: {
             amount: values.amount,
             currency: values.currency,
@@ -454,10 +626,11 @@ function DraftEditorDialog({ draft, open, onOpenChange, accounts = [] }: DraftEd
             invoice_number: values.invoice_number ? values.invoice_number : null,
             tax:
               taxRatePercentage !== undefined || taxAmount !== undefined
-                ? {
+                ? ({
                     rate: taxRatePercentage ?? 0,
                     amount: taxAmount ?? null,
-                  }
+                    tax_rate_id: selectedRate?.id ?? null,
+                  } as { rate: number; amount: number | null })
                 : null,
           },
         });
@@ -482,9 +655,11 @@ function DraftEditorDialog({ draft, open, onOpenChange, accounts = [] }: DraftEd
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Edit Draft</DialogTitle>
+          <DialogTitle>{readOnly ? "View Draft" : "Edit Draft"}</DialogTitle>
           <DialogDescription>
-            Adjust AI-generated data before approving or posting the entry.
+            {readOnly
+              ? "Posted entries are read-only. Convert to draft first to edit."
+              : "Adjust AI-generated data before approving or posting the entry."}
           </DialogDescription>
         </DialogHeader>
 
@@ -498,7 +673,7 @@ function DraftEditorDialog({ draft, open, onOpenChange, accounts = [] }: DraftEd
               <JournalPreview draftId={draft.id} accounts={accounts} />
             </TabsContent>
             <TabsContent value="edit">
-          <form className="space-y-4" onSubmit={form.handleSubmit(onSubmit)}>
+          <form className="space-y-4" onSubmit={readOnly ? (e) => e.preventDefault() : form.handleSubmit(onSubmit)}>
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
                 <label className="text-sm font-medium">Intent</label>
@@ -507,6 +682,7 @@ function DraftEditorDialog({ draft, open, onOpenChange, accounts = [] }: DraftEd
                   onValueChange={(value) =>
                     form.setValue("intent", value as DraftEditFormValues["intent"])
                   }
+                  disabled={readOnly}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="Select intent" />
@@ -526,14 +702,14 @@ function DraftEditorDialog({ draft, open, onOpenChange, accounts = [] }: DraftEd
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
                 <label className="text-sm font-medium">Amount</label>
-                <Input type="number" step="0.01" min="0" {...form.register("amount")} />
+                <Input type="number" step="0.01" min="0" disabled={readOnly} {...form.register("amount")} />
                 {form.formState.errors.amount ? (
                   <p className="text-xs text-destructive">{form.formState.errors.amount.message}</p>
                 ) : null}
               </div>
               <div className="space-y-2">
                 <label className="text-sm font-medium">Currency</label>
-                <Input {...form.register("currency")} />
+                <Input disabled={readOnly} {...form.register("currency")} />
                 {form.formState.errors.currency ? (
                   <p className="text-xs text-destructive">
                     {form.formState.errors.currency.message}
@@ -545,14 +721,14 @@ function DraftEditorDialog({ draft, open, onOpenChange, accounts = [] }: DraftEd
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
                 <label className="text-sm font-medium">Transaction Date</label>
-                <Input type="date" {...form.register("date")} />
+                <Input type="date" disabled={readOnly} {...form.register("date")} />
                 {form.formState.errors.date ? (
                   <p className="text-xs text-destructive">{form.formState.errors.date.message}</p>
                 ) : null}
               </div>
               <div className="space-y-2">
                 <label className="text-sm font-medium">Due Date</label>
-                <Input type="date" {...form.register("due_date")} />
+                <Input type="date" disabled={readOnly} {...form.register("due_date")} />
                 {form.formState.errors.due_date ? (
                   <p className="text-xs text-destructive">{form.formState.errors.due_date.message}</p>
                 ) : null}
@@ -562,13 +738,13 @@ function DraftEditorDialog({ draft, open, onOpenChange, accounts = [] }: DraftEd
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
                 <label className="text-sm font-medium">Counterparty</label>
-                <Input {...form.register("counterparty")} />
+                <Input disabled={readOnly} {...form.register("counterparty")} />
               </div>
               <div className="space-y-2">
                 <label className="text-sm font-medium">Invoice Number</label>
                 <Input 
                   {...form.register("invoice_number")} 
-                  disabled={intentValue === "create_invoice"}
+                  disabled={readOnly || intentValue === "create_invoice"}
                   className={intentValue === "create_invoice" ? "bg-muted cursor-not-allowed" : ""}
                 />
                 {intentValue === "create_invoice" && (
@@ -581,7 +757,7 @@ function DraftEditorDialog({ draft, open, onOpenChange, accounts = [] }: DraftEd
 
             <div className="space-y-2">
               <label className="text-sm font-medium">Description</label>
-              <Textarea rows={3} {...form.register("description")} />
+              <Textarea rows={3} disabled={readOnly} {...form.register("description")} />
             </div>
 
             <div className="grid gap-4 sm:grid-cols-2">
@@ -591,8 +767,8 @@ function DraftEditorDialog({ draft, open, onOpenChange, accounts = [] }: DraftEd
                   value={taxRateValue || "none"}
                   onValueChange={(value) => {
                     form.setValue("tax_rate", value === "none" ? "" : value);
-                    setTaxAmountOverride(false);
                   }}
+                  disabled={readOnly}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="Select tax rate" />
@@ -604,45 +780,23 @@ function DraftEditorDialog({ draft, open, onOpenChange, accounts = [] }: DraftEd
                         {rate.name} ({rate.percentage}%)
                       </SelectItem>
                     ))}
-                    {/* Fallback: allow manual entry by percentage */}
-                    <SelectItem value="manual">Enter percentage manually</SelectItem>
                   </SelectContent>
                 </Select>
-                {taxRateValue === "manual" && (
-                  <Input
-                    type="number"
-                    step="0.01"
-                    placeholder="Enter percentage"
-                    {...form.register("tax_rate")}
-                  />
-                )}
                 {form.formState.errors.tax_rate ? (
                   <p className="text-xs text-destructive">{form.formState.errors.tax_rate.message}</p>
                 ) : null}
               </div>
               <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <label className="text-sm font-medium">Tax Amount</label>
-                  {!taxAmountOverride && taxRateValue && (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="h-6 text-xs"
-                      onClick={() => setTaxAmountOverride(true)}
-                    >
-                      Override
-                    </Button>
-                  )}
-                </div>
+                <label className="text-sm font-medium">Tax Amount</label>
                 <Input
                   type="number"
                   step="0.01"
                   {...form.register("tax_amount")}
-                  readOnly={!taxAmountOverride && !!taxRateValue && taxRateValue !== "manual"}
-                  className={!taxAmountOverride && !!taxRateValue && taxRateValue !== "manual" ? "bg-muted cursor-not-allowed" : ""}
+                  readOnly={readOnly || (!!taxRateValue && taxRateValue !== "none")}
+                  disabled={readOnly}
+                  className={!!taxRateValue && taxRateValue !== "none" && !readOnly ? "bg-muted cursor-not-allowed" : ""}
                 />
-                {!taxAmountOverride && taxRateValue && taxRateValue !== "manual" && (
+                {taxRateValue && taxRateValue !== "none" && (
                   <p className="text-xs text-muted-foreground">
                     Auto-calculated from amount and tax rate
                   </p>
@@ -657,11 +811,13 @@ function DraftEditorDialog({ draft, open, onOpenChange, accounts = [] }: DraftEd
 
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-                Cancel
+                {readOnly ? "Close" : "Cancel"}
               </Button>
-              <Button type="submit" disabled={isSaving}>
-                {isSaving ? "Saving..." : "Save Changes"}
-              </Button>
+              {!readOnly && (
+                <Button type="submit" disabled={isSaving}>
+                  {isSaving ? "Saving..." : "Save Changes"}
+                </Button>
+              )}
             </DialogFooter>
           </form>
             </TabsContent>

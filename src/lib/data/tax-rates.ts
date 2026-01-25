@@ -1,12 +1,12 @@
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { getCurrentUser } from "./users";
 
-// Tax rates table may not be in generated types yet, use type assertion
 type TaxRatesRow = {
   id: string;
   tenant_id: string;
   name: string;
-  percentage: number;
+  rate?: number;
+  percentage?: number;
   tax_type: "input" | "output";
   output_vat_account_id: string | null;
   input_vat_account_id: string | null;
@@ -14,6 +14,11 @@ type TaxRatesRow = {
   created_at: string;
   updated_at: string;
 };
+
+function rowToPercentage(row: TaxRatesRow): number {
+  const r = Number(row.rate ?? (row.percentage != null ? row.percentage / 100 : 0));
+  return Math.round(r * 10000) / 100;
+}
 
 export interface TaxRate {
   id: string;
@@ -49,7 +54,7 @@ export async function listTaxRates(): Promise<TaxRate[]> {
 
   return (data ?? []).map((rate: TaxRatesRow) => ({
     ...rate,
-    percentage: Number(rate.percentage),
+    percentage: rowToPercentage(rate),
   }));
 }
 
@@ -74,8 +79,6 @@ export async function getTaxRateById(id: string): Promise<TaxRate | null> {
 
   if (!data) return null;
 
-  return {
-    ...(data as TaxRatesRow),
-    percentage: Number((data as TaxRatesRow).percentage),
-  };
+  const row = data as TaxRatesRow;
+  return { ...row, percentage: rowToPercentage(row) };
 }

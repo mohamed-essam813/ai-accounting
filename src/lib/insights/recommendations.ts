@@ -14,6 +14,7 @@ export type { StructuredRecommendation };
 
 /**
  * Get structured recommendations for dashboard
+ * @param displayCurrency - Currency for formatting amounts (e.g. from CurrencyFilter)
  */
 export async function getDashboardRecommendations(
   currentPeriod: PeriodFinancialData,
@@ -25,6 +26,7 @@ export async function getDashboardRecommendations(
   arComparison: PeriodComparison,
   apComparison: PeriodComparison,
   daysInPeriod: number = 30,
+  displayCurrency: string = "AED",
 ): Promise<StructuredRecommendation[]> {
   return await generateStructuredRecommendations(
     currentPeriod,
@@ -36,5 +38,6 @@ export async function getDashboardRecommendations(
     arComparison,
     apComparison,
     daysInPeriod,
+    displayCurrency,
   );
 }

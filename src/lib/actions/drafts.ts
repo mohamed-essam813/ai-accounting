@@ -6,6 +6,7 @@ import { DraftSchema } from "@/lib/ai/schema";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { getCurrentUser } from "@/lib/data/users";
 import { listAccounts } from "@/lib/data/accounts";
+import { listTaxRates } from "@/lib/data/tax-rates";
 import { buildDefaultJournalLines, ensureBalanced, type IntentAccountMapping, type JournalLine } from "@/lib/accounting";
 import { canApprove, canEditPosted, type UserRole } from "@/lib/auth";
 import type { Database } from "@/lib/database.types";
@@ -116,7 +117,7 @@ export async function updateDraftAction(input: z.infer<typeof UpdateDraftSchema>
   const supabase = await createServerSupabaseClient();
   const { data: existing, error: fetchError } = await supabase
     .from("drafts")
-    .select<"id, status", Pick<DraftsRow, "id" | "status">>("id, status")
+    .select("id, status, data_json")
     .eq("id", payload.draftId)
     .eq("tenant_id", user.tenant.id)
     .maybeSingle();
@@ -130,53 +131,24 @@ export async function updateDraftAction(input: z.infer<typeof UpdateDraftSchema>
     throw new Error("Draft not found.");
   }
 
-  // Allow admin/auditor to edit posted entries with audit log
+  // Doc 7: Posted entries are immutable. Unpost first (convert to draft), then edit.
   if (existing.status === "posted") {
-    if (!canEditPosted(user.role as UserRole)) {
-      throw new Error("Posted drafts cannot be edited. Only administrators and auditors can edit posted entries.");
-    }
-    
-    // Log the edit to audit log
-    const auditData: AuditLogsInsert = {
-      tenant_id: user.tenant.id,
-      actor_id: user.id,
-      action: "edit_posted_draft",
-      entity: "draft",
-      entity_id: payload.draftId,
-      changes: {
-        previous_status: existing.status,
-        edited_fields: Object.keys(payload).filter(key => key !== "draftId"),
-        reason: "Admin/Auditor edit of posted draft",
-      },
-    };
-
-    const auditTable = supabase.from("audit_logs") as unknown as {
-      insert: (values: AuditLogsInsert[]) => Promise<{ error: unknown }>;
-    };
-    await auditTable.insert([auditData]);
+    throw new Error(
+      "Posted entries are locked. Convert to draft first (Admin/Auditor), then edit."
+    );
   }
 
   const nextStatus = existing.status === "approved" ? "draft" : existing.status;
 
   // Prevent invoice number changes for invoices - preserve existing invoice number
   const entities = { ...payload.entities };
-  if (payload.intent === "create_invoice") {
-    // Get existing draft to preserve invoice number
-    const { data: existingDraft } = await supabase
-      .from("drafts")
-      .select("data_json")
-      .eq("id", payload.draftId)
-      .maybeSingle();
-    
-    if (existingDraft) {
-      const existingData = existingDraft.data_json as { invoice_number?: string | null };
-      if (existingData?.invoice_number) {
-        entities.invoice_number = existingData.invoice_number;
-      } else {
-        // Generate if missing
-        const { generateInvoiceNumber } = await import("@/lib/utils/invoice-number");
-        entities.invoice_number = await generateInvoiceNumber(user.tenant.id);
-      }
+  if (payload.intent === "create_invoice" && existing?.data_json) {
+    const existingData = existing.data_json as { invoice_number?: string | null };
+    if (existingData?.invoice_number) {
+      entities.invoice_number = existingData.invoice_number;
+    } else {
+      const { generateInvoiceNumber } = await import("@/lib/utils/invoice-number");
+      entities.invoice_number = await generateInvoiceNumber(user.tenant.id);
     }
   }
 
@@ -201,6 +173,10 @@ export async function updateDraftAction(input: z.infer<typeof UpdateDraftSchema>
     throw error;
   }
 
+  /** Doc 6: Conflict – mark user override when editing AI-generated draft. */
+  const dataJson = existing?.data_json as { original_prompt?: string } | null;
+  const fromPrompt = !!(dataJson?.original_prompt ?? (dataJson as { original_prompt_text?: string })?.original_prompt_text);
+
   const auditData: AuditLogsInsert = {
     tenant_id: user.tenant.id,
     actor_id: user.id,
@@ -209,6 +185,7 @@ export async function updateDraftAction(input: z.infer<typeof UpdateDraftSchema>
     entity_id: payload.draftId,
     changes: {
       intent: payload.intent,
+      ...(fromPrompt ? { user_override: true } : {}),
     },
   };
   // Type assertion to fix Supabase type inference
@@ -345,8 +322,19 @@ export async function postDraftAction(input: z.infer<typeof PostDraftSchema>) {
     intent: draft.intent,
     entities: draft.data_json,
     confidence: draft.confidence ? Number(draft.confidence) : 0,
-    accounts: aiSelectedAccounts, // Include AI-selected accounts if available
+    accounts: aiSelectedAccounts,
   });
+
+  const tax = (draftData as { tax?: { tax_rate_id?: string } })?.tax;
+  if (tax?.tax_rate_id) {
+    const rates = await listTaxRates();
+    const valid = rates.some((r) => r.id === tax.tax_rate_id);
+    if (!valid) {
+      throw new Error(
+        "Select a valid tax rate before posting. The selected tax rate may have been removed or deactivated."
+      );
+    }
+  }
 
   let description: string;
   let lines: JournalLine[];
@@ -1014,5 +1002,175 @@ export async function updateDraftJournalLines(input: z.infer<typeof UpdateJourna
   await auditTable.insert([auditData]);
 
   revalidatePath("/drafts");
+  return { success: true };
+}
+
+const ConvertPostedToDraftSchema = z.object({
+  draftId: z.string().uuid(),
+  reason: z.string().min(1, "Reason is required for unposting"),
+});
+
+/**
+ * Convert a posted draft back to draft. Voids the journal entry (excluded from calculations)
+ * and reverts the draft. Admin and auditor only.
+ */
+export async function convertPostedToDraftAction(input: z.infer<typeof ConvertPostedToDraftSchema>) {
+  const payload = ConvertPostedToDraftSchema.parse(input);
+  const user = await getCurrentUser();
+  if (!user?.tenant) {
+    throw new Error("User tenant not resolved.");
+  }
+
+  const role = user.role as UserRole;
+  if (!canEditPosted(role)) {
+    throw new Error("Only administrators and auditors can convert posted drafts back to draft.");
+  }
+
+  const supabase = await createServerSupabaseClient();
+
+  const { data: draft, error: fetchError } = await supabase
+    .from("drafts")
+    .select<"id, status, posted_entry_id, tenant_id", Pick<DraftsRow, "id" | "status" | "posted_entry_id" | "tenant_id">>(
+      "id, status, posted_entry_id, tenant_id"
+    )
+    .eq("id", payload.draftId)
+    .eq("tenant_id", user.tenant.id)
+    .maybeSingle();
+
+  if (fetchError) {
+    console.error("Failed to load draft for convert", fetchError);
+    throw fetchError;
+  }
+
+  if (!draft) {
+    throw new Error("Draft not found.");
+  }
+
+  if (draft.status !== "posted") {
+    throw new Error("Only posted drafts can be converted back to draft.");
+  }
+
+  if (draft.posted_entry_id) {
+    // Void the journal entry so it is excluded from all calculations (reports, P&L,
+    // trial balance, dashboard) which filter on status = 'posted' only.
+    const { error: voidErr } = await supabase
+      .from("journal_entries")
+      .update({ status: "void" })
+      .eq("id", draft.posted_entry_id)
+      .eq("tenant_id", user.tenant.id);
+
+    if (voidErr) {
+      console.error("Failed to void journal entry", voidErr);
+      throw new Error("Failed to void the journal entry. The draft could not be converted.");
+    }
+  }
+
+  const draftTable = supabase.from("drafts") as unknown as {
+    update: (values: DraftsUpdate) => {
+      eq: (col: string, val: string) => { eq: (col: string, val: string) => Promise<{ error: unknown }> };
+    };
+  };
+  await draftTable
+    .update({
+      status: "draft",
+      posted_entry_id: null,
+      approved_by: null,
+      approved_at: null,
+    })
+    .eq("id", payload.draftId)
+    .eq("tenant_id", user.tenant.id);
+
+  const auditTable = supabase.from("audit_logs") as unknown as {
+    insert: (values: AuditLogsInsert[]) => Promise<{ error: unknown }>;
+  };
+  await auditTable.insert([
+    {
+      tenant_id: user.tenant.id,
+      actor_id: user.id,
+      action: "draft.unposted",
+      entity: "drafts",
+      entity_id: payload.draftId,
+      changes: { journal_entry_id: draft.posted_entry_id, reason: payload.reason },
+    },
+  ]);
+
+  revalidatePath("/drafts");
+  revalidatePath("/dashboard");
+  revalidatePath("/reports");
+  return { success: true };
+}
+
+const DeleteDraftSchema = z.object({
+  draftId: z.string().uuid(),
+});
+
+/**
+ * Delete a draft. Only allowed for unposted drafts (draft or approved).
+ * Posted drafts must be converted to draft first (admin/auditor), then deleted.
+ */
+export async function deleteDraftAction(input: z.infer<typeof DeleteDraftSchema>) {
+  const payload = DeleteDraftSchema.parse(input);
+  const user = await getCurrentUser();
+  if (!user?.tenant) {
+    throw new Error("User tenant not resolved.");
+  }
+
+  const role = user.role as UserRole;
+  if (!canApprove(role)) {
+    throw new Error("You do not have permission to delete drafts.");
+  }
+
+  const supabase = await createServerSupabaseClient();
+
+  const { data: draft, error: fetchError } = await supabase
+    .from("drafts")
+    .select<"id, status, tenant_id", Pick<DraftsRow, "id" | "status" | "tenant_id">>(
+      "id, status, tenant_id"
+    )
+    .eq("id", payload.draftId)
+    .eq("tenant_id", user.tenant.id)
+    .maybeSingle();
+
+  if (fetchError) {
+    console.error("Failed to load draft for delete", fetchError);
+    throw fetchError;
+  }
+
+  if (!draft) {
+    throw new Error("Draft not found.");
+  }
+
+  if (draft.status === "posted") {
+    throw new Error("Posted drafts cannot be deleted. Convert to draft first, then delete.");
+  }
+
+  const { error: deleteErr } = await supabase
+    .from("drafts")
+    .delete()
+    .eq("id", payload.draftId)
+    .eq("tenant_id", user.tenant.id);
+
+  if (deleteErr) {
+    console.error("Failed to delete draft", deleteErr);
+    throw new Error("Failed to delete draft.");
+  }
+
+  const auditTable = supabase.from("audit_logs") as unknown as {
+    insert: (values: AuditLogsInsert[]) => Promise<{ error: unknown }>;
+  };
+  await auditTable.insert([
+    {
+      tenant_id: user.tenant.id,
+      actor_id: user.id,
+      action: "draft.deleted",
+      entity: "drafts",
+      entity_id: payload.draftId,
+      changes: { previous_status: draft.status },
+    },
+  ]);
+
+  revalidatePath("/drafts");
+  revalidatePath("/dashboard");
+  revalidatePath("/reports");
   return { success: true };
 }

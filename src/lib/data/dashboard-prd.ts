@@ -440,7 +440,7 @@ async function getTaxExposureSignal(targetCurrency?: string): Promise<AttentionS
     }
   } else {
     status = "stable";
-    explanation = `Tax liability is low (${formatCurrency(vatPayable)}) and does not affect short-term cash.`;
+    explanation = `Tax liability is low (${formatCurrency(vatPayable, targetCurrency || "USD")}) and does not affect short-term cash.`;
   }
 
   return {
