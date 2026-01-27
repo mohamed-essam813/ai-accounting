@@ -4,6 +4,7 @@ import { DraftsPageClient } from "@/components/drafts/drafts-page-client";
 import { getCurrentUser } from "@/lib/data/users";
 import { convertCurrency, getTenantBaseCurrency } from "@/lib/utils/currency-conversion";
 import { normaliseCurrencyCode } from "@/lib/currencies";
+import type { Account } from "@/lib/accounting";
 
 export const revalidate = 60;
 
@@ -88,7 +89,7 @@ export default async function DraftsPage({
     <DraftsPageClient
       key={displayCurrency}
       drafts={convertedDrafts}
-      accounts={accounts}
+      accounts={accounts as Account[]}
       userRole={user?.role ?? null}
       displayCurrency={displayCurrency}
       baseCurrency={baseCurrency}

@@ -1,5 +1,5 @@
 /**
- * Doc 6: Document classifier.
+ * Document classifier.
  * Classify uploaded document type (invoice, bill, receipt, etc.) before parsing.
  * Used in doc-only mode to hint the accounting parser.
  */

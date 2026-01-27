@@ -132,10 +132,22 @@ export async function convertCurrencyBatch(
 
 /**
  * Get base currency for tenant
- * TODO: Fetch from tenant settings
+ * Fetches from tenants.base_currency column
  */
 export async function getTenantBaseCurrency(tenantId: string): Promise<string> {
-  // For MVP, default to USD
-  // TODO: Fetch from tenant settings table
-  return "USD";
+  const { createServerSupabaseClient } = await import("@/lib/supabase/server");
+  const supabase = await createServerSupabaseClient();
+  
+  const { data, error } = await supabase
+    .from("tenants")
+    .select("base_currency")
+    .eq("id", tenantId)
+    .maybeSingle();
+  
+  if (error) {
+    console.error("Failed to fetch tenant base currency:", error);
+    return "AED"; // Safe default
+  }
+  
+  return ((data as any)?.base_currency as string) || "AED";
 }

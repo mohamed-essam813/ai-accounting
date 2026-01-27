@@ -1,6 +1,6 @@
 /**
  * Parse bank statement text extracted from PDF into transactions.
- * Doc 14: Bank Reconciliation = PDF-only. This replaces CSV parsing.
+ * Bank Reconciliation = PDF-only. This replaces CSV parsing.
  *
  * Heuristic: split by lines, look for date + amount + description.
  * Bank formats vary; we support common patterns (ISO, DD/MM/YYYY, DD-MM-YYYY, etc.).
@@ -52,7 +52,7 @@ function looksLikeHeader(line: string): boolean {
   return false;
 }
 
-/** Doc 14: Try tables first (getTable). TableArray = string[][]. */
+/** Try tables first (getTable). TableArray = string[][]. */
 export function parseBankStatementTables(
   mergedTables: string[][][],
 ): ParsedBankTransaction[] {

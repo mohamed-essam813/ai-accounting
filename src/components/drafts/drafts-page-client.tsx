@@ -7,6 +7,7 @@ import { CurrencyFilter } from "@/components/filters/currency-filter";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { Database } from "@/lib/database.types";
 
+// Account type - new fields are optional since they may not be in database types yet
 type AccountRow = Database["public"]["Tables"]["chart_of_accounts"]["Row"];
 
 type DraftItem = {
@@ -20,7 +21,7 @@ type DraftItem = {
 
 type DraftsPageClientProps = {
   drafts: DraftItem[];
-  accounts: AccountRow[];
+  accounts: AccountRow[] | Array<AccountRow & { detail_type?: string | null; allow_reconciliation?: boolean | null }>;
   userRole: string | null;
   displayCurrency?: string;
   baseCurrency?: string;

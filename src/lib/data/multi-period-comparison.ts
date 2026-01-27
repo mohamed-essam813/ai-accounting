@@ -6,17 +6,7 @@
 
 import { getPeriodFinancialData, type PeriodFinancialData } from "./period-comparison";
 import type { DateRange } from "@/lib/utils/period-comparison";
-
-/**
- * Format date to YYYY-MM-DD in local timezone (not UTC)
- * Prevents timezone shifts when converting dates
- */
-function formatLocalDate(date: Date): string {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
+import { formatLocalDate } from "@/lib/utils/period-comparison";
 
 export interface MultiPeriodData {
   periods: Array<{

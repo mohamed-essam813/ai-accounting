@@ -4,6 +4,7 @@ import { BankUploader } from "@/components/bank/bank-uploader";
 import { BankTransactionsTable } from "@/components/bank/bank-transactions-table";
 import { BankAccountSelector } from "@/components/bank/bank-account-selector";
 import { filterBankReconciliationAccounts } from "@/lib/accounting/is-bank-account";
+import type { Account } from "@/lib/accounting";
 
 export const revalidate = 60;
 
@@ -18,8 +19,9 @@ export default async function BankPage({
     listAccounts(),
   ]);
 
-  // Doc 13: Only BANK accounts (1010–1099). Exclude Cash (1000), Petty Cash, etc.
-  const bankAccounts = filterBankReconciliationAccounts(accounts);
+  // Only BANK accounts (detail_type='bank' AND allow_reconciliation=true). Exclude Cash, Petty Cash, etc.
+  // Cast accounts to include optional new fields for filtering
+  const bankAccounts = filterBankReconciliationAccounts(accounts as Account[]);
 
   return (
     <div className="space-y-8">
@@ -29,9 +31,22 @@ export default async function BankPage({
           Upload bank statement PDFs, import transactions, and match them to posted journal entries.
         </p>
       </div>
-      <BankAccountSelector accounts={bankAccounts} selectedAccountId={params.bankAccountId} />
-      <BankUploader bankAccountId={params.bankAccountId} accounts={bankAccounts} />
-      <BankTransactionsTable transactions={transactions} />
+      {bankAccounts.length === 0 ? (
+        <div className="rounded-lg border border-dashed p-8 text-center">
+          <p className="text-sm text-muted-foreground mb-2">
+            No bank accounts found.
+          </p>
+          <p className="text-xs text-muted-foreground">
+            Create one in Chart of Accounts with Type = Asset, Subtype = Bank to enable reconciliation.
+          </p>
+        </div>
+      ) : (
+        <>
+          <BankAccountSelector accounts={bankAccounts} selectedAccountId={params.bankAccountId} />
+          <BankUploader bankAccountId={params.bankAccountId} accounts={bankAccounts} />
+          <BankTransactionsTable transactions={transactions} />
+        </>
+      )}
     </div>
   );
 }

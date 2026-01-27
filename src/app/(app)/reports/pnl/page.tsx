@@ -140,7 +140,7 @@ export default async function ReportsPage({
             initialStartDate={params.startDate}
             initialEndDate={params.endDate}
           />
-          <CurrencyFilter initialCurrency={currency} baseCurrency={baseCurrency} currencies={[]} />
+          <CurrencyFilter initialCurrency={currency ?? baseCurrency} baseCurrency={baseCurrency} currencies={[]} />
         </CardContent>
       </Card>
 

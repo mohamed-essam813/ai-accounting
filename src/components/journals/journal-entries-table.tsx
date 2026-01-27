@@ -154,20 +154,26 @@ export function JournalEntriesTable({
                     <TableCell className="max-w-md">{entry.description}</TableCell>
                     <TableCell>
                       <div className="space-y-1">
-                        {entry.journal_lines.map((line, idx) => (
-                          <div key={idx} className="text-xs text-muted-foreground">
-                            {line.account_code} {line.account_name}:{" "}
-                            {Number(line.debit) > 0 ? (
-                              <span className="text-green-600">
-                                DR {formatCurrency(Number(line.debit), "AED")}
-                              </span>
-                            ) : (
-                              <span className="text-blue-600">
-                                CR {formatCurrency(Number(line.credit), "AED")}
-                              </span>
-                            )}
-                          </div>
-                        ))}
+                        {entry.journal_lines.map((line, idx) => {
+                          const account = accounts.find((a) => a.id === line.account_id);
+                          const accountLabel = account
+                            ? `${account.code} ${account.name}`
+                            : "Unknown Account";
+                          return (
+                            <div key={idx} className="text-xs text-muted-foreground">
+                              {accountLabel}:{" "}
+                              {Number(line.debit) > 0 ? (
+                                <span className="text-green-600">
+                                  DR {formatCurrency(Number(line.debit), "AED")}
+                                </span>
+                              ) : (
+                                <span className="text-blue-600">
+                                  CR {formatCurrency(Number(line.credit), "AED")}
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })}
                       </div>
                     </TableCell>
                     <TableCell>

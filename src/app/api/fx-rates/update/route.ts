@@ -14,6 +14,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/data/users";
 import { fetchAndStoreFXRates, fetchFXRatesForAllTenants, getRecommendedProvider } from "@/lib/services/fx-rates";
+import { getTenantBaseCurrency } from "@/lib/utils/currency-conversion";
 import { z } from "zod";
 
 const UpdateRatesSchema = z.object({
@@ -35,9 +36,10 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
       }
 
+      const baseCurrency = await getTenantBaseCurrency(tenantId);
       const result = await fetchAndStoreFXRates(
         tenantId,
-        "USD", // Base currency - TODO: Get from tenant settings
+        baseCurrency,
         provider || getRecommendedProvider(),
         date,
       );

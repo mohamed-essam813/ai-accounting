@@ -8,7 +8,7 @@ import { createServiceSupabaseClient } from "@/lib/supabase/service";
 import type { Database } from "@/lib/database.types";
 import type { Account } from "@/lib/accounting";
 
-/** Doc 6: Doc-only mode – prompt optional when documentIds provided. */
+/** Doc-only mode – prompt optional when documentIds provided. */
 const requestSchema = z
   .object({
     prompt: z.string().optional(),
@@ -83,7 +83,7 @@ export async function POST(req: NextRequest) {
       if (userPrompt) {
         combinedPrompt = `${userPrompt}\n\nAdditional context from uploaded documents:\n${docText}`;
       } else {
-        /** Doc 6: Classifier – hint parser when doc-only. */
+        /** Classifier – hint parser when doc-only. */
         let classifierHint = "";
         if (docText !== "(No extractable text)") {
           try {
@@ -114,7 +114,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    /** Doc 6: Clarify flow – low confidence → ask user to clarify before creating draft. */
+    /** Clarify flow – low confidence → ask user to clarify before creating draft. */
     const CONFIDENCE_CLARIFY_THRESHOLD = 0.7;
     if (validation.data.confidence < CONFIDENCE_CLARIFY_THRESHOLD) {
       return NextResponse.json({
@@ -228,13 +228,14 @@ export async function POST(req: NextRequest) {
       const { listAccounts } = await import("@/lib/data/accounts");
       const { filterBankAccounts } = await import("@/lib/accounting/is-bank-account");
       const allAccountsList = await listAccounts();
-      const bankAccountsList = filterBankAccounts(allAccountsList);
+      // Cast to Account[] - filterBankAccounts handles optional detail_type internally
+      const bankAccountsList = filterBankAccounts(allAccountsList as Account[]);
       
       // Find Cash account (code 1000)
-      const cashAccountFound = allAccountsList.find((acc: Account) => acc.code === "1000" && acc.type === "asset");
+      const cashAccountFound = allAccountsList.find((acc) => acc.code === "1000" && acc.type === "asset");
       
       // Filter out Cash from bank accounts (we'll show it separately)
-      const bankAccountsExcludingCash = bankAccountsList.filter((acc: Account) => acc.code !== "1000");
+      const bankAccountsExcludingCash = bankAccountsList.filter((acc) => acc.code !== "1000");
       
       cashBankSelection = {
         bankAccounts: bankAccountsExcludingCash.map((acc: Account) => ({
@@ -276,7 +277,8 @@ export async function POST(req: NextRequest) {
       // Check each account to see if cash/bank selection is needed
       // Load accounts once outside the loop to avoid redeclaration
       let accountsLoaded = false;
-      let allAccountsList: Account[] = [];
+      // Accounts may not have detail_type/allow_reconciliation in DB types yet - use base Account type
+      let allAccountsList: Array<Account & { detail_type?: string | null; allow_reconciliation?: boolean | null }> = [];
       let bankAccountsList: Account[] = [];
       let cashAccountFound: Account | null = null;
       let bankAccountsExcludingCashList: Account[] = [];
@@ -308,14 +310,16 @@ export async function POST(req: NextRequest) {
           if (!accountsLoaded) {
             const { listAccounts } = await import("@/lib/data/accounts");
             const { filterBankAccounts } = await import("@/lib/accounting/is-bank-account");
-            allAccountsList = await listAccounts();
-            bankAccountsList = filterBankAccounts(allAccountsList);
+            const accountsFromDb = await listAccounts();
+            allAccountsList = accountsFromDb as Array<Account & { detail_type?: string | null; allow_reconciliation?: boolean | null }>;
+            // Cast to Account[] - filterBankAccounts handles optional detail_type internally
+            bankAccountsList = filterBankAccounts(allAccountsList as Account[]);
             
             // Find Cash account (code 1000)
-            cashAccountFound = allAccountsList.find((acc: Account) => acc.code === "1000" && acc.type === "asset") || null;
+            cashAccountFound = allAccountsList.find((acc) => acc.code === "1000" && acc.type === "asset") || null;
             
             // Filter out Cash from bank accounts (we'll show it separately)
-            bankAccountsExcludingCashList = bankAccountsList.filter((acc: Account) => acc.code !== "1000");
+            bankAccountsExcludingCashList = bankAccountsList.filter((acc) => acc.code !== "1000");
             accountsLoaded = true;
           }
           

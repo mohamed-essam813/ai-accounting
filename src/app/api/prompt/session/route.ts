@@ -4,7 +4,7 @@ import { getCurrentUser } from "@/lib/data/users";
 import { createServiceSupabaseClient } from "@/lib/supabase/service";
 import { saveDraftAction } from "@/lib/actions/drafts";
 
-/** Doc 6: Doc-only mode – prompt optional when documentIds provided. */
+/** Doc-only mode – prompt optional when documentIds provided. */
 const requestSchema = z
   .object({
     prompt: z.string().optional(),
@@ -77,7 +77,7 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    /** Doc 6: Clarify flow – low confidence. Create PENDING_INPUT session with needs_clarification in data_json. */
+    /** Clarify flow – low confidence. Create PENDING_INPUT session with needs_clarification in data_json. */
     if (parseData.needs_clarification) {
       const { data: insertedClarify, error: errClarify } = await table
         .insert([

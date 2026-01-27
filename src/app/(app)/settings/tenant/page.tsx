@@ -7,6 +7,7 @@ import { SubscriptionManager } from "@/components/settings/subscription-manager"
 import { AccountingPoliciesForm } from "@/components/settings/accounting-policies-form";
 import { TaxRatesForm } from "@/components/settings/tax-rates-form";
 import { UnitsOfMeasureForm } from "@/components/settings/units-of-measure-form";
+import { BaseCurrencyForm } from "@/components/settings/base-currency-form";
 import { getTenantProfile, getAccountingPolicy } from "@/lib/data/tenant";
 import { listTenantUsers, listPendingInvites } from "@/lib/data/tenant";
 import { getCurrentUser } from "@/lib/data/users";
@@ -36,17 +37,28 @@ export default async function TenantSettingsPage() {
 
   // Check if inventory transactions exist
   let hasInventoryTransactions = false;
+  // Check if any transactions exist (for base currency warning)
+  let hasTransactions = false;
   if (currentUser?.tenant) {
     const supabase = await createServerSupabaseClient();
     // Using type assertion since table may not be in generated types yet
-    const { data } = await supabase
+    const { data: invData } = await supabase
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       .from("inventory_transactions" as never)
       .select("id")
       .eq("tenant_id", currentUser.tenant.id)
       .limit(1)
       .maybeSingle();
-    hasInventoryTransactions = !!data;
+    hasInventoryTransactions = !!invData;
+
+    // Check for any journal entries (indicates transactions exist)
+    const { data: journalData } = await supabase
+      .from("journal_entries")
+      .select("id")
+      .eq("tenant_id", currentUser.tenant.id)
+      .limit(1)
+      .maybeSingle();
+    hasTransactions = !!journalData;
   }
 
   return (
@@ -59,14 +71,31 @@ export default async function TenantSettingsPage() {
       </div>
 
       {canManage ? (
-        <Card>
-          <CardHeader>
-            <CardTitle>Company Profile</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <TenantProfileForm defaultName={tenant?.name ?? ""} />
-          </CardContent>
-        </Card>
+        <>
+          <Card>
+            <CardHeader>
+              <CardTitle>Company Profile</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <TenantProfileForm defaultName={tenant?.name ?? ""} />
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Financial Settings</CardTitle>
+              <CardDescription>
+                Configure base currency for reporting and currency conversion defaults.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <BaseCurrencyForm
+                defaultBaseCurrency={((tenant as any)?.base_currency as string) || "AED"}
+                hasTransactions={hasTransactions}
+              />
+            </CardContent>
+          </Card>
+        </>
       ) : null}
 
       <SubscriptionManager

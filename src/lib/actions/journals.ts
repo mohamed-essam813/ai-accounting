@@ -40,7 +40,7 @@ const CreateJournalEntrySchema = z.object({
 
 export type CreateJournalOptions = { postImmediately?: boolean };
 
-/** Doc 9: Manual journals created as draft by default. System journals (depreciation, disposal) use postImmediately. */
+/** Manual journals created as draft by default. System journals (depreciation, disposal) use postImmediately. */
 export async function createJournalEntryAction(
   input: z.infer<typeof CreateJournalEntrySchema>,
   options?: CreateJournalOptions,
@@ -165,7 +165,7 @@ export async function createJournalEntryAction(
 const ApproveSchema = z.object({ entryId: z.string().uuid() });
 
 /**
- * Doc 9: Approve draft journal entry and post. Admin/accountant only.
+ * Approve draft journal entry and post. Admin/accountant only.
  * Insights are generated after post.
  */
 export async function approveAndPostJournalEntryAction(
@@ -252,7 +252,7 @@ const UpdateJournalEntrySchema = CreateJournalEntrySchema.extend({
 });
 
 /**
- * Doc 9: Update draft journal entry. Only drafts; posted entries are immutable.
+ * Update draft journal entry. Only drafts; posted entries are immutable.
  */
 export async function updateJournalEntryAction(
   input: z.infer<typeof UpdateJournalEntrySchema>,
@@ -323,7 +323,7 @@ export async function updateJournalEntryAction(
 const DeleteSchema = z.object({ entryId: z.string().uuid() });
 
 /**
- * Doc 9: Delete draft journal entry. Only drafts; posted entries cannot be deleted.
+ * Delete draft journal entry. Only drafts; posted entries cannot be deleted.
  */
 export async function deleteJournalEntryAction(input: z.infer<typeof DeleteSchema>) {
   const { entryId } = DeleteSchema.parse(input);

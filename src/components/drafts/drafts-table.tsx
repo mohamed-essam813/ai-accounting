@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useForm, useWatch } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -51,6 +52,7 @@ import {
 } from "@/components/ui/tooltip";
 import { Lock, Trash2, RotateCcw } from "lucide-react";
 
+// Account type - new fields are optional since they may not be in database types yet
 type Account = Database["public"]["Tables"]["chart_of_accounts"]["Row"];
 
 type DraftTableItem = {
@@ -83,18 +85,81 @@ type DraftTableProps = {
 
 export function DraftsTable({ drafts, accounts = [], userRole, displayCurrency }: DraftTableProps) {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const [isPending, startTransition] = useTransition();
   const [editorDraft, setEditorDraft] = useState<DraftTableItem | null>(null);
   const [isEditorOpen, setIsEditorOpen] = useState(false);
   const [draftToDelete, setDraftToDelete] = useState<DraftTableItem | null>(null);
   const [draftToConvert, setDraftToConvert] = useState<DraftTableItem | null>(null);
   const [convertReason, setConvertReason] = useState("");
+  const [localDrafts, setLocalDrafts] = useState<DraftTableItem[]>(drafts);
+
+  // Update local drafts when props change
+  useEffect(() => {
+    setLocalDrafts(drafts);
+  }, [drafts]);
 
   const canDelete = (d: DraftTableItem) => d.status !== "posted" && canApprove(userRole as UserRole);
   const canConvertToDraft = (d: DraftTableItem) =>
     d.status === "posted" && canEditPosted(userRole as UserRole);
 
-  // Pagination
+  // React Query mutations for real-time updates
+  const approveMutation = useMutation({
+    mutationFn: approveDraftAction,
+    onSuccess: (data) => {
+      // Update local state immediately
+      setLocalDrafts((prev) =>
+        prev.map((d) =>
+          d.id === data.id
+            ? { ...d, status: data.status, approved_by: data.approved_by, approved_at: data.approved_at }
+            : d
+        )
+      );
+      toast.success("Draft approved");
+      // Invalidate queries to refetch from server
+      queryClient.invalidateQueries({ queryKey: ["drafts"] });
+      router.refresh();
+    },
+    onError: (error) => {
+      console.error(error);
+      toast.error("Failed to approve draft", {
+        description: error instanceof Error ? error.message : "Unknown error occurred.",
+      });
+    },
+  });
+
+  const postMutation = useMutation({
+    mutationFn: postDraftAction,
+    onSuccess: (data, variables) => {
+      // Update local state immediately - data is object with id, status, posted_entry_id
+      if (typeof data === "object" && "id" in data) {
+        setLocalDrafts((prev) =>
+          prev.map((d) =>
+            d.id === data.id
+              ? { ...d, status: data.status, posted_entry_id: data.posted_entry_id }
+              : d
+          )
+        );
+      } else {
+        // Fallback: if data is string (entry.id), update by finding the draft
+        setLocalDrafts((prev) =>
+          prev.map((d) => (d.id === variables.draftId ? { ...d, status: "posted" } : d))
+        );
+      }
+      toast.success("Journal entry posted");
+      // Invalidate queries to refetch from server
+      queryClient.invalidateQueries({ queryKey: ["drafts"] });
+      router.refresh();
+    },
+    onError: (error) => {
+      console.error(error);
+      toast.error("Failed to post journal entry", {
+        description: error instanceof Error ? error.message : "Unknown error occurred.",
+      });
+    },
+  });
+
+  // Pagination - use localDrafts for real-time updates
   const {
     currentItems: paginatedDrafts,
     currentPage,
@@ -102,7 +167,7 @@ export function DraftsTable({ drafts, accounts = [], userRole, displayCurrency }
     goToPage,
     itemsPerPage,
     setItemsPerPage,
-  } = usePagination({ data: drafts, itemsPerPage: 20 });
+  } = usePagination({ data: localDrafts, itemsPerPage: 20 });
 
   const handleOpenEditor = (draft: DraftTableItem) => {
     setEditorDraft(draft);
@@ -212,23 +277,12 @@ export function DraftsTable({ drafts, accounts = [], userRole, displayCurrency }
                       size="sm"
                       variant="outline"
                       className="shrink-0"
-                      disabled={draft.status !== "draft" || isPending}
-                      onClick={() =>
-                        startTransition(async () => {
-                          try {
-                            await approveDraftAction({ draftId: draft.id });
-                            toast.success("Draft approved");
-                          } catch (error) {
-                            console.error(error);
-                            toast.error("Failed to approve draft", {
-                              description:
-                                error instanceof Error ? error.message : "Unknown error occurred.",
-                            });
-                          }
-                        })
-                      }
+                      disabled={draft.status !== "draft" || approveMutation.isPending}
+                      onClick={() => {
+                        approveMutation.mutate({ draftId: draft.id });
+                      }}
                     >
-                      Approve
+                      {approveMutation.isPending ? "Approving…" : "Approve"}
                     </Button>
                     {draft.status === "posted" ? (
                       <Button
@@ -253,24 +307,12 @@ export function DraftsTable({ drafts, accounts = [], userRole, displayCurrency }
                     <Button
                       size="sm"
                       className="shrink-0"
-                      disabled={draft.status === "posted" || draft.status === "draft" || isPending}
-                      onClick={() =>
-                        startTransition(async () => {
-                          try {
-                            await postDraftAction({ draftId: draft.id });
-                            toast.success("Journal entry posted");
-                            router.refresh();
-                          } catch (error) {
-                            console.error(error);
-                            toast.error("Failed to post journal entry", {
-                              description:
-                                error instanceof Error ? error.message : "Unknown error occurred.",
-                            });
-                          }
-                        })
-                      }
+                      disabled={draft.status === "posted" || draft.status === "draft" || postMutation.isPending}
+                      onClick={() => {
+                        postMutation.mutate({ draftId: draft.id });
+                      }}
                     >
-                      Post Entry
+                      {postMutation.isPending ? "Posting…" : "Post Entry"}
                     </Button>
                     {canConvertToDraft(draft) && (
                       <Button
@@ -487,6 +529,7 @@ const DraftEditFormSchema = z
     description: z.string().optional(),
     tax_rate: z.string().optional(),
     tax_amount: z.string().optional(),
+    tax_treatment: z.enum(["exclusive", "inclusive"]).optional(),
   })
   .superRefine((values, ctx) => {
     // Validate due_date is not before transaction_date
@@ -529,6 +572,8 @@ function getDefaultValues(draft: DraftTableItem): DraftEditFormValues {
   }
 
   const tax = draft.entities.tax as { rate?: number; amount?: number; tax_rate_id?: string } | undefined;
+  // Get tax_treatment from draft (default to exclusive)
+  const draftWithTaxTreatment = draft as DraftTableItem & { tax_treatment?: "exclusive" | "inclusive" | null };
   return {
     intent: (draft.intent as DraftEditFormValues["intent"]) ?? "create_invoice",
     amount: typeof draft.entities.amount === "number" ? draft.entities.amount : 0,
@@ -541,6 +586,7 @@ function getDefaultValues(draft: DraftTableItem): DraftEditFormValues {
     tax_rate: tax?.tax_rate_id ?? "",
     tax_amount:
       tax && typeof tax.amount === "number" ? String(tax.amount) : "",
+    tax_treatment: (draftWithTaxTreatment.tax_treatment as "exclusive" | "inclusive") ?? "exclusive",
   };
 }
 
@@ -557,6 +603,7 @@ function DraftEditorDialog({ draft, open, onOpenChange, accounts = [], readOnly 
   const intentValue = useWatch({ control: form.control, name: "intent" });
   const amountValue = useWatch({ control: form.control, name: "amount" });
   const taxRateValue = useWatch({ control: form.control, name: "tax_rate" });
+  const taxTreatmentValue = useWatch({ control: form.control, name: "tax_treatment" }) ?? "exclusive";
 
   // Load tax rates
   useEffect(() => {
@@ -569,16 +616,29 @@ function DraftEditorDialog({ draft, open, onOpenChange, accounts = [], readOnly 
     }
   }, [open]);
 
-  // Auto-calculate tax amount from selected tax rate (selector-only; no manual rate)
+  // Auto-calculate tax amount based on tax treatment (exclusive/inclusive)
   useEffect(() => {
-    if (taxRateValue && taxRateValue !== "none") {
+    if (taxRateValue && taxRateValue !== "none" && amountValue > 0) {
       const selectedRate = taxRates.find((rate) => rate.id === taxRateValue);
-      if (selectedRate && amountValue) {
-        const calculatedAmount = (amountValue * selectedRate.percentage) / 100;
-        form.setValue("tax_amount", calculatedAmount.toFixed(2));
+      if (selectedRate) {
+        const rate = selectedRate.percentage / 100;
+        let calculatedTax: number;
+        let calculatedSubtotal: number;
+        
+        if (taxTreatmentValue === "inclusive") {
+          // Inclusive: Total = amount, Subtotal = Total / (1 + rate), Tax = Total - Subtotal
+          calculatedSubtotal = amountValue / (1 + rate);
+          calculatedTax = amountValue - calculatedSubtotal;
+        } else {
+          // Exclusive: Subtotal = amount, Tax = Subtotal × rate, Total = Subtotal + Tax
+          calculatedSubtotal = amountValue;
+          calculatedTax = calculatedSubtotal * rate;
+        }
+        
+        form.setValue("tax_amount", calculatedTax.toFixed(2));
       }
     }
-  }, [taxRateValue, amountValue, taxRates, form]);
+  }, [taxRateValue, amountValue, taxRates, taxTreatmentValue, form]);
 
   useEffect(() => {
     if (draft) {
@@ -611,11 +671,13 @@ function DraftEditorDialog({ draft, open, onOpenChange, accounts = [], readOnly 
           : undefined;
         const taxRatePercentage = selectedRate?.percentage;
         const taxAmount = values.tax_amount ? Number(values.tax_amount) : undefined;
+        const taxTreatment = values.tax_treatment ?? "exclusive";
 
         await updateDraftAction({
           draftId: draft.id,
           intent: values.intent,
           confidence: draft.confidence ?? 0.8,
+          tax_treatment: taxTreatment,
           entities: {
             amount: values.amount,
             currency: values.currency,
@@ -760,52 +822,118 @@ function DraftEditorDialog({ draft, open, onOpenChange, accounts = [], readOnly 
               <Textarea rows={3} disabled={readOnly} {...form.register("description")} />
             </div>
 
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Tax Rate</label>
-                <Select
-                  value={taxRateValue || "none"}
-                  onValueChange={(value) => {
-                    form.setValue("tax_rate", value === "none" ? "" : value);
-                  }}
-                  disabled={readOnly}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select tax rate" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">None</SelectItem>
-                    {taxRates.map((rate) => (
-                      <SelectItem key={rate.id} value={rate.id}>
-                        {rate.name} ({rate.percentage}%)
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {form.formState.errors.tax_rate ? (
-                  <p className="text-xs text-destructive">{form.formState.errors.tax_rate.message}</p>
+            <div className="space-y-4">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Tax Rate</label>
+                  <Select
+                    value={taxRateValue || "none"}
+                    onValueChange={(value) => {
+                      form.setValue("tax_rate", value === "none" ? "" : value);
+                    }}
+                    disabled={readOnly}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select tax rate" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">None</SelectItem>
+                      {taxRates.map((rate) => (
+                        <SelectItem key={rate.id} value={rate.id}>
+                          {rate.name} ({rate.percentage}%)
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {form.formState.errors.tax_rate ? (
+                    <p className="text-xs text-destructive">{form.formState.errors.tax_rate.message}</p>
+                  ) : null}
+                </div>
+                {taxRateValue && taxRateValue !== "none" ? (
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Tax Treatment</label>
+                    <Select
+                      value={taxTreatmentValue}
+                      onValueChange={(value) => {
+                        form.setValue("tax_treatment", value as "exclusive" | "inclusive");
+                      }}
+                      disabled={readOnly}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="exclusive">Exclusive of tax</SelectItem>
+                        <SelectItem value="inclusive">Inclusive of tax</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">
+                      {taxTreatmentValue === "exclusive"
+                        ? "Tax will be added on top of amount"
+                        : "Tax is included in amount"}
+                    </p>
+                  </div>
                 ) : null}
               </div>
+              {taxRateValue && taxRateValue !== "none" && amountValue > 0 && (
+                <div className="rounded-md border p-4 space-y-2 bg-muted/50">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">
+                      {taxTreatmentValue === "exclusive" ? "Subtotal" : "Total"}
+                    </span>
+                    <span className="font-medium">
+                      {formatCurrency(
+                        taxTreatmentValue === "exclusive" ? amountValue : amountValue,
+                        form.watch("currency") || "AED"
+                      )}
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Tax</span>
+                    <span className="font-medium">
+                      {formatCurrency(
+                        Number(form.watch("tax_amount") || 0),
+                        form.watch("currency") || "AED"
+                      )}
+                    </span>
+                  </div>
+                  {taxTreatmentValue === "inclusive" && (
+                    <div className="flex justify-between text-sm">
+                      <span className="text-muted-foreground">Subtotal</span>
+                      <span className="font-medium">
+                        {formatCurrency(
+                          amountValue - Number(form.watch("tax_amount") || 0),
+                          form.watch("currency") || "AED"
+                        )}
+                      </span>
+                    </div>
+                  )}
+                  {taxTreatmentValue === "exclusive" && (
+                    <div className="flex justify-between text-sm font-semibold border-t pt-2">
+                      <span>Total</span>
+                      <span>
+                        {formatCurrency(
+                          amountValue + Number(form.watch("tax_amount") || 0),
+                          form.watch("currency") || "AED"
+                        )}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
               <div className="space-y-2">
                 <label className="text-sm font-medium">Tax Amount</label>
                 <Input
                   type="number"
                   step="0.01"
                   {...form.register("tax_amount")}
-                  readOnly={readOnly || (!!taxRateValue && taxRateValue !== "none")}
-                  disabled={readOnly}
-                  className={!!taxRateValue && taxRateValue !== "none" && !readOnly ? "bg-muted cursor-not-allowed" : ""}
+                  readOnly
+                  disabled
+                  className="bg-muted cursor-not-allowed"
                 />
-                {taxRateValue && taxRateValue !== "none" && (
-                  <p className="text-xs text-muted-foreground">
-                    Auto-calculated from amount and tax rate
-                  </p>
-                )}
-                {form.formState.errors.tax_amount ? (
-                  <p className="text-xs text-destructive">
-                    {form.formState.errors.tax_amount.message}
-                  </p>
-                ) : null}
+                <p className="text-xs text-muted-foreground">
+                  Auto-calculated from amount, tax rate, and tax treatment
+                </p>
               </div>
             </div>
 

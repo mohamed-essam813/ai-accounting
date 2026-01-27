@@ -1,5 +1,5 @@
 import { listAccounts } from "@/lib/data/accounts";
-import { listJournalEntries } from "@/lib/data/journals";
+import { listJournalEntries, getJournalTemplates } from "@/lib/data/journals";
 import { JournalEntryForm } from "@/components/journals/journal-entry-form";
 import { JournalEntriesTable } from "@/components/journals/journal-entries-table";
 import { JournalFilters } from "@/components/journals/journal-filters";
@@ -23,7 +23,7 @@ export default async function JournalsPage({
   const params = await searchParams;
   const statusFilter =
     params.status === "draft" || params.status === "posted" ? params.status : "all";
-  const [user, accounts, entries] = await Promise.all([
+  const [user, accounts, entries, templates] = await Promise.all([
     import("@/lib/data/users").then((m) => m.getCurrentUser()),
     listAccounts(),
     listJournalEntries({
@@ -34,6 +34,7 @@ export default async function JournalsPage({
       status: statusFilter,
       limit: 100,
     }),
+    getJournalTemplates(),
   ]);
 
   const accountOptions = accounts.map((a) => ({
@@ -91,6 +92,7 @@ export default async function JournalsPage({
               accounts={accounts}
               editEntry={editingEntry}
               cancelHref={cancelHref}
+              templates={templates}
             />
           </CardContent>
         </Card>
@@ -100,7 +102,7 @@ export default async function JournalsPage({
             <CardTitle>Create Journal Entry</CardTitle>
           </CardHeader>
           <CardContent>
-            <JournalEntryForm accounts={accounts} />
+            <JournalEntryForm accounts={accounts} templates={templates} />
           </CardContent>
         </Card>
       )}

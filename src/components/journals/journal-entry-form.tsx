@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState, useTransition, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useForm, useFieldArray } from "react-hook-form";
 import { z } from "zod";
@@ -15,14 +15,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
   createJournalEntryAction,
   updateJournalEntryAction,
 } from "@/lib/actions/journals";
 import { toast } from "sonner";
 import Link from "next/link";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2, AlertCircle } from "lucide-react";
 import { formatCurrency } from "@/lib/format";
+import type { JournalTemplate } from "@/lib/data/journals";
 
 const JournalLineSchema = z.object({
   account_id: z.string().uuid("Please select an account"),
@@ -72,6 +74,7 @@ type Props = {
   accounts: Account[];
   editEntry?: EditEntry | null;
   cancelHref?: string;
+  templates?: JournalTemplate[];
 };
 
 function getDefaultFormValues(): FormValues {
@@ -89,10 +92,12 @@ export function JournalEntryForm({
   accounts,
   editEntry,
   cancelHref = "/journals",
+  templates = [],
 }: Props) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
-  const [template, setTemplate] = useState<string>("none");
+  const [templateId, setTemplateId] = useState<string>("none");
+  const [templateWarning, setTemplateWarning] = useState<string | null>(null);
   const isEdit = !!editEntry;
 
   const form = useForm<FormValues>({
@@ -116,22 +121,88 @@ export function JournalEntryForm({
     name: "lines",
   });
 
-  const TEMPLATES = [
-    { value: "none", label: "None" },
-    { value: "depreciation", label: "Depreciation", description: "Monthly depreciation" },
-    { value: "accrual", label: "Accrual", description: "Accrual" },
-    { value: "adjustment", label: "Adjustment", description: "Adjustment" },
-  ] as const;
+  // Build templates list from database
+  const templateOptions = [
+    { id: "none", name: "None" },
+    ...templates.map((t) => ({ id: t.id, name: t.name })),
+  ];
 
-  const applyTemplate = (value: string) => {
-    setTemplate(value);
-    const t = TEMPLATES.find((x) => x.value === value);
-    if (!t || t.value === "none") return;
-    form.setValue("description", t.description ?? "");
-    replace([
-      { account_id: "", debit: 0, credit: 0, memo: "" },
-      { account_id: "", debit: 0, credit: 0, memo: "" },
-    ]);
+  // Apply template with account auto-selection
+  const applyTemplate = (selectedTemplateId: string) => {
+    setTemplateId(selectedTemplateId);
+    setTemplateWarning(null);
+
+    if (selectedTemplateId === "none") {
+      form.setValue("description", "");
+      replace([
+        { account_id: "", debit: 0, credit: 0, memo: "" },
+        { account_id: "", debit: 0, credit: 0, memo: "" },
+      ]);
+      return;
+    }
+
+    const template = templates.find((t) => t.id === selectedTemplateId);
+    if (!template) return;
+
+    // Set description
+    form.setValue("description", template.description_default || "");
+
+    // Build lines from template
+    const templateLines = template.lines.map((line, index) => {
+      // Find account by ID first, then by code
+      let accountId = "";
+      if (line.default_account_id) {
+        const accountById = accounts.find((a) => a.id === line.default_account_id);
+        if (accountById) {
+          accountId = accountById.id;
+        } else if (line.default_account_code) {
+          // Fallback to code lookup
+          const accountByCode = accounts.find((a) => a.code === line.default_account_code);
+          if (accountByCode) {
+            accountId = accountByCode.id;
+          }
+        }
+      } else if (line.default_account_code) {
+        const accountByCode = accounts.find((a) => a.code === line.default_account_code);
+        if (accountByCode) {
+          accountId = accountByCode.id;
+        }
+      }
+
+      // Set debit/credit based on side
+      const debit = line.side === "debit" ? 0 : 0;
+      const credit = line.side === "credit" ? 0 : 0;
+
+      return {
+        account_id: accountId,
+        debit,
+        credit,
+        memo: line.default_memo || "",
+      };
+    });
+
+    // Check for missing accounts
+    const missingAccounts = template.lines
+      .map((line, idx) => {
+        if (!templateLines[idx].account_id && (line.default_account_id || line.default_account_code)) {
+          return line.default_account_code || "unknown";
+        }
+        return null;
+      })
+      .filter((code): code is string => code !== null);
+
+    if (missingAccounts.length > 0) {
+      setTemplateWarning(
+        `Template account(s) not found: ${missingAccounts.join(", ")}. Please select accounts manually or remap this template.`
+      );
+    }
+
+    // Ensure at least 2 lines
+    while (templateLines.length < 2) {
+      templateLines.push({ account_id: "", debit: 0, credit: 0, memo: "" });
+    }
+
+    replace(templateLines);
   };
 
   const accountOptions = accounts.map((account) => ({
@@ -173,7 +244,8 @@ export function JournalEntryForm({
             })),
           });
           toast.success("Saved as draft. An approver can post it.");
-          setTemplate("none");
+          setTemplateId("none");
+          setTemplateWarning(null);
           form.reset(getDefaultFormValues());
           router.refresh();
         }
@@ -190,25 +262,33 @@ export function JournalEntryForm({
   return (
     <form className="space-y-6" onSubmit={form.handleSubmit(onSubmit)}>
       {!isEdit && (
-        <div className="grid gap-4 sm:grid-cols-2">
-          <div className="space-y-2">
-            <label className="text-sm font-medium">Template</label>
-            <Select value={template} onValueChange={applyTemplate}>
-              <SelectTrigger>
-                <SelectValue placeholder="Use a template (optional)" />
-              </SelectTrigger>
-              <SelectContent>
-                {TEMPLATES.map((t) => (
-                  <SelectItem key={t.value} value={t.value}>
-                    {t.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <p className="text-xs text-muted-foreground">
-              Prefill description and 2 lines. Select accounts and amounts.
-            </p>
+        <div className="space-y-4">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Template</label>
+              <Select value={templateId} onValueChange={applyTemplate}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Use a template (optional)" />
+                </SelectTrigger>
+                <SelectContent>
+                  {templateOptions.map((t) => (
+                    <SelectItem key={t.id} value={t.id}>
+                      {t.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Prefill description, accounts, and line structure. Enter amounts.
+              </p>
+            </div>
           </div>
+          {templateWarning && (
+            <Alert variant="destructive">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>{templateWarning}</AlertDescription>
+            </Alert>
+          )}
         </div>
       )}
       <div className="grid gap-4 sm:grid-cols-2">

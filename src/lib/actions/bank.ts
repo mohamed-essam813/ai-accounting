@@ -6,6 +6,7 @@ import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { getCurrentUser } from "@/lib/data/users";
 import type { Database } from "@/lib/database.types";
 import { validateBankReconciliationAccount } from "@/lib/accounting/is-bank-account";
+import type { Account } from "@/lib/accounting";
 
 type BankTransactionsInsert = Database["public"]["Tables"]["bank_transactions"]["Insert"];
 type BankTransactionsUpdate = Database["public"]["Tables"]["bank_transactions"]["Update"];
@@ -35,7 +36,7 @@ export async function importBankTransactionsAction(input: z.infer<typeof ImportS
 
   const tenantId = user.tenant.id;
   
-  // Doc 13: Only BANK accounts (1010–1099). Exclude Cash. Hard enforcement.
+  // Only BANK accounts (1010–1099). Exclude Cash. Hard enforcement.
   const { listAccounts } = await import("@/lib/data/accounts");
   const accounts = await listAccounts();
 
@@ -45,7 +46,8 @@ export async function importBankTransactionsAction(input: z.infer<typeof ImportS
     if (!selectedAccount) {
       throw new Error("Bank account not found in chart of accounts.");
     }
-    validateBankReconciliationAccount(selectedAccount, bankAccountId);
+    // Cast to Account - validation function handles optional detail_type internally
+    validateBankReconciliationAccount(selectedAccount as Account, bankAccountId);
   }
   
   const rows: BankTransactionsInsert[] = payload.transactions.map((txn) => ({

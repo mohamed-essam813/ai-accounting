@@ -38,7 +38,7 @@ type Props = {
   initialMultiN?: 3 | 6 | 12;
   initialMultiUnit?: "MONTH" | "QUARTER" | "YEAR";
   initialCurrency?: string;
-  /** Doc 12: Default display currency. Default = tenant base (e.g. USD). */
+  /** Default display currency. Default = tenant base (e.g. USD). */
   baseCurrency?: string;
   currencies?: string[];
 };

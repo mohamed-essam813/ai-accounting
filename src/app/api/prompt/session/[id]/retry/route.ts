@@ -79,7 +79,7 @@ export async function POST(
     const origin = new URL(req.url).origin;
     const cookie = req.headers.get("cookie") ?? "";
     const documentIds = Array.isArray(session.document_ids) ? session.document_ids : [];
-    /** Doc 6: Clarify – re-parse with user clarification appended. */
+    /** Clarify – re-parse with user clarification appended. */
     const effectivePrompt =
       clarification?.trim()
         ? `${session.original_prompt_text}\n\nUser clarified: ${clarification.trim()}`
@@ -111,7 +111,7 @@ export async function POST(
       );
     }
 
-    /** Doc 6: Clarify – still low confidence after user clarification. Return needs_clarification again. */
+    /** Clarify – still low confidence after user clarification. Return needs_clarification again. */
     if (parseData.needs_clarification) {
       await updateTable
         .update({

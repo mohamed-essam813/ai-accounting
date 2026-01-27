@@ -1,5 +1,5 @@
 /**
- * Doc 14: Bank Reconciliation = PDF-only.
+ * Bank Reconciliation = PDF-only.
  * POST: accept bank statement PDF, extract text, parse into transactions.
  */
 

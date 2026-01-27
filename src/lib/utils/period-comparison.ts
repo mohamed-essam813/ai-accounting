@@ -13,7 +13,7 @@
  * Format date to YYYY-MM-DD in local timezone (not UTC)
  * Prevents timezone shifts when converting dates
  */
-function formatLocalDate(date: Date): string {
+export function formatLocalDate(date: Date): string {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
@@ -24,7 +24,7 @@ function formatLocalDate(date: Date): string {
  * Parse date string as local date (not UTC)
  * Prevents timezone shifts when parsing YYYY-MM-DD strings
  */
-function parseLocalDate(dateString: string): Date {
+export function parseLocalDate(dateString: string): Date {
   const [year, month, day] = dateString.split("-").map(Number);
   return new Date(year, month - 1, day);
 }

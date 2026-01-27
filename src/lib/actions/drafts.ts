@@ -7,10 +7,11 @@ import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { getCurrentUser } from "@/lib/data/users";
 import { listAccounts } from "@/lib/data/accounts";
 import { listTaxRates } from "@/lib/data/tax-rates";
-import { buildDefaultJournalLines, ensureBalanced, type IntentAccountMapping, type JournalLine } from "@/lib/accounting";
+import { buildDefaultJournalLines, ensureBalanced, type IntentAccountMapping, type JournalLine, type Account } from "@/lib/accounting";
 import { canApprove, canEditPosted, type UserRole } from "@/lib/auth";
 import type { Database } from "@/lib/database.types";
 import type { DraftPayload } from "@/lib/ai/schema";
+import { getTenantBaseCurrency } from "@/lib/utils/currency-conversion";
 
 type DraftsInsert = Database["public"]["Tables"]["drafts"]["Insert"];
 type DraftsRow = Database["public"]["Tables"]["drafts"]["Row"];
@@ -105,6 +106,7 @@ export async function saveDraftAction(input: z.infer<typeof SaveDraftSchema>) {
 
 const UpdateDraftSchema = DraftSchema.extend({
   draftId: z.string().uuid(),
+  tax_treatment: z.enum(["exclusive", "inclusive"]).optional(),
 });
 
 export async function updateDraftAction(input: z.infer<typeof UpdateDraftSchema>) {
@@ -131,7 +133,7 @@ export async function updateDraftAction(input: z.infer<typeof UpdateDraftSchema>
     throw new Error("Draft not found.");
   }
 
-  // Doc 7: Posted entries are immutable. Unpost first (convert to draft), then edit.
+  // Posted entries are immutable. Unpost first (convert to draft), then edit.
   if (existing.status === "posted") {
     throw new Error(
       "Posted entries are locked. Convert to draft first (Admin/Auditor), then edit."
@@ -152,12 +154,19 @@ export async function updateDraftAction(input: z.infer<typeof UpdateDraftSchema>
     }
   }
 
+  // Include tax_treatment in update
   const updateData: DraftsUpdate = {
     intent: payload.intent,
     data_json: entities,
     confidence: payload.confidence,
     status: nextStatus,
   };
+  
+  // Add tax_treatment if provided (may not be in database types yet)
+  const updateDataWithTaxTreatment = {
+    ...updateData,
+    ...(payload.tax_treatment && { tax_treatment: payload.tax_treatment }),
+  } as DraftsUpdate & { tax_treatment?: "exclusive" | "inclusive" };
   // Type assertion to fix Supabase type inference
   const table = supabase.from("drafts") as unknown as {
     update: (values: DraftsUpdate) => {
@@ -173,7 +182,7 @@ export async function updateDraftAction(input: z.infer<typeof UpdateDraftSchema>
     throw error;
   }
 
-  /** Doc 6: Conflict – mark user override when editing AI-generated draft. */
+  /** Conflict – mark user override when editing AI-generated draft. */
   const dataJson = existing?.data_json as { original_prompt?: string } | null;
   const fromPrompt = !!(dataJson?.original_prompt ?? (dataJson as { original_prompt_text?: string })?.original_prompt_text);
 
@@ -216,19 +225,34 @@ export async function approveDraftAction(input: z.infer<typeof ApprovePayload>) 
   const supabase = await createServerSupabaseClient();
   const updateData: DraftsUpdate = {
     status: "approved",
+    approved_by: user.id,
+    approved_at: new Date().toISOString(),
   };
   // Type assertion to fix Supabase type inference
   const table = supabase.from("drafts") as unknown as {
     update: (values: DraftsUpdate) => {
       eq: (column: string, value: string) => {
-        eq: (column: string, value: string) => Promise<{ error: unknown }>;
+        eq: (column: string, value: string) => {
+          select: (columns?: string) => {
+            single: () => Promise<{ data: DraftsRow | null; error: unknown }>;
+          };
+        };
       };
     };
   };
-  const { error } = await table.update(updateData).eq("id", payload.draftId).eq("tenant_id", user.tenant.id);
+  const { data: updated, error } = await table
+    .update(updateData)
+    .eq("id", payload.draftId)
+    .eq("tenant_id", user.tenant.id)
+    .select("*")
+    .single();
 
   if (error) {
     throw error;
+  }
+
+  if (!updated) {
+    throw new Error("Failed to update draft");
   }
 
   const auditData: AuditLogsInsert = {
@@ -246,7 +270,13 @@ export async function approveDraftAction(input: z.infer<typeof ApprovePayload>) 
   await auditTable.insert([auditData]);
 
   revalidatePath("/drafts");
-  return { success: true };
+  // Return updated draft for real-time UI updates
+  return {
+    id: updated.id,
+    status: updated.status,
+    approved_by: updated.approved_by,
+    approved_at: updated.approved_at,
+  };
 }
 
 const PostDraftSchema = z.object({
@@ -285,8 +315,13 @@ export async function postDraftAction(input: z.infer<typeof PostDraftSchema>) {
     throw new Error("Draft must be approved before posting.");
   }
 
+  // If already posted, return the draft object for consistency
   if (draft.posted_entry_id) {
-    return draft.posted_entry_id;
+    return {
+      id: draft.id,
+      status: draft.status,
+      posted_entry_id: draft.posted_entry_id,
+    };
   }
 
   // Get all accounts for validation and journal line generation
@@ -351,8 +386,13 @@ export async function postDraftAction(input: z.infer<typeof PostDraftSchema>) {
   } else {
     // Generate journal lines from draft using AI-selected accounts or fallback
     // No manual mapping needed - AI selects accounts automatically
-    const result = await buildDefaultJournalLines(parsedDraft, allAccounts, null, {
+    // Get tax_treatment from draft
+    const draftWithTaxTreatment = draft as DraftsRow & { tax_treatment?: "exclusive" | "inclusive" | null };
+    const taxTreatment = draftWithTaxTreatment.tax_treatment ?? "exclusive";
+    // Cast to Account[] - buildDefaultJournalLines works with base Account type
+    const result = await buildDefaultJournalLines(parsedDraft, allAccounts as Account[], null, {
       tenantId: user.tenant.id,
+      tax_treatment: taxTreatment,
     });
     description = result.description;
     lines = result.lines;
@@ -606,6 +646,77 @@ export async function postDraftAction(input: z.infer<typeof PostDraftSchema>) {
     }
   }
 
+  // Validation: Check if any journal line uses an inventory account without inventory_item_id
+  // Get all inventory items to check which accounts are inventory accounts
+  const { getInventoryItems } = await import("@/lib/data/inventory");
+  const allInventoryItems = await getInventoryItems();
+  const inventoryAccountIds = new Set<string>();
+  
+  // Collect inventory account IDs from inventory items
+  allInventoryItems.forEach((item) => {
+    const invAccountId = (item as { inventory_account_id?: string | null }).inventory_account_id;
+    if (invAccountId) {
+      inventoryAccountIds.add(invAccountId);
+    }
+  });
+
+  // Also check by code range (1200-1299 is typically inventory)
+  const inventoryAccountsByCode = allAccounts.filter((acc) => {
+    const codeNum = parseInt(acc.code, 10);
+    return acc.type === "asset" && codeNum >= 1200 && codeNum < 1300;
+  });
+  inventoryAccountsByCode.forEach((acc) => inventoryAccountIds.add(acc.id));
+
+  // Check if any journal line uses an inventory account
+  const linesUsingInventoryAccounts = lines.filter((line) => {
+    if (line.debit > 0 && line.credit === 0) {
+      // Debit to inventory account (purchase)
+      return inventoryAccountIds.has(line.account_id);
+    }
+    if (line.credit > 0 && line.debit === 0) {
+      // Credit to inventory account (sale)
+      return inventoryAccountIds.has(line.account_id);
+    }
+    return false;
+  });
+
+  // If journal lines use inventory accounts, there must be inventory_line_items
+  if (linesUsingInventoryAccounts.length > 0) {
+    if (!inventoryLineItems || inventoryLineItems.length === 0) {
+      const accountNames = linesUsingInventoryAccounts
+        .map((line) => {
+          const account = allAccounts.find((a) => a.id === line.account_id);
+          return account ? `${account.code} ${account.name}` : "Unknown";
+        })
+        .join(", ");
+      throw new Error(
+        `Journal entry uses inventory account(s) (${accountNames}) but no inventory items are selected. ` +
+        `Please add inventory items to this draft or change the account to a non-inventory account.`
+      );
+    }
+
+    // Verify that each inventory account used has a corresponding inventory_line_item
+    for (const line of linesUsingInventoryAccounts) {
+      const account = allAccounts.find((a) => a.id === line.account_id);
+      if (!account) continue;
+
+      // Check if there's an inventory item that uses this account
+      const hasMatchingItem = inventoryLineItems.some((item) => {
+        const invItem = allInventoryItems.find((i) => i.id === item.item_id);
+        if (!invItem) return false;
+        const invAccountId = (invItem as { inventory_account_id?: string | null }).inventory_account_id;
+        return invAccountId === line.account_id;
+      });
+
+      if (!hasMatchingItem) {
+        throw new Error(
+          `Journal entry uses inventory account ${account.code} ${account.name}, but no inventory item is linked to this account. ` +
+          `Please select an inventory item that uses this account, or change the account.`
+        );
+      }
+    }
+  }
+
   ensureBalanced(lines);
 
   // Get contact_id from draft if available (will be available after migration)
@@ -616,9 +727,8 @@ export async function postDraftAction(input: z.infer<typeof PostDraftSchema>) {
   const transactionCurrency = (draftEntities.currency as string) || null;
   const transactionAmount = typeof draftEntities.amount === "number" ? draftEntities.amount : null;
   
-  // Get tenant base currency (default to USD for MVP, should be configurable per tenant)
-  // TODO: Fetch from tenant settings when available
-  const baseCurrency = "USD"; // Default base currency
+  // Get tenant base currency
+  const baseCurrency = await getTenantBaseCurrency(user.tenant.id);
   
   // Calculate FX rate and base amount
   let fxRate: number | null = null;
@@ -630,10 +740,23 @@ export async function postDraftAction(input: z.infer<typeof PostDraftSchema>) {
       fxRate = 1.0;
       amountInBaseCurrency = transactionAmount;
     } else {
-      // Different currency - for MVP, default to 1.0 (should fetch from FX service)
-      // TODO: Integrate with FX rate service or tenant FX rate settings
-      fxRate = 1.0; // Default 1:1 for MVP
-      amountInBaseCurrency = transactionAmount * fxRate;
+      // Different currency - fetch FX rate
+      try {
+        const { convertCurrency } = await import("@/lib/utils/currency-conversion");
+        const entryDate = (parsedDraft.entities.date as string) ?? new Date().toISOString().slice(0, 10);
+        amountInBaseCurrency = await convertCurrency(
+          transactionAmount,
+          transactionCurrency,
+          baseCurrency,
+          entryDate,
+          user.tenant.id
+        );
+        fxRate = amountInBaseCurrency / transactionAmount;
+      } catch (error) {
+        console.error("Failed to convert currency, using 1:1:", error);
+        fxRate = 1.0;
+        amountInBaseCurrency = transactionAmount;
+      }
     }
   }
 
@@ -702,7 +825,7 @@ export async function postDraftAction(input: z.infer<typeof PostDraftSchema>) {
     throw error;
   }
 
-  // Update draft to mark as posted
+  // Update draft to mark as posted and return updated draft
   const updateData: DraftsUpdate = {
     status: "posted",
     posted_entry_id: entry.id,
@@ -711,11 +834,29 @@ export async function postDraftAction(input: z.infer<typeof PostDraftSchema>) {
   const draftTable = supabase.from("drafts") as unknown as {
     update: (values: DraftsUpdate) => {
       eq: (column: string, value: string) => {
-        eq: (column: string, value: string) => Promise<{ error: unknown }>;
+        eq: (column: string, value: string) => {
+          select: (columns?: string) => {
+            single: () => Promise<{ data: DraftsRow | null; error: unknown }>;
+          };
+        };
       };
     };
   };
-  await draftTable.update(updateData).eq("id", payload.draftId).eq("tenant_id", user.tenant.id);
+  const { data: updatedDraft, error: updateError } = await draftTable
+    .update(updateData)
+    .eq("id", payload.draftId)
+    .eq("tenant_id", user.tenant.id)
+    .select("*")
+    .single();
+
+  if (updateError) {
+    console.error("Failed to update draft status", updateError);
+    throw updateError;
+  }
+
+  if (!updatedDraft) {
+    throw new Error("Failed to update draft");
+  }
 
   // Generate and save insights (async, don't wait)
   const tenantId = user.tenant.id;
@@ -781,7 +922,12 @@ export async function postDraftAction(input: z.infer<typeof PostDraftSchema>) {
   revalidatePath("/drafts");
   revalidatePath("/dashboard");
   revalidatePath("/reports");
-  return entry.id;
+  // Return updated draft for real-time UI updates
+  return {
+    id: updatedDraft.id,
+    status: updatedDraft.status,
+    posted_entry_id: updatedDraft.posted_entry_id,
+  };
 }
 
 /**
@@ -859,7 +1005,8 @@ export async function getDraftJournalPreview(draftId: string) {
 
   // Otherwise, generate journal lines from draft using AI-selected accounts or fallback
   // No manual mapping needed - AI selects accounts automatically
-  const { description, lines } = await buildDefaultJournalLines(parsedDraft, accounts, null, {
+  // Cast to Account[] - buildDefaultJournalLines works with base Account type
+  const { description, lines } = await buildDefaultJournalLines(parsedDraft, accounts as Account[], null, {
     tenantId: user.tenant.id,
   });
 

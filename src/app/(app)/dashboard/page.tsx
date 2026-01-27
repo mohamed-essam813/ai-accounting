@@ -377,7 +377,7 @@ export default async function DashboardPage({
         initialCompareMode={compareMode}
         initialMultiN={multiN}
         initialMultiUnit={multiUnit}
-        initialCurrency={currency}
+        initialCurrency={currency ?? baseCurrency}
         baseCurrency={baseCurrency}
         currencies={[]}
       />

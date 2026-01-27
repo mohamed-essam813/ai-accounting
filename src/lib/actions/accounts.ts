@@ -19,7 +19,8 @@ type IntentMappingRow = Database["public"]["Tables"]["intent_account_mappings"][
 // Server action to list accounts (for use in client components)
 export async function listAccountsAction(): Promise<Account[]> {
   const { listAccounts } = await import("@/lib/data/accounts");
-  return await listAccounts();
+  // Accounts may not have new fields in DB types yet - cast to base Account type
+  return (await listAccounts()) as Account[];
 }
 
 const AccountSchema = z.object({
@@ -27,6 +28,7 @@ const AccountSchema = z.object({
   code: z.string().min(3).optional(), // Optional - will be generated if not provided
   type: z.enum(["asset", "liability", "equity", "revenue", "expense"]),
   category: z.enum(["current", "non_current"]).nullable().optional(), // Only for assets/liabilities
+  detail_type: z.enum(["bank", "cash", "other_current_asset", "fixed_asset", "other"]).nullable().optional(), // Only for assets
 });
 
 export async function createAccountAction(input: z.infer<typeof AccountSchema>): Promise<ChartOfAccountsRow> {
@@ -69,15 +71,24 @@ export async function createAccountAction(input: z.infer<typeof AccountSchema>):
     }
   }
 
+  // Set allow_reconciliation based on detail_type
+  const allowReconciliation = payload.detail_type === "bank";
+  
   const supabase = await createServerSupabaseClient();
-  // Use type assertion for category since it may not be in database types yet
+  // Use type assertion for category and detail_type since they may not be in database types yet
   const insertData = {
     tenant_id: user.tenant.id,
     name: payload.name,
     code: code!, // Code is guaranteed to be defined at this point
     type: payload.type,
     ...(category && { category }),
-  } as ChartOfAccountsInsert & { category?: "current" | "non_current" | null };
+    ...(payload.detail_type && { detail_type: payload.detail_type }),
+    allow_reconciliation: allowReconciliation,
+  } as ChartOfAccountsInsert & { 
+    category?: "current" | "non_current" | null;
+    detail_type?: "bank" | "cash" | "other_current_asset" | "fixed_asset" | "other" | null;
+    allow_reconciliation?: boolean;
+  };
   // Use type assertion to fix Supabase type inference - type-safe using Database types
   const table = supabase.from("chart_of_accounts") as unknown as {
     insert: (values: ChartOfAccountsInsert[]) => {
@@ -413,7 +424,8 @@ export async function updateIntentMappingAction(input: z.infer<typeof IntentMapp
     tax_credit_account_id: payload.taxCreditAccountId ?? null,
   };
   
-  const validation = validateIntentMapping(intentMapping, allAccounts, payload.intent);
+  // Cast to Account[] - validation function works with base Account type
+  const validation = validateIntentMapping(intentMapping, allAccounts as Account[], payload.intent);
   if (!validation.valid) {
     throw new Error(
       `Invalid account mapping: ${validation.errors.join("; ")}. ` +

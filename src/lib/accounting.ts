@@ -39,10 +39,12 @@ export async function buildDefaultJournalLines(
     prompt?: string;
     tenantId?: string;
     useRAG?: boolean;
+    tax_treatment?: "exclusive" | "inclusive";
   },
 ): Promise<{ description: string; lines: JournalLine[] }> {
   const { intent, entities } = draft;
-  const accountMap = new Map(accounts.map((account) => [account.id, account]));
+  // Account type may not have new fields yet - map works with base Account type
+  const accountMap = new Map<string, Account>(accounts.map((account) => [account.id, account]));
 
   const findAccountById = (id: string) => {
     const account = accountMap.get(id);
@@ -62,14 +64,15 @@ export async function buildDefaultJournalLines(
     // AI has suggested accounts - use them
     const { listAccounts } = await import("@/lib/data/accounts");
     const allAccounts = await listAccounts();
-    const accountMap = new Map(allAccounts.map((acc) => [acc.id, acc]));
+    // Account type may not have new fields yet - map works with base Account type
+    const accountMap = new Map<string, Account>(allAccounts.map((acc) => [acc.id, acc as Account]));
     
     // Helper to find account by ID, with fallback to fetching directly from DB if not in list
     const findAccount = async (suggestion: typeof draft.accounts.debit_account): Promise<Account | null> => {
       if (suggestion.existing_account_id) {
         // First try to find in the account list
         const found = accountMap.get(suggestion.existing_account_id);
-        if (found) return found;
+        if (found) return found as Account;
         
         // If not found in list (might be newly created), fetch directly from DB
         if (options?.tenantId) {
@@ -98,10 +101,11 @@ export async function buildDefaultJournalLines(
       }
       
       // If no existing_account_id, search by name as fallback
-      return allAccounts.find(
+      const foundByName = allAccounts.find(
         (acc) => acc.name.toLowerCase() === suggestion.suggested_name.toLowerCase() &&
                  acc.type === suggestion.suggested_type
-      ) ?? null;
+      );
+      return foundByName ? (foundByName as Account) : null;
     };
 
     const debitAccount = await findAccount(draft.accounts.debit_account);
@@ -148,15 +152,46 @@ export async function buildDefaultJournalLines(
     );
   }
 
-  const amount = Number(entities.amount);
-  const taxAmountRaw =
-    entities.tax && typeof entities.tax.amount === "number"
-      ? Number(entities.tax.amount)
-      : entities.tax && typeof entities.tax.rate === "number"
-        ? Number((amount * entities.tax.rate) / 100)
-        : 0;
-  const taxAmount = Number(taxAmountRaw.toFixed(2));
+  // Calculate amount, subtotal, and tax based on tax_treatment
+  const taxTreatment = options?.tax_treatment ?? "exclusive";
+  let amount = Number(entities.amount);
+  let subtotal: number;
+  let taxAmount: number;
+  
+  if (entities.tax && typeof entities.tax.amount === "number") {
+    // Tax amount is already calculated
+    taxAmount = Number(entities.tax.amount.toFixed(2));
+    if (taxTreatment === "inclusive") {
+      // Inclusive: Total = amount, Subtotal = Total - Tax
+      subtotal = amount - taxAmount;
+    } else {
+      // Exclusive: Subtotal = amount, Tax = taxAmount (already set)
+      subtotal = amount;
+    }
+  } else if (entities.tax && typeof entities.tax.rate === "number") {
+    // Tax rate provided - calculate based on treatment
+    const rate = entities.tax.rate / 100;
+    if (taxTreatment === "inclusive") {
+      // Inclusive: Total = amount, Subtotal = Total / (1 + rate), Tax = Total - Subtotal
+      subtotal = amount / (1 + rate);
+      taxAmount = amount - subtotal;
+    } else {
+      // Exclusive: Subtotal = amount, Tax = Subtotal × rate
+      subtotal = amount;
+      taxAmount = subtotal * rate;
+    }
+    taxAmount = Number(taxAmount.toFixed(2));
+    subtotal = Number(subtotal.toFixed(2));
+  } else {
+    // No tax
+    subtotal = amount;
+    taxAmount = 0;
+  }
+  
   const hasTax = taxAmount > 0;
+  
+  // For journal posting, use subtotal for revenue/expense lines, total for AR/AP
+  // This will be handled in the line building below
 
   const intentLabel = intent === "create_credit_note" 
     ? "Credit Note" 
@@ -186,35 +221,35 @@ export async function buildDefaultJournalLines(
   // Handle credit notes and debit notes differently
   const isCreditNote = intent === "create_credit_note";
   const isDebitNote = intent === "create_debit_note";
+  const isInvoice = intent === "create_invoice";
+  const isBill = intent === "create_bill";
+  const total = subtotal + taxAmount;
 
-  let debitBaseAmount = amount;
-  let creditBaseAmount = amount;
+  let debitBaseAmount: number;
+  let creditBaseAmount: number;
 
-  // For credit notes: DR Revenue + DR VAT, CR Receivable
-  // For debit notes: DR Payable, CR Expense + CR VAT Input
   if (isCreditNote) {
-    // Credit note: amount goes to revenue (debit), tax goes to VAT output (debit)
-    debitBaseAmount = amount;
-    if (hasTax && taxDebitAccount) {
-      debitBaseAmount += taxAmount;
-    }
-    creditBaseAmount = amount + (hasTax ? taxAmount : 0);
+    // Credit Note (Customer): DR Revenue, DR VAT Output, CR AR
+    debitBaseAmount = subtotal + (hasTax && taxDebitAccount ? taxAmount : 0);
+    creditBaseAmount = total;
   } else if (isDebitNote) {
-    // Debit note: amount goes to payable (debit), expense and VAT are credited
-    debitBaseAmount = amount + (hasTax ? taxAmount : 0);
-    creditBaseAmount = amount;
-    if (hasTax && taxCreditAccount) {
-      creditBaseAmount += taxAmount;
-    }
+    // Debit Note (Vendor): DR AP, CR Expense, CR VAT Input
+    debitBaseAmount = total;
+    creditBaseAmount = subtotal + (hasTax && taxCreditAccount ? taxAmount : 0);
+  } else if (isInvoice) {
+    // Sales Invoice - split tax correctly
+    // DR AR = Total, CR Revenue = Subtotal, CR VAT Output = Tax
+    debitBaseAmount = total;
+    creditBaseAmount = subtotal + (hasTax && taxCreditAccount ? taxAmount : 0);
+  } else if (isBill) {
+    // Vendor Bill - split tax correctly
+    // DR Expense = Subtotal, DR VAT Input = Tax, CR AP = Total
+    debitBaseAmount = subtotal + (hasTax && taxDebitAccount ? taxAmount : 0);
+    creditBaseAmount = total;
   } else {
-    // Standard invoice/bill logic
-    if (hasTax && taxCreditAccount) {
-      debitBaseAmount += taxAmount;
-    }
-
-    if (hasTax && taxDebitAccount) {
-      creditBaseAmount += taxAmount;
-    }
+    // Other intents - use total for both sides
+    debitBaseAmount = total;
+    creditBaseAmount = total;
   }
 
   const lines: JournalLine[] = [

@@ -21,7 +21,7 @@ import { AccountConfirmationDialog } from "./account-confirmation-dialog";
 import { CashBankSelectionDialog } from "./cash-bank-selection-dialog";
 import { CashContextConfirmationDialog } from "./cash-context-confirmation-dialog";
 
-/** Doc 6: Doc-only mode – prompt optional when documents are uploaded. */
+/** Doc-only mode – prompt optional when documents are uploaded. */
 const UnifiedInputSchema = z.object({
   prompt: z.string().optional(),
 });
@@ -222,7 +222,7 @@ export function UnifiedInput({ onDraftCreated }: Props) {
           }
         }
 
-        /** Doc 6: Doc-only – send raw prompt; server uses default when docs-only. */
+        /** Doc-only – send raw prompt; server uses default when docs-only. */
         const rawPrompt = values.prompt?.trim() ?? "";
         const response = await fetch("/api/prompt/session", {
           method: "POST",
@@ -256,7 +256,7 @@ export function UnifiedInput({ onDraftCreated }: Props) {
           return;
         }
 
-        /** Doc 6: Clarify flow – low confidence. Show clarify UI, then retry with clarification. */
+        /** Clarify flow – low confidence. Show clarify UI, then retry with clarification. */
         if (data.needs_clarification) {
           setNeedsClarification(data.needs_clarification);
           setPendingDraftData({ documentIds: fileIds });
@@ -336,7 +336,7 @@ export function UnifiedInput({ onDraftCreated }: Props) {
     });
   };
 
-  /** Doc 6: Submit clarification and retry parse. */
+  /** Submit clarification and retry parse. */
   const handleClarifySubmit = async () => {
     const sid = sessionId ?? (typeof window !== "undefined" ? localStorage.getItem(SESSION_STORAGE_KEY) : null);
     const text = (clarifyText ?? "").trim();

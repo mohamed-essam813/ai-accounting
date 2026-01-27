@@ -364,9 +364,11 @@ export type Database = {
       }
       chart_of_accounts: {
         Row: {
+          allow_reconciliation: boolean
           category: string | null
           code: string
           created_at: string
+          detail_type: string | null
           id: string
           is_active: boolean
           name: string
@@ -374,9 +376,11 @@ export type Database = {
           type: string
         }
         Insert: {
+          allow_reconciliation?: boolean
           category?: string | null
           code: string
           created_at?: string
+          detail_type?: string | null
           id?: string
           is_active?: boolean
           name: string
@@ -384,9 +388,11 @@ export type Database = {
           type: string
         }
         Update: {
+          allow_reconciliation?: boolean
           category?: string | null
           code?: string
           created_at?: string
+          detail_type?: string | null
           id?: string
           is_active?: boolean
           name?: string
@@ -544,6 +550,7 @@ export type Database = {
           intent: string
           posted_entry_id: string | null
           status: string
+          tax_treatment: string | null
           tenant_id: string
         }
         Insert: {
@@ -558,6 +565,7 @@ export type Database = {
           intent: string
           posted_entry_id?: string | null
           status: string
+          tax_treatment?: string | null
           tenant_id: string
         }
         Update: {
@@ -572,6 +580,7 @@ export type Database = {
           intent?: string
           posted_entry_id?: string | null
           status?: string
+          tax_treatment?: string | null
           tenant_id?: string
         }
         Relationships: [
@@ -1359,6 +1368,47 @@ export type Database = {
           },
         ]
       }
+      journal_templates: {
+        Row: {
+          created_at: string
+          description_default: string | null
+          id: string
+          is_system: boolean
+          lines: Json
+          name: string
+          tenant_id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          description_default?: string | null
+          id?: string
+          is_system?: boolean
+          lines: Json
+          name: string
+          tenant_id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          description_default?: string | null
+          id?: string
+          is_system?: boolean
+          lines?: Json
+          name?: string
+          tenant_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "journal_templates_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       pending_invites: {
         Row: {
           created_at: string
@@ -1816,16 +1866,19 @@ export type Database = {
       }
       tenants: {
         Row: {
+          base_currency: string
           created_at: string
           id: string
           name: string
         }
         Insert: {
+          base_currency?: string
           created_at?: string
           id?: string
           name: string
         }
         Update: {
+          base_currency?: string
           created_at?: string
           id?: string
           name?: string
@@ -2249,6 +2302,10 @@ export type Database = {
           metadata: Json
           similarity: number
         }[]
+      }
+      seed_journal_templates_for_tenant: {
+        Args: { p_tenant_id: string }
+        Returns: undefined
       }
       tax_rate_used_in_posted_drafts: {
         Args: { p_rate_id: string; p_tenant_id: string }
