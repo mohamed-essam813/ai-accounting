@@ -20,6 +20,8 @@ import { useRouter } from "next/navigation";
 import { AccountConfirmationDialog } from "./account-confirmation-dialog";
 import { CashBankSelectionDialog } from "./cash-bank-selection-dialog";
 import { CashContextConfirmationDialog } from "./cash-context-confirmation-dialog";
+import { PROMPT_SESSION_STORAGE_KEY } from "@/lib/constants";
+import { getErrorMessage } from "@/lib/utils";
 
 /** Doc-only mode – prompt optional when documents are uploaded. */
 const UnifiedInputSchema = z.object({
@@ -67,8 +69,20 @@ export function UnifiedInput({ onDraftCreated }: Props) {
   const [parseError, setParseError] = useState<string | null>(null);
   const isTransitioningToBankSelection = useRef(false);
 
-  const SESSION_STORAGE_KEY = "prompt_session_id";
-  
+  const showParseError = (message: string) => {
+    setParseError(message);
+    toast.error(message);
+  };
+
+  /** Map API error code to user-facing message. */
+  const parseErrorFromResponse = (data: { error?: string; code?: string }) => {
+    const code = data.code as string | undefined;
+    if (code === "VALIDATION_FAILED") return "Provide a prompt or upload at least one document.";
+    if (code === "PARSE_FAILED") return "We couldn't read this document. Try a clearer file or different format.";
+    if (code === "INTENT_REQUIRED") return "Please choose what you want to create (Invoice, Bill, Payment, or Journal).";
+    return data.error ?? "Failed to process your request.";
+  };
+
   // localStorage persistence state
   const STORAGE_KEY = "prompt_draft_session";
   const [saveStatus, setSaveStatus] = useState<"saved" | "saving" | "unsaved">("unsaved");
@@ -236,11 +250,9 @@ export function UnifiedInput({ onDraftCreated }: Props) {
         const data = await response.json();
 
         if (!response.ok) {
-          const msg = data.error ?? "Failed to process your request.";
-          setParseError(msg);
-          toast.error(msg);
+          showParseError(parseErrorFromResponse(data));
           if (data.session_id && typeof window !== "undefined") {
-            localStorage.setItem(SESSION_STORAGE_KEY, data.session_id);
+            localStorage.setItem(PROMPT_SESSION_STORAGE_KEY, data.session_id);
           }
           return;
         }
@@ -248,7 +260,7 @@ export function UnifiedInput({ onDraftCreated }: Props) {
         const sid = data.session_id as string;
         setSessionId(sid);
         if (typeof window !== "undefined") {
-          localStorage.setItem(SESSION_STORAGE_KEY, sid);
+          localStorage.setItem(PROMPT_SESSION_STORAGE_KEY, sid);
         }
 
         if (data.draft_id) {
@@ -329,16 +341,14 @@ export function UnifiedInput({ onDraftCreated }: Props) {
         );
       } catch (error) {
         console.error(error);
-        const msg = error instanceof Error ? error.message : "Failed to process your request.";
-        setParseError(msg);
-        toast.error(msg);
+        showParseError(getErrorMessage(error, "Failed to process your request."));
       }
     });
   };
 
   /** Submit clarification and retry parse. */
   const handleClarifySubmit = async () => {
-    const sid = sessionId ?? (typeof window !== "undefined" ? localStorage.getItem(SESSION_STORAGE_KEY) : null);
+    const sid = sessionId ?? (typeof window !== "undefined" ? localStorage.getItem(PROMPT_SESSION_STORAGE_KEY) : null);
     const text = (clarifyText ?? "").trim();
     if (!sid || !text) {
       toast.error("Please clarify what this transaction is.");
@@ -354,8 +364,7 @@ export function UnifiedInput({ onDraftCreated }: Props) {
         });
         const data = await res.json();
         if (!res.ok) {
-          setParseError(data.error ?? "Retry failed");
-          toast.error(data.error ?? "Retry failed");
+          showParseError(data.error ?? "Retry failed");
           return;
         }
         setSessionId(data.session_id ?? sid);
@@ -421,24 +430,21 @@ export function UnifiedInput({ onDraftCreated }: Props) {
           (pendingDraftData?.documentIds as string[]) ?? []
         );
       } catch (e) {
-        const msg = e instanceof Error ? e.message : "Failed to submit clarification.";
-        setParseError(msg);
-        toast.error(msg);
+        showParseError(getErrorMessage(e, "Failed to submit clarification."));
       }
     });
   };
 
   const handleRetry = async () => {
     setParseError(null);
-    const sid = sessionId ?? (typeof window !== "undefined" ? localStorage.getItem(SESSION_STORAGE_KEY) : null);
+    const sid = sessionId ?? (typeof window !== "undefined" ? localStorage.getItem(PROMPT_SESSION_STORAGE_KEY) : null);
     if (sid) {
       startProcessing(async () => {
         try {
           const res = await fetch(`/api/prompt/session/${sid}/retry`, { method: "POST" });
           const data = await res.json();
           if (!res.ok) {
-            setParseError(data.error ?? "Retry failed");
-            toast.error(data.error ?? "Retry failed");
+            showParseError(data.error ?? "Retry failed");
             return;
           }
           setSessionId(data.session_id);
@@ -489,9 +495,7 @@ export function UnifiedInput({ onDraftCreated }: Props) {
             setAccountConfirmation({ key: firstKey, data: data.accountConfirmation[firstKey] });
           }
         } catch (e) {
-          const msg = e instanceof Error ? e.message : "Retry failed";
-          setParseError(msg);
-          toast.error(msg);
+          showParseError(getErrorMessage(e, "Retry failed"));
         }
       });
       return;
@@ -545,8 +549,7 @@ export function UnifiedInput({ onDraftCreated }: Props) {
         });
         const data = await res.json();
         if (!res.ok) {
-          setParseError(data.error ?? "Failed to submit answer");
-          toast.error(data.error ?? "Failed to submit answer");
+          showParseError(data.error ?? "Failed to submit answer");
           return;
         }
         if (data.draft_id) {
@@ -570,9 +573,7 @@ export function UnifiedInput({ onDraftCreated }: Props) {
           return;
         }
       } catch (e) {
-        const msg = e instanceof Error ? e.message : "Failed to submit answer";
-        setParseError(msg);
-        toast.error(msg);
+        showParseError(getErrorMessage(e, "Failed to submit answer"));
       }
       return;
     }
@@ -633,8 +634,7 @@ export function UnifiedInput({ onDraftCreated }: Props) {
         });
         const data = await res.json();
         if (!res.ok) {
-          setParseError(data.error ?? "Failed to submit answer");
-          toast.error(data.error ?? "Failed to submit answer");
+          showParseError(data.error ?? "Failed to submit answer");
           return;
         }
         if (data.draft_id) {
@@ -650,9 +650,7 @@ export function UnifiedInput({ onDraftCreated }: Props) {
           return;
         }
       } catch (e) {
-        const msg = e instanceof Error ? e.message : "Failed to submit answer";
-        setParseError(msg);
-        toast.error(msg);
+        showParseError(getErrorMessage(e, "Failed to submit answer"));
       }
       return;
     }
@@ -693,7 +691,7 @@ export function UnifiedInput({ onDraftCreated }: Props) {
         setPendingDraftData(null);
       } catch (error) {
         setPendingDraftData(updatedPendingData);
-        toast.error("Failed to create draft", { description: error instanceof Error ? error.message : "Please try again." });
+        toast.error("Failed to create draft", { description: getErrorMessage(error, "Please try again.") });
         throw error;
       }
     }
@@ -728,8 +726,7 @@ export function UnifiedInput({ onDraftCreated }: Props) {
         });
         const data = await res.json();
         if (!res.ok) {
-          setParseError(data.error ?? "Failed to submit answer");
-          toast.error(data.error ?? "Failed to submit answer");
+          showParseError(data.error ?? "Failed to submit answer");
           return;
         }
         if (data.draft_id) {
@@ -745,9 +742,7 @@ export function UnifiedInput({ onDraftCreated }: Props) {
           return;
         }
       } catch (e) {
-        const msg = e instanceof Error ? e.message : "Failed to submit answer";
-        setParseError(msg);
-        toast.error(msg);
+        showParseError(getErrorMessage(e, "Failed to submit answer"));
       }
       return;
     }
@@ -770,7 +765,7 @@ export function UnifiedInput({ onDraftCreated }: Props) {
       } catch (error) {
         console.error("Failed to create account:", error);
         toast.error("Failed to create account", {
-          description: error instanceof Error ? error.message : "Please try again.",
+          description: getErrorMessage(error, "Please try again."),
         });
         return;
       }
@@ -837,7 +832,7 @@ export function UnifiedInput({ onDraftCreated }: Props) {
       setPendingDraftData(null);
     } catch (err) {
       toast.error("Failed to create draft", {
-        description: err instanceof Error ? err.message : "Please try again.",
+        description: getErrorMessage(err, "Please try again."),
       });
     }
   };
@@ -874,7 +869,7 @@ export function UnifiedInput({ onDraftCreated }: Props) {
       }
     } catch (saveError) {
       toast.error("Failed to save draft", {
-        description: saveError instanceof Error ? saveError.message : "Please try again.",
+        description: getErrorMessage(saveError, "Please try again."),
       });
       throw saveError; // Re-throw to allow caller to handle
     }

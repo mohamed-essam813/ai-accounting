@@ -221,14 +221,15 @@ export async function POST(req: NextRequest) {
     });
   } catch (e) {
     if (e instanceof z.ZodError) {
+      const message = e.issues[0]?.message ?? "Provide a prompt or at least one document.";
       return NextResponse.json(
-        { error: "Invalid request", details: e.issues },
-        { status: 400 }
+        { error: message, code: "VALIDATION_FAILED", details: e.issues },
+        { status: 422 }
       );
     }
     console.error("Prompt session create failed", e);
     return NextResponse.json(
-      { error: e instanceof Error ? e.message : "Failed to create session" },
+      { error: e instanceof Error ? e.message : "Failed to create session", code: "SESSION_FAILED" },
       { status: 500 }
     );
   }

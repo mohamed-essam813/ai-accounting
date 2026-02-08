@@ -35,6 +35,8 @@ export async function listAccounts() {
       is_active: account.is_active,
       tenant_id: account.tenant_id,
       created_at: account.created_at,
+      detail_type: account.detail_type ?? null,
+      allow_reconciliation: account.allow_reconciliation ?? false,
     };
   });
 }

@@ -5,7 +5,7 @@
 
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { UnifiedInput } from "./unified-input";
 import { InlineDraftReviewPanel } from "./inline-draft-review";
 import type { SourceDocument } from "@/lib/data/documents";
@@ -13,6 +13,7 @@ import type { UserRole } from "@/lib/auth";
 import type { DraftPayload } from "@/lib/ai/schema";
 import type { Database } from "@/lib/database.types";
 import type { InventoryItem } from "@/lib/data/inventory";
+import { PROMPT_SESSION_STORAGE_KEY } from "@/lib/constants";
 
 type Account = Database["public"]["Tables"]["chart_of_accounts"]["Row"];
 
@@ -35,27 +36,12 @@ type DraftResponse = {
   };
 };
 
-const SESSION_STORAGE_KEY = "prompt_session_id";
-
 export function PromptWorkspace() {
   const [draftId, setDraftId] = useState<string | null>(null);
   const [draftData, setDraftData] = useState<DraftResponse | null>(null);
   const [isLoadingDraft, setIsLoadingDraft] = useState(false);
 
-  useEffect(() => {
-    const sid = typeof window !== "undefined" ? localStorage.getItem(SESSION_STORAGE_KEY) : null;
-    if (!sid) return;
-    fetch(`/api/prompt/session/${sid}`)
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data: { status?: string; draft_id?: string } | null) => {
-        if (data?.status === "DRAFT_READY" && data.draft_id) {
-          setDraftId(data.draft_id);
-          fetchDraftData(data.draft_id);
-        }
-      })
-      .catch(() => {});
-  }, []);
-
+  // Draft appears only when created in current flow (after "Generate Draft"). Do not restore from session on load.
   const fetchDraftData = async (id: string) => {
     setIsLoadingDraft(true);
     try {
@@ -85,6 +71,9 @@ export function PromptWorkspace() {
   const handleClosePanel = () => {
     setDraftId(null);
     setDraftData(null);
+    if (typeof window !== "undefined") {
+      localStorage.removeItem(PROMPT_SESSION_STORAGE_KEY);
+    }
   };
 
   // If draft is created, show side-by-side layout

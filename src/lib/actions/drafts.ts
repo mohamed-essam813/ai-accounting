@@ -154,10 +154,21 @@ export async function updateDraftAction(input: z.infer<typeof UpdateDraftSchema>
     }
   }
 
-  // Include tax_treatment in update
+  // Merge with existing data_json so we never drop ai_selected_accounts (account precedence: user/AI must not be overridden)
+  const existingDataJson = (existing?.data_json ?? {}) as Record<string, unknown>;
+  const dataJson = {
+    ...existingDataJson,
+    ...entities,
+    ai_selected_accounts: existingDataJson.ai_selected_accounts ?? null,
+    original_prompt: existingDataJson.original_prompt ?? (entities as { original_prompt?: string }).original_prompt ?? null,
+    edited_journal_lines: existingDataJson.edited_journal_lines ?? undefined,
+    edited_description: existingDataJson.edited_description ?? undefined,
+  };
+
+  // Include tax_treatment in update (cast merged object to Json for DB)
   const updateData: DraftsUpdate = {
     intent: payload.intent,
-    data_json: entities,
+    data_json: dataJson as DraftsUpdate["data_json"],
     confidence: payload.confidence,
     status: nextStatus,
   };
@@ -183,8 +194,7 @@ export async function updateDraftAction(input: z.infer<typeof UpdateDraftSchema>
   }
 
   /** Conflict – mark user override when editing AI-generated draft. */
-  const dataJson = existing?.data_json as { original_prompt?: string } | null;
-  const fromPrompt = !!(dataJson?.original_prompt ?? (dataJson as { original_prompt_text?: string })?.original_prompt_text);
+  const fromPrompt = !!(existingDataJson.original_prompt ?? (existingDataJson as { original_prompt_text?: string }).original_prompt_text);
 
   const auditData: AuditLogsInsert = {
     tenant_id: user.tenant.id,
@@ -283,7 +293,28 @@ const PostDraftSchema = z.object({
   draftId: z.string().uuid(),
 });
 
+function generatePostReferenceId(): string {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let id = "";
+  for (let i = 0; i < 8; i++) {
+    id += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return id;
+}
+
+function throwWithReference(message: string, refId: string, isDev: boolean, cause?: unknown): never {
+  const refMsg = `Posting failed. Reference: ${refId}`;
+  const fullMsg = isDev && cause instanceof Error ? `${refMsg}\n${cause.message}` : refMsg;
+  const err = new Error(fullMsg) as Error & { referenceId?: string; cause?: unknown };
+  err.referenceId = refId;
+  err.cause = cause;
+  throw err;
+}
+
 export async function postDraftAction(input: z.infer<typeof PostDraftSchema>) {
+  const refId = generatePostReferenceId();
+  const isDev = process.env.NODE_ENV !== "production";
+
   const payload = PostDraftSchema.parse(input);
   const user = await getCurrentUser();
   if (!user?.tenant) {
@@ -304,7 +335,8 @@ export async function postDraftAction(input: z.infer<typeof PostDraftSchema>) {
     .maybeSingle();
 
   if (draftError) {
-    throw draftError;
+    console.error("[postDraft]", { refId, tenant_id: user.tenant.id, user_id: user.id, draft_id: payload.draftId, error: draftError });
+    throwWithReference("Draft could not be loaded.", refId, isDev, draftError);
   }
 
   if (!draft) {
@@ -402,6 +434,40 @@ export async function postDraftAction(input: z.infer<typeof PostDraftSchema>) {
     throw new Error("No journal lines generated for draft.");
   }
 
+  // Fail-fast validation before any DB write
+  try {
+    ensureBalanced(lines);
+    const accountIds = [...new Set(lines.map((l) => l.account_id))];
+    const accountMap = new Map((allAccounts as Account[]).map((a) => [a.id, a]));
+    for (const aid of accountIds) {
+      const acc = accountMap.get(aid);
+      if (!acc) {
+        throw new Error(`Account ${aid} not found in chart of accounts.`);
+      }
+      if (acc.is_active === false) {
+        throw new Error(`Account ${acc.code} (${acc.name}) is inactive.`);
+      }
+    }
+    const entryDate = (draftData as { date?: string }).date;
+    if (entryDate) {
+      const d = new Date(entryDate);
+      const today = new Date();
+      today.setHours(23, 59, 59, 999);
+      if (d > today) {
+        throw new Error("Transaction date cannot be in the future.");
+      }
+    }
+  } catch (validationErr) {
+    console.error("[postDraft] validation", { refId, tenant_id: user.tenant.id, draft_id: draft.id, error: validationErr });
+    throwWithReference(
+      validationErr instanceof Error ? validationErr.message : "Validation failed.",
+      refId,
+      isDev,
+      validationErr
+    );
+  }
+
+  try {
   // Extract inventory line items from draft if present
   const inventoryLineItems = draftData.inventory_line_items as
     | Array<{
@@ -928,6 +994,23 @@ export async function postDraftAction(input: z.infer<typeof PostDraftSchema>) {
     status: updatedDraft.status,
     posted_entry_id: updatedDraft.posted_entry_id,
   };
+  } catch (err) {
+    console.error("[postDraft]", {
+      refId,
+      tenant_id: user.tenant.id,
+      user_id: user.id,
+      draft_id: draft.id,
+      document_type: draft.intent,
+      error: err,
+      stack: err instanceof Error ? err.stack : undefined,
+    });
+    throwWithReference(
+      err instanceof Error ? err.message : "Post failed.",
+      refId,
+      isDev,
+      err
+    );
+  }
 }
 
 /**

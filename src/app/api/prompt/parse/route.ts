@@ -428,31 +428,28 @@ export async function POST(req: NextRequest) {
     console.error("Prompt parsing failed", error);
     console.error("Error stack:", error instanceof Error ? error.stack : "No stack trace");
     console.error("Error details:", JSON.stringify(error, Object.getOwnPropertyNames(error)));
-    
+
     if (error instanceof z.ZodError) {
+      const message = error.issues[0]?.message ?? "Provide a prompt or at least one document.";
       return NextResponse.json(
-        { error: "Invalid request", details: error.issues },
-        { status: 400 },
+        { error: message, code: "VALIDATION_FAILED", details: error.issues },
+        { status: 422 },
       );
     }
     if (error instanceof Error) {
-      // Return the actual error message and include more details for debugging
       const errorDetails = {
         message: error.message || "Failed to parse prompt",
         name: error.name,
-        // Include stack trace in development only
         ...(process.env.NODE_ENV === "development" && { stack: error.stack }),
       };
-      
       console.error("Returning error to client:", errorDetails);
-      
       return NextResponse.json(
-        { error: errorDetails.message, details: errorDetails },
+        { error: errorDetails.message, code: "PARSE_FAILED", details: errorDetails },
         { status: 500 },
       );
     }
     return NextResponse.json(
-      { error: "Failed to parse prompt", details: "Unknown error occurred" },
+      { error: "Failed to parse prompt", code: "PARSE_FAILED", details: "Unknown error occurred" },
       { status: 500 },
     );
   }

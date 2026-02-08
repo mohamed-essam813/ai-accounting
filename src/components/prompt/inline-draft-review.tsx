@@ -29,6 +29,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { formatCurrency } from "@/lib/format";
+import { getErrorMessage } from "@/lib/utils";
 import type { DraftPayload } from "@/lib/ai/schema";
 import type { SourceDocument } from "@/lib/data/documents";
 import type { InventoryItem } from "@/lib/data/inventory";
@@ -297,7 +298,7 @@ export function InlineDraftReviewPanel({
       } catch (error) {
         console.error(error);
         toast.error("Failed to update draft", {
-          description: error instanceof Error ? error.message : "Unknown error occurred.",
+          description: getErrorMessage(error, "Unknown error occurred."),
         });
       }
     });
@@ -314,10 +315,11 @@ export function InlineDraftReviewPanel({
         await approveDraftAction({ draftId: draft.id });
         toast.success("Draft approved");
         onDraftUpdated?.();
+        onClose();
       } catch (error) {
         console.error(error);
         toast.error("Failed to approve draft", {
-          description: error instanceof Error ? error.message : "Unknown error occurred.",
+          description: getErrorMessage(error, "Unknown error occurred."),
         });
       }
     });
@@ -345,7 +347,7 @@ export function InlineDraftReviewPanel({
       } catch (error) {
         console.error(error);
         toast.error("Failed to post draft", {
-          description: error instanceof Error ? error.message : "Unknown error occurred.",
+          description: getErrorMessage(error, "Unknown error occurred."),
         });
       }
     });
@@ -367,7 +369,7 @@ export function InlineDraftReviewPanel({
       } catch (error) {
         console.error(error);
         toast.error("Failed to delete draft", {
-          description: error instanceof Error ? error.message : "Unknown error occurred.",
+          description: getErrorMessage(error, "Unknown error occurred."),
         });
       }
     });
@@ -394,7 +396,7 @@ export function InlineDraftReviewPanel({
       } catch (error) {
         console.error(error);
         toast.error("Failed to convert to draft", {
-          description: error instanceof Error ? error.message : "Unknown error occurred.",
+          description: getErrorMessage(error, "Unknown error occurred."),
         });
       }
     });
@@ -404,11 +406,14 @@ export function InlineDraftReviewPanel({
 
   return (
     <Card className="flex flex-col max-h-[calc(100vh-8rem)]">
-      <CardHeader className="flex-shrink-0">
+      <CardHeader className="shrink-0">
         <div className="flex items-center justify-between">
           <div>
-            <CardTitle>Draft Review</CardTitle>
-            <CardDescription className="mt-1">
+            <p className="text-2xl font-bold tracking-tight uppercase text-foreground">
+              {intentLabels[draft.intent] ?? draft.intent.replace(/_/g, " ")}
+            </p>
+            <CardTitle className="mt-1 text-base font-medium text-muted-foreground">Draft Review</CardTitle>
+            <CardDescription className="mt-0.5">
               Review and approve the generated draft
             </CardDescription>
           </div>
@@ -446,9 +451,11 @@ export function InlineDraftReviewPanel({
           </TabsList>
 
           <TabsContent value="details" className="space-y-6 mt-4">
-            {/* Transaction Summary */}
+            {/* Document summary – business-first (invoice/bill) */}
             <div>
-              <h3 className="text-sm font-semibold mb-2">Transaction Summary</h3>
+              <h3 className="text-sm font-semibold mb-2">
+                {intentLabels[draft.intent] ?? "Transaction"} summary
+              </h3>
               <p className="text-sm text-muted-foreground">{transactionSummary}</p>
             </div>
 

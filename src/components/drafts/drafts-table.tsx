@@ -36,6 +36,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { formatCurrency, formatDate } from "@/lib/format";
+import { getErrorMessage } from "@/lib/utils";
 import { approveDraftAction, postDraftAction, updateDraftAction, deleteDraftAction, convertPostedToDraftAction } from "@/lib/actions/drafts";
 import { PromptIntentEnum } from "@/lib/ai/schema";
 import { toast } from "sonner";
@@ -123,7 +124,7 @@ export function DraftsTable({ drafts, accounts = [], userRole, displayCurrency }
     onError: (error) => {
       console.error(error);
       toast.error("Failed to approve draft", {
-        description: error instanceof Error ? error.message : "Unknown error occurred.",
+        description: getErrorMessage(error, "Unknown error occurred."),
       });
     },
   });
@@ -154,7 +155,7 @@ export function DraftsTable({ drafts, accounts = [], userRole, displayCurrency }
     onError: (error) => {
       console.error(error);
       toast.error("Failed to post journal entry", {
-        description: error instanceof Error ? error.message : "Unknown error occurred.",
+        description: getErrorMessage(error, "Unknown error occurred."),
       });
     },
   });
@@ -398,7 +399,7 @@ export function DraftsTable({ drafts, accounts = [], userRole, displayCurrency }
                   } catch (error) {
                     console.error(error);
                     toast.error("Failed to delete draft", {
-                      description: error instanceof Error ? error.message : "Unknown error occurred.",
+                      description: getErrorMessage(error, "Unknown error occurred."),
                     });
                   }
                 });
@@ -469,7 +470,7 @@ export function DraftsTable({ drafts, accounts = [], userRole, displayCurrency }
                   } catch (error) {
                     console.error(error);
                     toast.error("Failed to convert to draft", {
-                      description: error instanceof Error ? error.message : "Unknown error occurred.",
+                      description: getErrorMessage(error, "Unknown error occurred."),
                     });
                   }
                 });
@@ -707,7 +708,7 @@ function DraftEditorDialog({ draft, open, onOpenChange, accounts = [], readOnly 
       } catch (error) {
         console.error(error);
         toast.error("Failed to update draft", {
-          description: error instanceof Error ? error.message : "Unknown error occurred.",
+          description: getErrorMessage(error, "Unknown error occurred."),
         });
       }
     });
