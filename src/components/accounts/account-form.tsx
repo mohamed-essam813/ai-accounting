@@ -13,12 +13,27 @@ import { toast } from "sonner";
 import { determineCategoryFromCode } from "@/lib/accounting/determine-category";
 import { AlertCircle } from "lucide-react";
 
+const prdKindEnum = z.enum([
+  "bank",
+  "cash",
+  "accounts_receivable",
+  "accounts_payable",
+  "inventory",
+  "fixed_asset",
+  "revenue",
+  "expense",
+  "equity",
+  "tax",
+  "other",
+]);
+
 const schema = z.object({
   name: z.string().min(3),
   code: z.string().min(3).optional(),
   type: z.enum(["asset", "liability", "equity", "revenue", "expense"]),
   category: z.enum(["current", "non_current"]).nullable().optional(),
   detail_type: z.enum(["bank", "cash", "other_current_asset", "fixed_asset", "other"]).nullable().optional(),
+  prd_account_kind: prdKindEnum.optional(),
 }).refine(
   (data) => {
     // Require detail_type for asset accounts
@@ -45,6 +60,7 @@ export function AccountForm() {
       type: "asset",
       category: null,
       detail_type: null,
+      prd_account_kind: undefined,
     },
   });
 
@@ -81,6 +97,7 @@ export function AccountForm() {
           type: "asset",
           category: null,
           detail_type: null,
+          prd_account_kind: undefined,
         });
       } catch (error) {
         console.error(error);
@@ -208,6 +225,44 @@ export function AccountForm() {
       ) : (
         <div className="md:col-span-1" />
       )}
+      </div>
+      <div className="grid gap-4 md:grid-cols-4">
+        <div className="md:col-span-2">
+          <label className="text-sm font-medium mb-1.5 block">
+            PRD account role (optional)
+          </label>
+          <Select
+            onValueChange={(value) => {
+              form.setValue(
+                "prd_account_kind",
+                value === "__none__" ? undefined : (value as FormValues["prd_account_kind"]),
+                { shouldValidate: true },
+              );
+            }}
+            value={form.watch("prd_account_kind") ?? "__none__"}
+          >
+            <SelectTrigger className="w-full">
+              <SelectValue placeholder="Align with BRD reporting role" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__none__">Not set</SelectItem>
+              <SelectItem value="bank">Bank</SelectItem>
+              <SelectItem value="cash">Cash</SelectItem>
+              <SelectItem value="accounts_receivable">Accounts receivable</SelectItem>
+              <SelectItem value="accounts_payable">Accounts payable</SelectItem>
+              <SelectItem value="inventory">Inventory</SelectItem>
+              <SelectItem value="fixed_asset">Fixed asset</SelectItem>
+              <SelectItem value="revenue">Revenue</SelectItem>
+              <SelectItem value="expense">Expense</SelectItem>
+              <SelectItem value="equity">Equity</SelectItem>
+              <SelectItem value="tax">Tax</SelectItem>
+              <SelectItem value="other">Other</SelectItem>
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground mt-1">
+            Optional label for BRD / MVP schema reporting; does not replace type or subtype.
+          </p>
+        </div>
       </div>
       <div>
         <Button type="submit" disabled={isPending}>

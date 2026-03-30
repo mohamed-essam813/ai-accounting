@@ -8,6 +8,8 @@ import { listAccounts } from "@/lib/data/accounts";
 import { ensureBalanced, type JournalLine } from "@/lib/accounting";
 import { canApprove, type UserRole } from "@/lib/auth";
 import type { Database } from "@/lib/database.types";
+import { assertPostingDateAllowed } from "@/lib/accounting/period-lock";
+import { recordTimelineEvent } from "@/lib/data/timeline";
 
 type JournalEntriesInsert = Database["public"]["Tables"]["journal_entries"]["Insert"];
 type JournalEntriesRow = Database["public"]["Tables"]["journal_entries"]["Row"];
@@ -20,6 +22,7 @@ const JournalLineSchema = z.object({
   debit: z.number().min(0),
   credit: z.number().min(0),
   memo: z.string().nullable().optional(),
+  tax_rate_id: z.string().uuid().nullable().optional(),
 });
 
 const CreateJournalEntrySchema = z.object({
@@ -38,7 +41,7 @@ const CreateJournalEntrySchema = z.object({
     ),
 });
 
-export type CreateJournalOptions = { postImmediately?: boolean };
+export type CreateJournalOptions = { postImmediately?: boolean; sourceModule?: string };
 
 /** Manual journals created as draft by default. System journals (depreciation, disposal) use postImmediately. */
 export async function createJournalEntryAction(
@@ -46,6 +49,8 @@ export async function createJournalEntryAction(
   options?: CreateJournalOptions,
 ) {
   const postImmediately = options?.postImmediately ?? false;
+  const sourceModule =
+    options?.sourceModule ?? (postImmediately ? "system" : "manual_journal");
   const payload = CreateJournalEntrySchema.parse(input);
   const user = await getCurrentUser();
   if (!user?.tenant) {
@@ -61,9 +66,14 @@ export async function createJournalEntryAction(
     debit: Number(line.debit.toFixed(2)),
     credit: Number(line.credit.toFixed(2)),
     memo: line.memo ?? null,
+    tax_rate_id: line.tax_rate_id ?? null,
   }));
 
   ensureBalanced(journalLines);
+
+  if (postImmediately) {
+    await assertPostingDateAllowed(supabase, user.tenant.id, payload.date);
+  }
 
   const entryData: JournalEntriesInsert = {
     tenant_id: user.tenant.id,
@@ -73,6 +83,7 @@ export async function createJournalEntryAction(
     created_by: user.id,
     approved_by: postImmediately ? user.id : null,
     posted_at: postImmediately ? new Date().toISOString() : null,
+    source_module: sourceModule,
   };
 
   const entryTable = supabase.from("journal_entries") as unknown as {
@@ -98,6 +109,7 @@ export async function createJournalEntryAction(
     memo: line.memo,
     debit: line.debit,
     credit: line.credit,
+    tax_rate_id: line.tax_rate_id ?? null,
   }));
 
   const linesTable = supabase.from("journal_lines") as unknown as {
@@ -130,6 +142,18 @@ export async function createJournalEntryAction(
   await auditTable.insert([auditData]);
 
   if (postImmediately) {
+    try {
+      await recordTimelineEvent(supabase, {
+        tenantId: user.tenant.id,
+        eventType: "journal_posted",
+        referenceType: "journal_entry",
+        referenceId: entry.id,
+        description: payload.description,
+        eventDate: payload.date,
+      });
+    } catch (e) {
+      console.error("[createJournalEntry] timeline_event", e);
+    }
     const tenantId = user.tenant.id;
     import("@/lib/insights/context-builder")
       .then(({ buildInsightContext }) =>
@@ -159,23 +183,21 @@ export async function createJournalEntryAction(
   revalidatePath("/journals");
   revalidatePath("/reports");
   revalidatePath("/dashboard");
+  revalidatePath("/timeline");
   return entry.id;
 }
 
-const ApproveSchema = z.object({ entryId: z.string().uuid() });
+const EntryIdSchema = z.object({ entryId: z.string().uuid() });
 
 /**
- * Approve draft journal entry and post. Admin/accountant only.
- * Insights are generated after post.
+ * First approval step: draft → approved (PRD Draft / Approved / Posted).
  */
-export async function approveAndPostJournalEntryAction(
-  input: z.infer<typeof ApproveSchema>,
-) {
-  const { entryId } = ApproveSchema.parse(input);
+export async function approveJournalEntryAction(input: z.infer<typeof EntryIdSchema>) {
+  const { entryId } = EntryIdSchema.parse(input);
   const user = await getCurrentUser();
   if (!user?.tenant) throw new Error("User tenant not resolved.");
   if (!canApprove(user.role as UserRole)) {
-    throw new Error("Only administrators and accountants can approve and post journal entries.");
+    throw new Error("Only administrators and accountants can approve journal entries.");
   }
 
   const supabase = await createServerSupabaseClient();
@@ -186,16 +208,68 @@ export async function approveAndPostJournalEntryAction(
     .eq("tenant_id", user.tenant.id)
     .single();
 
-  if (fetchErr || !entry) {
-    throw new Error("Journal entry not found.");
-  }
+  if (fetchErr || !entry) throw new Error("Journal entry not found.");
   if (entry.status !== "draft") {
-    throw new Error("Only draft entries can be approved and posted.");
+    throw new Error("Only draft entries can be approved.");
   }
 
   const updateData: JournalEntriesUpdate = {
-    status: "posted",
+    status: "approved",
     approved_by: user.id,
+  };
+  const { error: updateErr } = await supabase
+    .from("journal_entries")
+    .update(updateData)
+    .eq("id", entryId)
+    .eq("tenant_id", user.tenant.id);
+
+  if (updateErr) throw updateErr;
+
+  await (supabase.from("audit_logs") as unknown as { insert: (v: AuditLogsInsert[]) => Promise<{ error: unknown }> }).insert([
+    {
+      tenant_id: user.tenant.id,
+      actor_id: user.id,
+      action: "journal.approved_step",
+      entity: "journal_entries",
+      entity_id: entryId,
+      changes: { status: "approved" },
+    },
+  ]);
+
+  revalidatePath("/journals");
+  return { id: entryId, status: "approved" as const };
+}
+
+/**
+ * Post approved journal to the ledger. Period lock enforced here.
+ */
+export async function postJournalEntryAction(input: z.infer<typeof EntryIdSchema>) {
+  const { entryId } = EntryIdSchema.parse(input);
+  const user = await getCurrentUser();
+  if (!user?.tenant) throw new Error("User tenant not resolved.");
+  if (!canApprove(user.role as UserRole)) {
+    throw new Error("Only administrators and accountants can post journal entries.");
+  }
+
+  const supabase = await createServerSupabaseClient();
+  const { data: entry, error: fetchErr } = await supabase
+    .from("journal_entries")
+    .select("id, tenant_id, status, date, description")
+    .eq("id", entryId)
+    .eq("tenant_id", user.tenant.id)
+    .single();
+
+  if (fetchErr || !entry) {
+    throw new Error("Journal entry not found.");
+  }
+  if (entry.status !== "approved") {
+    throw new Error("Only approved entries can be posted to the ledger.");
+  }
+
+  await assertPostingDateAllowed(supabase, user.tenant.id, entry.date);
+
+  const updateData: JournalEntriesUpdate = {
+    status: "posted",
     posted_at: new Date().toISOString(),
   };
   const { error: updateErr } = await supabase
@@ -209,12 +283,25 @@ export async function approveAndPostJournalEntryAction(
   const auditData: AuditLogsInsert = {
     tenant_id: user.tenant.id,
     actor_id: user.id,
-    action: "journal.approved",
+    action: "journal.posted",
     entity: "journal_entries",
     entity_id: entryId,
-    changes: { approved_by: user.id, posted_at: updateData.posted_at },
+    changes: { posted_at: updateData.posted_at },
   };
   await (supabase.from("audit_logs") as unknown as { insert: (v: AuditLogsInsert[]) => Promise<{ error: unknown }> }).insert([auditData]);
+
+  try {
+    await recordTimelineEvent(supabase, {
+      tenantId: user.tenant.id,
+      eventType: "manual_journal_posted",
+      referenceType: "journal_entry",
+      referenceId: entryId,
+      description: entry.description,
+      eventDate: entry.date,
+    });
+  } catch (e) {
+    console.error("[postJournal] timeline_event", e);
+  }
 
   const tenantId = user.tenant.id;
   import("@/lib/insights/context-builder")
@@ -244,6 +331,7 @@ export async function approveAndPostJournalEntryAction(
   revalidatePath("/journals");
   revalidatePath("/reports");
   revalidatePath("/dashboard");
+  revalidatePath("/timeline");
   return { id: entryId, status: "posted" as const };
 }
 
@@ -267,6 +355,7 @@ export async function updateJournalEntryAction(
     debit: Number(line.debit.toFixed(2)),
     credit: Number(line.credit.toFixed(2)),
     memo: line.memo ?? null,
+    tax_rate_id: line.tax_rate_id ?? null,
   }));
   ensureBalanced(journalLines);
 
@@ -300,6 +389,7 @@ export async function updateJournalEntryAction(
     memo: line.memo,
     debit: line.debit,
     credit: line.credit,
+    tax_rate_id: line.tax_rate_id ?? null,
   }));
   const { error: insErr } = await supabase.from("journal_lines").insert(linesData);
   if (insErr) throw insErr;

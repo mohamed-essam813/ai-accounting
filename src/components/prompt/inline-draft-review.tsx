@@ -31,7 +31,7 @@ import {
 import { formatCurrency } from "@/lib/format";
 import { getErrorMessage } from "@/lib/utils";
 import type { DraftPayload } from "@/lib/ai/schema";
-import type { SourceDocument } from "@/lib/data/documents";
+import type { Attachment } from "@/lib/data/documents";
 import type { InventoryItem } from "@/lib/data/inventory";
 import { JournalPreview } from "@/components/drafts/journal-preview";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -118,7 +118,7 @@ type DraftData = {
 type Props = {
   draftId: string;
   initialDraft: DraftData;
-  documents: SourceDocument[];
+  documents: Attachment[];
   accounts: Account[];
   inventoryItems?: InventoryItem[];
   userRole: UserRole;

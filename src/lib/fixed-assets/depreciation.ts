@@ -174,7 +174,7 @@ export async function generateDepreciationJournal(
         },
       ],
     },
-    { postImmediately: true },
+    { postImmediately: true, sourceModule: "system_depreciation" },
   );
 
   return journalEntryId;

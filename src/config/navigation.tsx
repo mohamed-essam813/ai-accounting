@@ -4,12 +4,16 @@ import {
   ChartArea,
   ClipboardList,
   FileText,
+  History,
   Layers,
   Settings,
   Waypoints,
   BookOpen,
   Users,
   Package,
+  Receipt,
+  ScrollText,
+  Wallet,
 } from "lucide-react";
 
 type NavItem = {
@@ -25,6 +29,12 @@ export const mainNavigation: NavItem[] = [
     href: "/dashboard",
     icon: ChartArea,
     description: "KPIs across drafts, approvals, and ledger balances.",
+  },
+  {
+    title: "Timeline",
+    href: "/timeline",
+    icon: History,
+    description: "Chronological business activity linked to the ledger.",
   },
   {
     title: "Prompt Workspace",
@@ -49,6 +59,24 @@ export const mainNavigation: NavItem[] = [
     href: "/contacts",
     icon: Users,
     description: "Manage customers, vendors, and other contacts with auto-generated codes.",
+  },
+  {
+    title: "Invoices",
+    href: "/invoices",
+    icon: Receipt,
+    description: "Posted invoices and PDF download (BRD).",
+  },
+  {
+    title: "Bills",
+    href: "/bills",
+    icon: ScrollText,
+    description: "Posted supplier bills and PDF download.",
+  },
+  {
+    title: "Payments",
+    href: "/payments",
+    icon: Wallet,
+    description: "Posted receipts and payments.",
   },
   {
     title: "Inventory",

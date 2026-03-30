@@ -23,12 +23,28 @@ export async function listAccountsAction(): Promise<Account[]> {
   return (await listAccounts()) as Account[];
 }
 
+const PrdAccountKindEnum = z.enum([
+  "bank",
+  "cash",
+  "accounts_receivable",
+  "accounts_payable",
+  "inventory",
+  "fixed_asset",
+  "revenue",
+  "expense",
+  "equity",
+  "tax",
+  "other",
+]);
+
 const AccountSchema = z.object({
   name: z.string().min(3),
   code: z.string().min(3).optional(), // Optional - will be generated if not provided
   type: z.enum(["asset", "liability", "equity", "revenue", "expense"]),
   category: z.enum(["current", "non_current"]).nullable().optional(), // Only for assets/liabilities
   detail_type: z.enum(["bank", "cash", "other_current_asset", "fixed_asset", "other"]).nullable().optional(), // Only for assets
+  /** Optional BRD overlay (MVP schema); supplements type / subtype. */
+  prd_account_kind: PrdAccountKindEnum.nullable().optional(),
 });
 
 export async function createAccountAction(input: z.infer<typeof AccountSchema>): Promise<ChartOfAccountsRow> {
@@ -83,11 +99,13 @@ export async function createAccountAction(input: z.infer<typeof AccountSchema>):
     type: payload.type,
     ...(category && { category }),
     ...(payload.detail_type && { detail_type: payload.detail_type }),
+    ...(payload.prd_account_kind && { prd_account_kind: payload.prd_account_kind }),
     allow_reconciliation: allowReconciliation,
   } as ChartOfAccountsInsert & { 
     category?: "current" | "non_current" | null;
     detail_type?: "bank" | "cash" | "other_current_asset" | "fixed_asset" | "other" | null;
     allow_reconciliation?: boolean;
+    prd_account_kind?: string | null;
   };
   // Use type assertion to fix Supabase type inference - type-safe using Database types
   const table = supabase.from("chart_of_accounts") as unknown as {

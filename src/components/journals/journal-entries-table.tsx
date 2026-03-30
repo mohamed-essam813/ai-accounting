@@ -23,7 +23,7 @@ import {
 } from "@/components/ui/dialog";
 import { formatDate, formatCurrency } from "@/lib/format";
 import type { JournalEntryWithLines } from "@/lib/data/journals";
-import { approveAndPostJournalEntryAction, deleteJournalEntryAction } from "@/lib/actions/journals";
+import { approveJournalEntryAction, postJournalEntryAction, deleteJournalEntryAction } from "@/lib/actions/journals";
 import { canApprove, type UserRole } from "@/lib/auth";
 import { toast } from "sonner";
 import { Check, Pencil, Trash2 } from "lucide-react";
@@ -67,6 +67,7 @@ export function JournalEntriesTable({
   const highlightedRef = useRef<HTMLTableRowElement>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [approvingId, setApprovingId] = useState<string | null>(null);
+  const [postingId, setPostingId] = useState<string | null>(null);
 
   useEffect(() => {
     if (highlightedEntryId && highlightedRef.current) {
@@ -79,8 +80,8 @@ export function JournalEntriesTable({
   const handleApprove = async (entryId: string) => {
     setApprovingId(entryId);
     try {
-      await approveAndPostJournalEntryAction({ entryId });
-      toast.success("Journal entry approved and posted.");
+      await approveJournalEntryAction({ entryId });
+      toast.success("Journal entry approved. Post to ledger when ready.");
       router.refresh();
     } catch (e) {
       toast.error("Failed to approve", {
@@ -88,6 +89,21 @@ export function JournalEntriesTable({
       });
     } finally {
       setApprovingId(null);
+    }
+  };
+
+  const handlePost = async (entryId: string) => {
+    setPostingId(entryId);
+    try {
+      await postJournalEntryAction({ entryId });
+      toast.success("Posted to ledger.");
+      router.refresh();
+    } catch (e) {
+      toast.error("Failed to post", {
+        description: e instanceof Error ? e.message : undefined,
+      });
+    } finally {
+      setPostingId(null);
     }
   };
 
@@ -111,7 +127,7 @@ export function JournalEntriesTable({
       <div>
         <h3 className="text-lg font-semibold">Journal Entries</h3>
         <p className="text-sm text-muted-foreground">
-          {entries.length} entr{entries.length !== 1 ? "ies" : "y"} matching filters. Drafts require approval.
+          {entries.length} entr{entries.length !== 1 ? "ies" : "y"} matching filters. Draft → Approve → Post.
         </p>
       </div>
       <div className="overflow-hidden rounded-lg border bg-card">
@@ -141,7 +157,9 @@ export function JournalEntriesTable({
                 );
                 const isHighlighted = highlightedEntryId === entry.id;
                 const isDraft = entry.status === "draft";
+                const isApproved = entry.status === "approved";
                 const canApproveThis = isDraft && canApproveEntries;
+                const canPostThis = isApproved && canApproveEntries;
                 const canDeleteThis = isDraft;
                 return (
                   <TableRow
@@ -177,8 +195,12 @@ export function JournalEntriesTable({
                       </div>
                     </TableCell>
                     <TableCell>
-                      <Badge variant={isDraft ? "secondary" : "default"}>
-                        {isDraft ? "Draft" : "Posted"}
+                      <Badge
+                        variant={
+                          isDraft ? "secondary" : isApproved ? "outline" : "default"
+                        }
+                      >
+                        {isDraft ? "Draft" : isApproved ? "Approved" : entry.status === "void" ? "Void" : "Posted"}
                       </Badge>
                     </TableCell>
                     <TableCell className="text-right font-mono text-sm">
@@ -191,11 +213,22 @@ export function JournalEntriesTable({
                             variant="outline"
                             size="sm"
                             onClick={() => handleApprove(entry.id)}
-                            disabled={!!approvingId}
-                            title="Approve & post"
+                            disabled={!!approvingId || !!postingId}
+                            title="Approve for posting"
                           >
                             <Check className="h-4 w-4 mr-1" />
-                            {approvingId === entry.id ? "Posting…" : "Approve"}
+                            {approvingId === entry.id ? "Approving…" : "Approve"}
+                          </Button>
+                        )}
+                        {canPostThis && (
+                          <Button
+                            variant="default"
+                            size="sm"
+                            onClick={() => handlePost(entry.id)}
+                            disabled={!!postingId || !!approvingId}
+                            title="Post to ledger"
+                          >
+                            {postingId === entry.id ? "Posting…" : "Post"}
                           </Button>
                         )}
                         {canDeleteThis && (

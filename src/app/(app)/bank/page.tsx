@@ -28,7 +28,8 @@ export default async function BankPage({
       <div>
         <h2 className="text-2xl font-semibold">Bank Reconciliation</h2>
         <p className="text-sm text-muted-foreground">
-          Upload bank statement PDFs, import transactions, and match them to posted journal entries.
+          Upload a PDF (server-side parse) or a CSV export to import transactions, then match them to posted journal entries.
+          Reconciliation uses your linked bank GL accounts.
         </p>
       </div>
       {bankAccounts.length === 0 ? (

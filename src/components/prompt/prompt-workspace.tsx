@@ -8,7 +8,7 @@
 import { useState } from "react";
 import { UnifiedInput } from "./unified-input";
 import { InlineDraftReviewPanel } from "./inline-draft-review";
-import type { SourceDocument } from "@/lib/data/documents";
+import type { Attachment } from "@/lib/data/documents";
 import type { UserRole } from "@/lib/auth";
 import type { DraftPayload } from "@/lib/ai/schema";
 import type { Database } from "@/lib/database.types";
@@ -28,7 +28,7 @@ type DraftData = {
 
 type DraftResponse = {
   draft: DraftData;
-  documents: SourceDocument[];
+  documents: Attachment[];
   accounts: Account[];
   inventoryItems?: InventoryItem[];
   user: {

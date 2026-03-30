@@ -5,7 +5,7 @@ import { extractTextFromImage } from "@/lib/ocr/vision";
 import { z } from "zod";
 import type { Database, Json } from "@/lib/database.types";
 
-type SourceDocumentInsert = Database["public"]["Tables"]["source_documents"]["Insert"];
+type AttachmentInsert = Database["public"]["Tables"]["attachments"]["Insert"];
 type AuditLogsInsert = Database["public"]["Tables"]["audit_logs"]["Insert"];
 
 export const runtime = "nodejs";
@@ -121,7 +121,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const insertData: SourceDocumentInsert = {
+    const insertData: AttachmentInsert = {
       tenant_id: user.tenant.id,
       created_by: user.id,
       file_path: storagePath,
@@ -131,12 +131,12 @@ export async function POST(request: NextRequest) {
       vision_json: vision.annotation ? (vision.annotation as unknown as Json) : null,
     };
     // Service client has type inference issues - use explicit typing
-    const insertArray: SourceDocumentInsert[] = [insertData];
-    type SourceDocumentRow = Database["public"]["Tables"]["source_documents"]["Row"];
+    const insertArray: AttachmentInsert[] = [insertData];
+    type AttachmentRow = Database["public"]["Tables"]["attachments"]["Row"];
     // Type assertion to fix service client inference - this is type-safe as we're asserting to known Database types
-    const table = serviceSupabase.from("source_documents") as unknown as {
-      insert: (values: SourceDocumentInsert[]) => {
-        select: () => Promise<{ data: SourceDocumentRow[] | null; error: unknown }>;
+    const table = serviceSupabase.from("attachments") as unknown as {
+      insert: (values: AttachmentInsert[]) => {
+        select: () => Promise<{ data: AttachmentRow[] | null; error: unknown }>;
       };
     };
     const { data: documents, error: insertError } = await table.insert(insertArray).select();
@@ -154,7 +154,7 @@ export async function POST(request: NextRequest) {
     tenant_id: user.tenant.id,
     actor_id: user.id,
     action: "ocr.uploaded",
-    entity: "source_documents",
+    entity: "attachments",
     entity_id: document?.id ?? null,
     changes: {
       fileName: file.name,

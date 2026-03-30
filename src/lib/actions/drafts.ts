@@ -12,6 +12,16 @@ import { canApprove, canEditPosted, type UserRole } from "@/lib/auth";
 import type { Database } from "@/lib/database.types";
 import type { DraftPayload } from "@/lib/ai/schema";
 import { getTenantBaseCurrency } from "@/lib/utils/currency-conversion";
+import { assertPostingDateAllowed } from "@/lib/accounting/period-lock";
+import {
+  buildDraftPostedTimelineDescription,
+  draftIntentToTimelineEventType,
+  recordTimelineEvent,
+} from "@/lib/data/timeline";
+import {
+  materializeInvoiceOrBillFromPostedDraft,
+  materializePaymentFromPostedDraft,
+} from "@/lib/posting/materialize-documents";
 
 type DraftsInsert = Database["public"]["Tables"]["drafts"]["Insert"];
 type DraftsRow = Database["public"]["Tables"]["drafts"]["Row"];
@@ -377,6 +387,7 @@ export async function postDraftAction(input: z.infer<typeof PostDraftSchema>) {
         debit: number;
         credit: number;
         memo: string | null;
+        tax_rate_id?: string | null;
       }>
     | undefined;
   const editedDescription = draftData.edited_description as string | undefined;
@@ -393,6 +404,7 @@ export async function postDraftAction(input: z.infer<typeof PostDraftSchema>) {
   });
 
   const tax = (draftData as { tax?: { tax_rate_id?: string } })?.tax;
+  const taxRateIdForLines = tax?.tax_rate_id ?? null;
   if (tax?.tax_rate_id) {
     const rates = await listTaxRates();
     const valid = rates.some((r) => r.id === tax.tax_rate_id);
@@ -414,6 +426,7 @@ export async function postDraftAction(input: z.infer<typeof PostDraftSchema>) {
       debit: Number(line.debit),
       credit: Number(line.credit),
       memo: line.memo ?? null,
+      tax_rate_id: line.tax_rate_id ?? null,
     }));
   } else {
     // Generate journal lines from draft using AI-selected accounts or fallback
@@ -425,6 +438,7 @@ export async function postDraftAction(input: z.infer<typeof PostDraftSchema>) {
     const result = await buildDefaultJournalLines(parsedDraft, allAccounts as Account[], null, {
       tenantId: user.tenant.id,
       tax_treatment: taxTreatment,
+      taxRateId: taxRateIdForLines,
     });
     description = result.description;
     lines = result.lines;
@@ -826,15 +840,20 @@ export async function postDraftAction(input: z.infer<typeof PostDraftSchema>) {
     }
   }
 
+  const postingDate =
+    (parsedDraft.entities.date as string) ?? new Date().toISOString().slice(0, 10);
+  await assertPostingDateAllowed(supabase, user.tenant.id, postingDate);
+
   // contact_id and currency fields will be added by migration, using type assertion for now
   const entryData = {
     tenant_id: user.tenant.id,
-    date: (parsedDraft.entities.date as string) ?? new Date().toISOString().slice(0, 10),
+    date: postingDate,
     description,
     status: "posted",
     created_by: user.id,
     approved_by: user.id,
     posted_at: new Date().toISOString(),
+    source_module: "drafts",
     contact_id: draftContactId ?? null,
     transaction_currency: transactionCurrency,
     amount_in_transaction_currency: transactionAmount,
@@ -868,12 +887,18 @@ export async function postDraftAction(input: z.infer<typeof PostDraftSchema>) {
   }
 
   try {
+    const lineCurrency =
+      transactionCurrency || baseCurrency || null;
+    const lineContactId = draftContactId ?? null;
     const linesData: JournalLinesInsert[] = lines.map((line) => ({
       entry_id: entry?.id ?? "",
       account_id: line.account_id,
       memo: line.memo ?? null,
       debit: Number(line.debit),
       credit: Number(line.credit),
+      contact_id: lineContactId,
+      currency_code: lineCurrency,
+      tax_rate_id: line.tax_rate_id ?? null,
     }));
     // Use type assertion for insert to fix type inference
     // Type assertion to fix Supabase type inference - this is type-safe as we're using Database types
@@ -985,9 +1010,52 @@ export async function postDraftAction(input: z.infer<typeof PostDraftSchema>) {
   };
   await auditTable.insert([auditData]);
 
+  try {
+    await recordTimelineEvent(supabase, {
+      tenantId: user.tenant.id,
+      eventType: draftIntentToTimelineEventType(draft.intent),
+      referenceType: "journal_entry",
+      referenceId: entry.id,
+      description: buildDraftPostedTimelineDescription(
+        draft.intent,
+        parsedDraft.entities as Record<string, unknown>,
+        description,
+      ),
+      eventDate: postingDate,
+    });
+  } catch (timelineErr) {
+    console.error("[postDraft] timeline_event", timelineErr);
+  }
+
+  try {
+    await materializeInvoiceOrBillFromPostedDraft(supabase, {
+      tenantId: user.tenant.id,
+      draft,
+      journalEntryId: entry.id,
+      postingDate,
+      description,
+      entities: parsedDraft.entities as Record<string, unknown>,
+      draftData: draftData as Record<string, unknown>,
+    });
+    await materializePaymentFromPostedDraft(supabase, {
+      tenantId: user.tenant.id,
+      draft,
+      journalEntryId: entry.id,
+      postingDate,
+      entities: parsedDraft.entities as Record<string, unknown>,
+      draftData: draftData as Record<string, unknown>,
+    });
+  } catch (matErr) {
+    console.error("[postDraft] materialize invoice/bill", matErr);
+  }
+
   revalidatePath("/drafts");
   revalidatePath("/dashboard");
   revalidatePath("/reports");
+  revalidatePath("/timeline");
+  revalidatePath("/invoices");
+  revalidatePath("/bills");
+  revalidatePath("/payments");
   // Return updated draft for real-time UI updates
   return {
     id: updatedDraft.id,
@@ -1058,9 +1126,14 @@ export async function getDraftJournalPreview(draftId: string) {
         debit: number;
         credit: number;
         memo: string | null;
+        tax_rate_id?: string | null;
       }>
     | undefined;
   const editedDescription = draftData.edited_description as string | undefined;
+
+  const taxRateIdPreview = (draftData as { tax?: { tax_rate_id?: string } })?.tax?.tax_rate_id ?? null;
+  const draftWithTaxTreatment = draft as DraftsRow & { tax_treatment?: "exclusive" | "inclusive" | null };
+  const taxTreatmentPreview = draftWithTaxTreatment.tax_treatment ?? "exclusive";
 
   if (editedLines && editedLines.length > 0) {
     // Use edited journal lines
@@ -1091,6 +1164,8 @@ export async function getDraftJournalPreview(draftId: string) {
   // Cast to Account[] - buildDefaultJournalLines works with base Account type
   const { description, lines } = await buildDefaultJournalLines(parsedDraft, accounts as Account[], null, {
     tenantId: user.tenant.id,
+    tax_treatment: taxTreatmentPreview,
+    taxRateId: taxRateIdPreview,
   });
 
   // Map journal lines to include account details

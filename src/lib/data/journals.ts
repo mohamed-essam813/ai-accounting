@@ -14,7 +14,7 @@ export type ListJournalEntriesFilters = {
   endDate?: string;
   accountCode?: string;
   search?: string;
-  status?: "draft" | "posted" | "all";
+  status?: "draft" | "approved" | "posted" | "all";
   limit?: number;
 };
 

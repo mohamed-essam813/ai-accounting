@@ -590,15 +590,49 @@ async function getExpenseControlSignal(targetCurrency?: string): Promise<Attenti
 }
 
 /**
- * Get Recent Financial Events (meaningful events, not raw transactions)
+ * Get Recent Financial Events — prefer Financial Timeline (PRD), fallback to insight snippets.
  */
-export async function getRecentFinancialEvents(limit: number = 5, targetCurrency?: string): Promise<RecentFinancialEvent[]> {
-  const insights = await getRecentPrimaryInsights(limit * 2); // Get more to filter
+export async function getRecentFinancialEvents(
+  limit: number = 5,
+  _targetCurrency?: string,
+): Promise<RecentFinancialEvent[]> {
+  const user = await getCurrentUser();
+  if (!user?.tenant) {
+    return [];
+  }
 
+  const supabase = await createServerSupabaseClient();
+  const { data: timelineRows, error } = await supabase
+    .from("timeline_events")
+    .select("id, description, event_date, event_type, created_at")
+    .eq("tenant_id", user.tenant.id)
+    .order("event_date", { ascending: false })
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  if (!error && timelineRows && timelineRows.length > 0) {
+    return timelineRows.map((ev) => {
+      let type: RecentFinancialEvent["type"] = "other";
+      const et = ev.event_type || "";
+      if (et === "invoice_posted" || et.includes("invoice")) type = "invoice";
+      else if (et === "bill_posted" || et.startsWith("bill")) type = "bill";
+      else if (et.includes("payment")) type = "payment";
+      else if (et.includes("journal")) type = "journal";
+
+      return {
+        id: ev.id,
+        description: ev.description,
+        date: `${ev.event_date}T12:00:00.000Z`,
+        insight: undefined,
+        type,
+      };
+    });
+  }
+
+  const insights = await getRecentPrimaryInsights(limit * 2);
   const events: RecentFinancialEvent[] = [];
 
   for (const insight of insights.slice(0, limit)) {
-    // Extract event type from insight context or description
     let type: RecentFinancialEvent["type"] = "other";
     if (insight.context_json) {
       const intent = (insight.context_json as { intent?: string }).intent;

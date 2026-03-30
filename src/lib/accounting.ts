@@ -9,6 +9,8 @@ export type JournalLine = {
   debit: number;
   credit: number;
   memo?: string | null;
+  /** Set on tax/VAT lines when a tenant tax rate was applied at posting. */
+  tax_rate_id?: string | null;
 };
 
 export type IntentAccountMapping = {
@@ -40,6 +42,8 @@ export async function buildDefaultJournalLines(
     tenantId?: string;
     useRAG?: boolean;
     tax_treatment?: "exclusive" | "inclusive";
+    /** When posting from a draft with a selected tax rate, links tax lines to tax_rates.id */
+    taxRateId?: string | null;
   },
 ): Promise<{ description: string; lines: JournalLine[] }> {
   const { intent, entities } = draft;
@@ -252,6 +256,11 @@ export async function buildDefaultJournalLines(
     creditBaseAmount = total;
   }
 
+  const taxLineMeta =
+    hasTax && options?.taxRateId
+      ? { tax_rate_id: options.taxRateId }
+      : { tax_rate_id: null as string | null };
+
   const lines: JournalLine[] = [
     {
       account_id: debitAccount.id,
@@ -274,6 +283,7 @@ export async function buildDefaultJournalLines(
       debit: Number(taxAmount.toFixed(2)),
       credit: 0,
       memo,
+      ...taxLineMeta,
     });
   }
 
@@ -283,6 +293,7 @@ export async function buildDefaultJournalLines(
       debit: 0,
       credit: Number(taxAmount.toFixed(2)),
       memo,
+      ...taxLineMeta,
     });
   }
 

@@ -18,14 +18,11 @@ import {
 } from "@/components/ui/select";
 import { importBankTransactionsAction } from "@/lib/actions/bank";
 import { toast } from "sonner";
-import { FileUp } from "lucide-react";
-
-type ParsedTransaction = {
-  date: string;
-  description: string;
-  amount: number;
-  counterparty?: string | null;
-};
+import { FileSpreadsheet, FileUp } from "lucide-react";
+import {
+  parseBankStatementCsv,
+  type ParsedBankTransaction,
+} from "@/lib/bank/parse-csv-statements";
 
 type Account = {
   id: string;
@@ -42,7 +39,7 @@ export function BankUploader({
   bankAccountId: initialBankAccountId,
   accounts = [],
 }: Props) {
-  const [transactions, setTransactions] = useState<ParsedTransaction[]>([]);
+  const [transactions, setTransactions] = useState<ParsedBankTransaction[]>([]);
   const [fileName, setFileName] = useState<string | null>(null);
   const [selectedBankAccountId, setSelectedBankAccountId] = useState<string>(
     initialBankAccountId ?? ""
@@ -90,6 +87,36 @@ export function BankUploader({
     }
   };
 
+  const handleCsvFile = async (file: File) => {
+    setIsParsing(true);
+    setFileName(file.name);
+    setTransactions([]);
+
+    try {
+      const text = await file.text();
+      const list = parseBankStatementCsv(text);
+      setTransactions(list);
+      if (list.length === 0) {
+        toast.error("No transactions found in CSV", {
+          description:
+            "Expected columns similar to Date, Description, Amount (or Debit/Credit). Try exporting from your bank as CSV.",
+        });
+      } else {
+        toast.success("CSV parsed", {
+          description: `${list.length} transaction${list.length !== 1 ? "s" : ""} detected.`,
+        });
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error("Failed to parse CSV", {
+        description: err instanceof Error ? err.message : undefined,
+      });
+      setFileName(null);
+    } finally {
+      setIsParsing(false);
+    }
+  };
+
   const handleImport = () => {
     if (transactions.length === 0) {
       toast.error("No transactions ready for import.");
@@ -123,9 +150,9 @@ export function BankUploader({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Upload Bank Statement (PDF)</CardTitle>
+        <CardTitle>Import bank transactions</CardTitle>
         <CardDescription>
-          Upload a bank statement PDF; we extract and import transactions.
+          Upload a PDF (parsed server-side) or a CSV export (BRD). Same import flow for both.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -156,7 +183,7 @@ export function BankUploader({
           </div>
         )}
 
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+        <div className="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center gap-3">
           <label className="flex items-center justify-center gap-2 rounded-lg border border-dashed border-muted-foreground/30 bg-muted/30 px-4 py-6 cursor-pointer hover:bg-muted/50 transition-colors">
             <FileUp className="h-5 w-5 text-muted-foreground" />
             <span className="text-sm font-medium">
@@ -170,6 +197,23 @@ export function BankUploader({
               onChange={(e) => {
                 const f = e.target.files?.[0];
                 if (f) handleFile(f);
+                e.target.value = "";
+              }}
+            />
+          </label>
+          <label className="flex items-center justify-center gap-2 rounded-lg border border-dashed border-muted-foreground/30 bg-muted/30 px-4 py-6 cursor-pointer hover:bg-muted/50 transition-colors">
+            <FileSpreadsheet className="h-5 w-5 text-muted-foreground" />
+            <span className="text-sm font-medium">
+              {isParsing ? "Parsing…" : "Choose CSV"}
+            </span>
+            <input
+              type="file"
+              accept=".csv,text/csv"
+              className="sr-only"
+              disabled={isParsing}
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) handleCsvFile(f);
                 e.target.value = "";
               }}
             />

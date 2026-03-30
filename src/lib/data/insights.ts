@@ -5,6 +5,7 @@
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { getCurrentUser } from "./users";
 import type { Insight } from "@/lib/insights/types";
+import { normalizePrdInsight } from "@/lib/insights/prd-format";
 import type { Database } from "@/lib/database.types";
 
 type InsightsInsert = Database["public"]["Tables"]["insights"]["Insert"];
@@ -21,24 +22,27 @@ export async function saveInsights(insights: Insight[]): Promise<void> {
 
   // Ensure all insights have tenant_id
   // Engineering Guide Section 3.4: Store all insight output contract fields in context_json
-  const insightsToInsert: InsightsInsert[] = insights.map((insight) => ({
-    tenant_id: tenantId,
-    journal_entry_id: insight.journal_entry_id || undefined,
-    draft_id: insight.draft_id || undefined,
-    category: insight.category,
-    level: insight.level,
-    insight_text: insight.insight_text,
-    context_json: {
-      ...(insight.context_json || {}),
-      // Engineering Guide Section 3.4: Required insight output contract fields
-      insight_type: insight.insight_type,
-      what_changed: insight.what_changed,
-      why_it_changed: insight.why_it_changed,
-      business_impact: insight.business_impact,
-      confidence_level: insight.confidence_level,
-      drill_down_targets: insight.drill_down_targets,
-    } as Database["public"]["Tables"]["insights"]["Row"]["context_json"],
-  }));
+  const insightsToInsert: InsightsInsert[] = insights.map((insight) => {
+    const prd = normalizePrdInsight(insight);
+    return {
+      tenant_id: tenantId,
+      journal_entry_id: insight.journal_entry_id || undefined,
+      draft_id: insight.draft_id || undefined,
+      category: insight.category,
+      level: insight.level,
+      insight_text: insight.insight_text,
+      context_json: {
+        ...(insight.context_json || {}),
+        prd,
+        insight_type: insight.insight_type,
+        what_changed: insight.what_changed,
+        why_it_changed: insight.why_it_changed,
+        business_impact: insight.business_impact,
+        confidence_level: insight.confidence_level,
+        drill_down_targets: insight.drill_down_targets,
+      } as Database["public"]["Tables"]["insights"]["Row"]["context_json"],
+    };
+  });
 
   const table = supabase.from("insights") as unknown as {
     insert: (values: InsightsInsert[]) => Promise<{ error: unknown }>;
@@ -105,6 +109,7 @@ export async function getInsightsForJournalEntry(
       business_impact: contextJson.business_impact as string | undefined,
       confidence_level: contextJson.confidence_level as "high" | "medium" | "low" | undefined,
       drill_down_targets: contextJson.drill_down_targets as string[] | undefined,
+      prd: contextJson.prd as Insight["prd"],
       created_at: row.created_at,
     };
   });
@@ -173,6 +178,7 @@ export async function getRecentPrimaryInsights(limit: number = 10): Promise<Insi
       business_impact: contextJson.business_impact as string | undefined,
       confidence_level: contextJson.confidence_level as "high" | "medium" | "low" | undefined,
       drill_down_targets: contextJson.drill_down_targets as string[] | undefined,
+      prd: contextJson.prd as Insight["prd"],
       created_at: row.created_at,
     };
   });

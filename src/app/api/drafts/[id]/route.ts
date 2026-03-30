@@ -6,7 +6,7 @@ import type { Database } from "@/lib/database.types";
 import { DraftPayload } from "@/lib/ai/schema";
 
 type DraftsRow = Database["public"]["Tables"]["drafts"]["Row"];
-type SourceDocumentRow = Database["public"]["Tables"]["source_documents"]["Row"];
+type AttachmentRow = Database["public"]["Tables"]["attachments"]["Row"];
 
 export async function GET(
   request: NextRequest,
@@ -39,8 +39,8 @@ export async function GET(
     const fiveMinutesLater = new Date(draftCreatedAt.getTime() + 5 * 60 * 1000);
 
     const { data: documents, error: docsError } = await supabase
-      .from("source_documents")
-      .select<"id, file_name, file_path, mime_type, created_at", Pick<SourceDocumentRow, "id" | "file_name" | "file_path" | "mime_type" | "created_at">>(
+      .from("attachments")
+      .select<"id, file_name, file_path, mime_type, created_at", Pick<AttachmentRow, "id" | "file_name" | "file_path" | "mime_type" | "created_at">>(
         "id, file_name, file_path, mime_type, created_at"
       )
       .eq("tenant_id", user.tenant.id)

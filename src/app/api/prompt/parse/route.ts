@@ -19,17 +19,17 @@ const requestSchema = z
     { message: "Provide a prompt or at least one document.", path: ["prompt"] }
   );
 
-type SourceDocumentRow = Database["public"]["Tables"]["source_documents"]["Row"];
+type AttachmentRow = Database["public"]["Tables"]["attachments"]["Row"];
 
 async function getDocumentTexts(documentIds: string[], tenantId: string): Promise<string> {
   if (documentIds.length === 0) return "";
 
   const supabase = createServiceSupabaseClient();
-  const table = supabase.from("source_documents") as unknown as {
+  const table = supabase.from("attachments") as unknown as {
     select: (columns: string) => {
       in: (column: string, values: string[]) => {
         eq: (column: string, value: string) => Promise<{
-          data: SourceDocumentRow[] | null;
+          data: AttachmentRow[] | null;
           error: unknown;
         }>;
       };

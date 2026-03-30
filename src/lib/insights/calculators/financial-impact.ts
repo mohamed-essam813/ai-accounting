@@ -122,10 +122,25 @@ export async function generateFinancialImpactInsight(
     businessImpact = "Financial position changed";
   }
 
+  const prd = {
+    observation: formatInsightText(insightText),
+    risk_or_opportunity:
+      businessImpact ||
+      (financial_delta.receivable_change && financial_delta.receivable_change > 0
+        ? "Cash has not increased yet—collection risk until payment is received."
+        : financial_delta.payable_change && financial_delta.payable_change > 0
+          ? "Cash has not decreased yet—plan for the upcoming payment."
+          : "Watch balances and timing between revenue/expense and cash."),
+    recommended_action: "Review Accounts Receivable / Payable ageing and cash reports this week.",
+    expected_impact:
+      "Better follow-up on invoices and bills reduces surprise cash shortfalls.",
+  };
+
   return {
     category: "financial_impact",
     level: "primary",
     insight_text: formatInsightText(insightText),
+    prd,
     insight_type: "financial_impact",
     what_changed: whatChanged,
     why_it_changed: whyChanged,

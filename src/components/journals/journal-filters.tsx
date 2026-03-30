@@ -150,6 +150,7 @@ export function JournalFilters({
             <SelectContent>
               <SelectItem value="all">All</SelectItem>
               <SelectItem value="draft">Draft</SelectItem>
+              <SelectItem value="approved">Approved</SelectItem>
               <SelectItem value="posted">Posted</SelectItem>
             </SelectContent>
           </Select>

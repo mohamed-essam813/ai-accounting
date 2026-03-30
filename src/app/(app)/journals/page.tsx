@@ -22,7 +22,11 @@ export default async function JournalsPage({
 }) {
   const params = await searchParams;
   const statusFilter =
-    params.status === "draft" || params.status === "posted" ? params.status : "all";
+    params.status === "draft" ||
+    params.status === "approved" ||
+    params.status === "posted"
+      ? params.status
+      : "all";
   const [user, accounts, entries, templates] = await Promise.all([
     import("@/lib/data/users").then((m) => m.getCurrentUser()),
     listAccounts(),

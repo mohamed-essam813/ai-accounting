@@ -155,7 +155,7 @@ export async function disposeAsset(
       description: journalDescription,
       lines: journalLines,
     },
-    { postImmediately: true },
+    { postImmediately: true, sourceModule: "system_disposal" },
   );
 
   // Update asset record

@@ -8,6 +8,8 @@ import { AccountingPoliciesForm } from "@/components/settings/accounting-policie
 import { TaxRatesForm } from "@/components/settings/tax-rates-form";
 import { UnitsOfMeasureForm } from "@/components/settings/units-of-measure-form";
 import { BaseCurrencyForm } from "@/components/settings/base-currency-form";
+import { PeriodCloseForm } from "@/components/settings/period-close-form";
+import { CompanyDetailsForm } from "@/components/settings/company-details-form";
 import { getTenantProfile, getAccountingPolicy } from "@/lib/data/tenant";
 import { listTenantUsers, listPendingInvites } from "@/lib/data/tenant";
 import { getCurrentUser } from "@/lib/data/users";
@@ -83,6 +85,22 @@ export default async function TenantSettingsPage() {
 
           <Card>
             <CardHeader>
+              <CardTitle>Company setup</CardTitle>
+              <CardDescription>
+                Country, fiscal year, and tax registration (MVP schema / PRD).
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <CompanyDetailsForm
+                defaultCountry={tenant?.country ?? ""}
+                defaultFiscalMonth={tenant?.fiscal_year_start_month ?? null}
+                defaultTaxReg={tenant?.tax_registration_number ?? ""}
+              />
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
               <CardTitle>Financial Settings</CardTitle>
               <CardDescription>
                 Configure base currency for reporting and currency conversion defaults.
@@ -92,6 +110,20 @@ export default async function TenantSettingsPage() {
               <BaseCurrencyForm
                 defaultBaseCurrency={((tenant as any)?.base_currency as string) || "AED"}
                 hasTransactions={hasTransactions}
+              />
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Accounting period close</CardTitle>
+              <CardDescription>
+                Block posting for transaction dates on or before the closed-through date (PRD controls).
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <PeriodCloseForm
+                defaultClosedThrough={tenant?.accounting_period_closed_through ?? null}
               />
             </CardContent>
           </Card>

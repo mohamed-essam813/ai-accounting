@@ -7,10 +7,10 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import type { SourceDocument } from "@/lib/data/documents";
+import type { Attachment } from "@/lib/data/documents";
 
 type Props = {
-  documents: SourceDocument[];
+  documents: Attachment[];
 };
 
 export function SourceDocumentsList({ documents }: Props) {

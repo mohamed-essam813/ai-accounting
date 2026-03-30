@@ -25,7 +25,7 @@ import { ContactForm } from "./contact-form";
 import { StatementOfAccount } from "./statement-of-account";
 import { deleteContactAction } from "@/lib/actions/contacts";
 import { toast } from "sonner";
-import { FileText } from "lucide-react";
+import { Download, FileText } from "lucide-react";
 import type { Database } from "@/lib/database.types";
 
 type Contact = Database["public"]["Tables"]["contacts"]["Row"];
@@ -82,6 +82,29 @@ export function ContactsTable({ contacts }: Props) {
     });
   };
 
+  const exportCsv = () => {
+    const headers = ["code", "name", "type", "email", "phone", "address"];
+    const escape = (v: string | null | undefined) => {
+      const s = (v ?? "").replace(/"/g, '""');
+      return `"${s}"`;
+    };
+    const lines = [
+      headers.join(","),
+      ...contacts.map((c) =>
+        [c.code, c.name, c.type, c.email, c.phone, c.address]
+          .map((v) => escape(typeof v === "string" ? v : v == null ? "" : String(v)))
+          .join(","),
+      ),
+    ];
+    const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `contacts-export-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const getTypeBadgeVariant = (type: string) => {
     switch (type) {
       case "customer":
@@ -95,7 +118,13 @@ export function ContactsTable({ contacts }: Props) {
 
   return (
     <>
-      <div className="flex justify-end mb-4">
+      <div className="flex justify-end gap-2 mb-4">
+        {contacts.length > 0 && (
+          <Button type="button" variant="outline" onClick={exportCsv}>
+            <Download className="h-4 w-4 mr-1" />
+            Export CSV
+          </Button>
+        )}
         <Button onClick={handleCreate}>Add Contact</Button>
       </div>
       <div className="overflow-hidden rounded-lg border bg-card">

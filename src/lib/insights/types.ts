@@ -12,6 +12,14 @@ export type InsightCategory =
 
 export type InsightLevel = "primary" | "secondary" | "deep_dive";
 
+/** BRD §8 — optional explicit four-part structure (falls back in UI if omitted). */
+export type PrdInsightShape = {
+  observation: string;
+  risk_or_opportunity: string;
+  recommended_action: string;
+  expected_impact: string;
+};
+
 export interface Insight {
   id?: string;
   tenant_id?: string; // Optional - added when saving to database
@@ -20,6 +28,8 @@ export interface Insight {
   category: InsightCategory;
   level: InsightLevel;
   insight_text: string;
+  /** When set, drives PRD-aligned cards; otherwise derived from legacy fields when saving. */
+  prd?: PrdInsightShape;
   context_json?: Record<string, unknown>;
   created_at?: string;
   // Engineering Guide Section 3.4: Required fields for insight output contract
