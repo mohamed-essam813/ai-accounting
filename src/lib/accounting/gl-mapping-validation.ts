@@ -23,6 +23,27 @@ export type IntentMappingRules = {
 /**
  * Account type validation rules per intent (from feedback)
  */
+/** Code ranges: bank/cash 1000–1099, AR 1100–1199, AP 2000–2999 (default chart). */
+export function isValidRecordPaymentMapping(debit: Account, credit: Account): boolean {
+  const d = parseInt(debit.code.replace(/\D/g, ""), 10) || 0;
+  const c = parseInt(credit.code.replace(/\D/g, ""), 10) || 0;
+  const moneyIn =
+    debit.type === "asset" &&
+    credit.type === "asset" &&
+    d >= 1000 &&
+    d < 1100 &&
+    c >= 1100 &&
+    c < 1200;
+  const moneyOut =
+    debit.type === "liability" &&
+    credit.type === "asset" &&
+    d >= 2000 &&
+    d < 3000 &&
+    c >= 1000 &&
+    c < 1100;
+  return moneyIn || moneyOut;
+}
+
 export const INTENT_MAPPING_RULES: Record<DraftPayload["intent"], IntentMappingRules> = {
   create_invoice: {
     intent: "create_invoice",
@@ -129,7 +150,7 @@ export function validateIntentMapping(
   const debitAccount = accountMap.get(mapping.debit_account_id);
   if (!debitAccount) {
     errors.push(`Debit account ${mapping.debit_account_id} not found in chart of accounts`);
-  } else {
+  } else if (intent !== "record_payment") {
     const debitValidation = validateAccountType(debitAccount, rules.debitAccountTypes);
     if (!debitValidation.valid) {
       errors.push(`Debit account: ${debitValidation.error}`);
@@ -140,11 +161,29 @@ export function validateIntentMapping(
   const creditAccount = accountMap.get(mapping.credit_account_id);
   if (!creditAccount) {
     errors.push(`Credit account ${mapping.credit_account_id} not found in chart of accounts`);
-  } else {
+  } else if (intent !== "record_payment") {
     const creditValidation = validateAccountType(creditAccount, rules.creditAccountTypes);
     if (!creditValidation.valid) {
       errors.push(`Credit account: ${creditValidation.error}`);
     }
+  }
+
+  if (
+    intent === "record_payment" &&
+    debitAccount &&
+    creditAccount &&
+    isValidRecordPaymentMapping(debitAccount, creditAccount)
+  ) {
+    return { valid: true, errors: [] };
+  }
+
+  if (intent === "record_payment" && debitAccount && creditAccount) {
+    return {
+      valid: false,
+      errors: [
+        "This payment does not match a valid pattern. For money received, use your bank account and customer balance. For money sent, use supplier balance and your bank account.",
+      ],
+    };
   }
 
   // Validate tax debit account (if provided)

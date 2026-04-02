@@ -27,6 +27,61 @@ export interface InventoryItem {
   updated_at: string;
 }
 
+/** Full item row for prompts / posting (extends inventory item with accounting fields). */
+export interface BusinessItem extends InventoryItem {
+  item_type: "product" | "service";
+  inventory_tracked: boolean;
+  revenue_account_id: string | null;
+  expense_account_id: string | null;
+  default_tax_rate_id: string | null;
+  selling_price: number | null;
+  cost_price: number | null;
+  keywords: string | null;
+}
+
+function rowToBusinessItem(row: InventoryItemRow): BusinessItem {
+  const base = rowToInventoryItem(row);
+  const r = row as InventoryItemRow & {
+    item_type?: string;
+    inventory_tracked?: boolean;
+    revenue_account_id?: string | null;
+    expense_account_id?: string | null;
+    default_tax_rate_id?: string | null;
+    selling_price?: number | null;
+    cost_price?: number | null;
+    keywords?: string | null;
+  };
+  const it = (r as { item_type?: string }).item_type;
+  return {
+    ...base,
+    item_type: it === "service" ? "service" : "product",
+    inventory_tracked: (r as { inventory_tracked?: boolean }).inventory_tracked !== false,
+    revenue_account_id: r.revenue_account_id ?? null,
+    expense_account_id: r.expense_account_id ?? null,
+    default_tax_rate_id: r.default_tax_rate_id ?? null,
+    selling_price: r.selling_price != null ? Number(r.selling_price) : null,
+    cost_price: r.cost_price != null ? Number(r.cost_price) : null,
+    keywords: r.keywords ?? null,
+  };
+}
+
+function rowToInventoryItem(row: InventoryItemRow): InventoryItem {
+  return {
+    id: row.id,
+    tenant_id: row.tenant_id,
+    name: row.name,
+    sku: row.sku,
+    description: row.description,
+    unit: row.unit,
+    valuation_method: row.valuation_method as "fifo" | "weighted_average",
+    inventory_account_id: row.inventory_account_id || null,
+    cogs_account_id: row.cogs_account_id || null,
+    is_active: row.is_active,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
 export interface InventoryTransaction {
   id: string;
   tenant_id: string;
@@ -101,20 +156,65 @@ export async function getInventoryItems(): Promise<InventoryItem[]> {
     return [];
   }
 
-  return (data || []).map((row) => ({
-    id: row.id,
-    tenant_id: row.tenant_id,
-    name: row.name,
-    sku: row.sku,
-    description: row.description,
-    unit: row.unit,
-    valuation_method: row.valuation_method as "fifo" | "weighted_average",
-    inventory_account_id: (row as any).inventory_account_id || null,
-    cogs_account_id: (row as any).cogs_account_id || null,
-    is_active: row.is_active,
-    created_at: row.created_at,
-    updated_at: row.updated_at,
-  }));
+  return (data || []).map((row) => rowToInventoryItem(row));
+}
+
+/**
+ * Search items by name, SKU, or keywords (in-memory filter; suitable for typical tenant sizes).
+ */
+export async function searchBusinessItems(query: string, limit = 40): Promise<BusinessItem[]> {
+  const user = await getCurrentUser();
+  if (!user?.tenant) {
+    return [];
+  }
+
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase
+    .from("inventory_items")
+    .select("*")
+    .eq("tenant_id", user.tenant.id)
+    .eq("is_active", true)
+    .order("name")
+    .limit(500);
+
+  if (error) {
+    console.error("searchBusinessItems", error);
+    return [];
+  }
+
+  const q = query.trim().toLowerCase();
+  const rows = (data || []).filter((row) => {
+    if (!q) return true;
+    const name = (row.name || "").toLowerCase();
+    const sku = (row.sku || "").toLowerCase();
+    const kw = ((row as { keywords?: string | null }).keywords || "").toLowerCase();
+    return name.includes(q) || sku.includes(q) || kw.includes(q);
+  });
+
+  return rows.slice(0, limit).map((row) => rowToBusinessItem(row as InventoryItemRow));
+}
+
+export async function getBusinessItemById(itemId: string): Promise<BusinessItem | null> {
+  const user = await getCurrentUser();
+  if (!user?.tenant) {
+    return null;
+  }
+
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase
+    .from("inventory_items")
+    .select("*")
+    .eq("tenant_id", user.tenant.id)
+    .eq("id", itemId)
+    .maybeSingle();
+
+  if (error) {
+    console.error("getBusinessItemById", error);
+    return null;
+  }
+  if (!data) return null;
+
+  return rowToBusinessItem(data as InventoryItemRow);
 }
 
 /**

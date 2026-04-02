@@ -21,7 +21,9 @@ import {
   TableRow,
 } from "@/components/ui/table";
 
-export const revalidate = 60;
+// Item detail must reflect postings immediately.
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 type Props = {
   params: Promise<{ id: string }>;

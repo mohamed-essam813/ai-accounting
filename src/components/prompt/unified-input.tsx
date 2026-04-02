@@ -22,7 +22,6 @@ import { CashBankSelectionDialog } from "./cash-bank-selection-dialog";
 import { CashContextConfirmationDialog } from "./cash-context-confirmation-dialog";
 import { PROMPT_SESSION_STORAGE_KEY } from "@/lib/constants";
 import { getErrorMessage } from "@/lib/utils";
-import { EVENT_QUICK_ACTIONS } from "@/lib/prompt/event-quick-actions";
 
 /** Doc-only mode – prompt optional when documents are uploaded. */
 const UnifiedInputSchema = z.object({
@@ -68,8 +67,6 @@ export function UnifiedInput({ onDraftCreated }: Props) {
   } | null>(null);
   const [clarifyText, setClarifyText] = useState("");
   const [parseError, setParseError] = useState<string | null>(null);
-  /** BRD-style intent hint after choosing a quick event chip */
-  const [intentPreview, setIntentPreview] = useState<string | null>(null);
   const isTransitioningToBankSelection = useRef(false);
 
   const showParseError = (message: string) => {
@@ -521,7 +518,6 @@ export function UnifiedInput({ onDraftCreated }: Props) {
     setPendingDraftData(null);
     setNeedsClarification(null);
     setClarifyText("");
-    setIntentPreview(null);
     setCashContextConfirmation(null);
     setCashBankSelection(null);
     setAccountConfirmation(null);
@@ -974,32 +970,6 @@ export function UnifiedInput({ onDraftCreated }: Props) {
           </div>
         ) : (
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-          <div className="space-y-2">
-            <p className="text-xs font-medium text-muted-foreground">Quick events (BRD)</p>
-            <div className="flex flex-wrap gap-2">
-              {EVENT_QUICK_ACTIONS.map((action) => (
-                <Button
-                  key={action.id}
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  className="h-8 text-xs"
-                  disabled={isProcessing}
-                  onClick={() => {
-                    form.setValue("prompt", action.template, { shouldDirty: true });
-                    setIntentPreview(action.preview);
-                  }}
-                >
-                  {action.label}
-                </Button>
-              ))}
-            </div>
-            {intentPreview ? (
-              <p className="text-xs text-muted-foreground rounded-md border border-dashed border-muted-foreground/25 bg-muted/30 px-3 py-2">
-                Intent preview: {intentPreview}
-              </p>
-            ) : null}
-          </div>
           <Textarea
             rows={8}
             placeholder="Example: Received an invoice from ABC Suppliers for $500 for office supplies on January 15, 2025. Or leave empty and upload documents only."

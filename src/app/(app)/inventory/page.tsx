@@ -11,7 +11,9 @@ import { InventorySummaryCard } from "@/components/inventory/inventory-summary-c
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
-export const revalidate = 60;
+// Inventory must reflect postings immediately (avoid stale ISR/fetch caching).
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 export default async function InventoryPage() {
   const [items, summary, policy] = await Promise.all([

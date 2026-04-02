@@ -20,6 +20,7 @@ export const DraftEntitiesSchema = z.object({
     .object({
       rate: z.number(),
       amount: z.number().nullable(),
+      tax_rate_id: z.string().uuid().optional(),
     })
     .nullable()
     .optional(),

@@ -6,7 +6,7 @@
 "use client";
 
 import { useState } from "react";
-import { UnifiedInput } from "./unified-input";
+import { GuidedEventWorkspace } from "./guided-event-workspace";
 import { InlineDraftReviewPanel } from "./inline-draft-review";
 import type { Attachment } from "@/lib/data/documents";
 import type { UserRole } from "@/lib/auth";
@@ -80,7 +80,7 @@ export function PromptWorkspace() {
   if (draftId && draftData && !isLoadingDraft) {
     return (
       <div className="grid gap-6 lg:grid-cols-2">
-        <UnifiedInput onDraftCreated={handleDraftCreated} />
+        <GuidedEventWorkspace onDraftCreated={handleDraftCreated} />
         <div>
           <InlineDraftReviewPanel
             draftId={draftId}
@@ -101,7 +101,7 @@ export function PromptWorkspace() {
   if (draftId && isLoadingDraft) {
     return (
       <div>
-        <UnifiedInput onDraftCreated={handleDraftCreated} />
+        <GuidedEventWorkspace onDraftCreated={handleDraftCreated} />
         <div className="mt-4 p-4 border rounded-md bg-muted/50">
           <p className="text-sm text-muted-foreground">Loading draft preview...</p>
         </div>
@@ -109,7 +109,6 @@ export function PromptWorkspace() {
     );
   }
 
-  // Default: just show input
-  return <UnifiedInput onDraftCreated={handleDraftCreated} />;
+  return <GuidedEventWorkspace onDraftCreated={handleDraftCreated} />;
 }
 

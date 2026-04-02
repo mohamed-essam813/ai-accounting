@@ -13,6 +13,7 @@ import type { Database } from "@/lib/database.types";
 import type { DraftPayload } from "@/lib/ai/schema";
 import { getTenantBaseCurrency } from "@/lib/utils/currency-conversion";
 import { assertPostingDateAllowed } from "@/lib/accounting/period-lock";
+import { getErrorMessage } from "@/lib/utils";
 import {
   buildDraftPostedTimelineDescription,
   draftIntentToTimelineEventType,
@@ -22,6 +23,7 @@ import {
   materializeInvoiceOrBillFromPostedDraft,
   materializePaymentFromPostedDraft,
 } from "@/lib/posting/materialize-documents";
+import { annotateDraftPostingLines } from "@/lib/posting/journal-line-provenance";
 
 type DraftsInsert = Database["public"]["Tables"]["drafts"]["Insert"];
 type DraftsRow = Database["public"]["Tables"]["drafts"]["Row"];
@@ -31,9 +33,126 @@ type JournalEntriesRow = Database["public"]["Tables"]["journal_entries"]["Row"];
 type JournalLinesInsert = Database["public"]["Tables"]["journal_lines"]["Insert"];
 type AuditLogsInsert = Database["public"]["Tables"]["audit_logs"]["Insert"];
 
+/**
+ * Legacy bug: tax was sometimes saved as only `{ tax_rate_id }`, which fails DraftEntitiesSchema.
+ * Coerce to `{ rate, amount, tax_rate_id? }` for parse.
+ */
+function normalizeDraftDataJsonForParse(data: Record<string, unknown>): Record<string, unknown> {
+  const tax = data.tax;
+  if (tax && typeof tax === "object" && tax !== null) {
+    const t = tax as Record<string, unknown>;
+    if ("tax_rate_id" in t && typeof t.rate !== "number") {
+      return {
+        ...data,
+        tax: {
+          rate: 0,
+          amount: (t.amount as number | null | undefined) ?? null,
+          ...(typeof t.tax_rate_id === "string" ? { tax_rate_id: t.tax_rate_id } : {}),
+        },
+      };
+    }
+  }
+  return data;
+}
+
+/** Inventory-tracked sales and inventory purchases require quantity and unit price on the line. */
+function assertInventoryTrackedLineOrThrow(
+  draftIntent: string,
+  billPurchaseType: string | undefined,
+  itemSnap: { item_type?: string; inventory_tracked?: boolean } | undefined,
+  inventoryLineItems:
+    | Array<{ quantity?: number; unit_price?: number; rate?: number }>
+    | undefined,
+): void {
+  const invoiceProductTracked =
+    draftIntent === "create_invoice" &&
+    itemSnap?.item_type === "product" &&
+    itemSnap?.inventory_tracked === true;
+  const billInventory = draftIntent === "create_bill" && billPurchaseType === "inventory";
+
+  if (!invoiceProductTracked && !billInventory) return;
+
+  const line = inventoryLineItems?.[0];
+  const unitPrice = line?.unit_price ?? line?.rate;
+  if (!line || !line.quantity || line.quantity <= 0 || unitPrice == null || Number(unitPrice) < 0) {
+    throw new Error("Quantity and Unit Price are required for inventory items.");
+  }
+}
+
+const InventoryLineDraftSchema = z.object({
+  item_id: z.string().uuid(),
+  item_name: z.string(),
+  /** product | service — drives posting and analytics */
+  type: z.enum(["product", "service"]).optional(),
+  quantity: z.number(),
+  /** Unit selling price (invoice) or unit purchase price (bill); falls back to `rate` for legacy drafts */
+  unit_price: z.number().optional(),
+  rate: z.number().optional(),
+  discount: z.number(),
+  tax_rate: z.number(),
+  tax_amount: z.number(),
+  total: z.number(),
+  cost_price: z.number().nullable().optional(),
+  revenue_amount: z.number().nullable().optional(),
+  cogs_amount: z.number().nullable().optional(),
+  margin: z.number().nullable().optional(),
+});
+
+const GuidedInvoiceLineSchema = z.object({
+  item_id: z.string().uuid(),
+  type: z.enum(["product", "service"]),
+  quantity: z.number().nullable().optional(),
+  unit_price: z.number().nullable().optional(),
+  total: z.number(),
+  cost_price: z.number().nullable().optional(),
+  cogs: z.number().nullable().optional(),
+  margin: z.number().nullable().optional(),
+  revenue_amount: z.number(),
+});
+
+const ItemSnapshotSchema = z.object({
+  item_type: z.enum(["product", "service"]),
+  inventory_tracked: z.boolean(),
+  name: z.string(),
+});
+
+const TransactionAmountsSchema = z.object({
+  entered_amount: z.number(),
+  tax_rate: z.number(),
+  tax_treatment: z.enum(["exclusive", "inclusive"]),
+  subtotal_amount: z.number(),
+  tax_amount: z.number(),
+  total_amount: z.number(),
+});
+
 const SaveDraftSchema = DraftSchema.extend({
   rawPrompt: z.string().optional(),
   contactId: z.string().uuid().optional().nullable(),
+  /** Persisted as data_json.tax for posting (tax line FK). */
+  taxRateLink: z.object({ tax_rate_id: z.string().uuid() }).optional(),
+  tax_treatment: z.enum(["exclusive", "inclusive"]).optional(),
+  selectedItemId: z.string().uuid().optional().nullable(),
+  itemSnapshot: ItemSnapshotSchema.optional().nullable(),
+  guidedEventRequiresItem: z.boolean().optional(),
+  inventoryLineItems: z.array(InventoryLineDraftSchema).optional(),
+  billPurchaseType: z.enum(["inventory", "expense", "asset"]).optional(),
+  transactionAmounts: TransactionAmountsSchema.optional(),
+  fixedAssetDraft: z
+    .object({
+      name: z.string(),
+      category: z.string(),
+      asset_account_id: z.string().uuid(),
+      useful_life_years: z.number(),
+      depreciation_method: z.enum(["straight_line"]),
+    })
+    .optional(),
+  guidedInvoiceLine: GuidedInvoiceLineSchema.optional(),
+  receiptAllocationsDraft: z
+    .array(z.object({ invoice_id: z.string().uuid(), allocated_amount: z.number().positive() }))
+    .optional(),
+  paymentAllocationsDraft: z
+    .array(z.object({ bill_id: z.string().uuid(), allocated_amount: z.number().positive() }))
+    .optional(),
 });
 
 export async function saveDraftAction(input: z.infer<typeof SaveDraftSchema>) {
@@ -60,11 +179,63 @@ export async function saveDraftAction(input: z.infer<typeof SaveDraftSchema>) {
     entities.invoice_number = await generateInvoiceNumber(user.tenant.id);
   }
 
+  const parsedPayload = payload as z.infer<typeof SaveDraftSchema> & {
+    taxRateLink?: { tax_rate_id: string };
+    tax_treatment?: "exclusive" | "inclusive";
+  };
+
+  /** Merge posting tax_rate_id with entities.tax so Zod always sees rate+amount (never overwrite with tax_id-only). */
+  let mergedTax = entities.tax ?? null;
+  if (parsedPayload.taxRateLink?.tax_rate_id) {
+    const base =
+      mergedTax &&
+      typeof mergedTax === "object" &&
+      mergedTax !== null &&
+      "rate" in mergedTax &&
+      typeof (mergedTax as { rate: unknown }).rate === "number"
+        ? (mergedTax as { rate: number; amount: number | null })
+        : { rate: 0, amount: null as number | null };
+    mergedTax = {
+      ...base,
+      tax_rate_id: parsedPayload.taxRateLink.tax_rate_id,
+    };
+  }
+
+  const ext = parsedPayload as z.infer<typeof SaveDraftSchema> & {
+    selectedItemId?: string | null;
+    itemSnapshot?: z.infer<typeof ItemSnapshotSchema> | null;
+    guidedEventRequiresItem?: boolean;
+    inventoryLineItems?: z.infer<typeof InventoryLineDraftSchema>[];
+    billPurchaseType?: "inventory" | "expense" | "asset";
+    transactionAmounts?: z.infer<typeof TransactionAmountsSchema>;
+    fixedAssetDraft?: z.infer<typeof SaveDraftSchema>["fixedAssetDraft"];
+    guidedInvoiceLine?: z.infer<typeof GuidedInvoiceLineSchema>;
+    receiptAllocationsDraft?: Array<{ invoice_id: string; allocated_amount: number }>;
+    paymentAllocationsDraft?: Array<{ bill_id: string; allocated_amount: number }>;
+  };
+
   // Store original prompt and AI-selected accounts in data_json
   const dataJson = {
     ...entities,
-    original_prompt: (payload as { rawPrompt?: string }).rawPrompt ?? null,
+    tax: mergedTax,
+    original_prompt: parsedPayload.rawPrompt ?? null,
     ai_selected_accounts: payload.accounts ?? null, // Store AI account selections
+    ...(ext.selectedItemId ? { selected_item_id: ext.selectedItemId } : {}),
+    ...(ext.itemSnapshot ? { item_snapshot: ext.itemSnapshot } : {}),
+    ...(ext.guidedEventRequiresItem === true ? { guided_event_requires_item: true } : {}),
+    ...(ext.inventoryLineItems && ext.inventoryLineItems.length > 0
+      ? { inventory_line_items: ext.inventoryLineItems }
+      : {}),
+    ...(ext.billPurchaseType ? { bill_purchase_type: ext.billPurchaseType } : {}),
+    ...(ext.transactionAmounts ? { transaction_amounts: ext.transactionAmounts } : {}),
+    ...(ext.fixedAssetDraft ? { fixed_asset_draft: ext.fixedAssetDraft } : {}),
+    ...(ext.guidedInvoiceLine ? { guided_invoice_line: ext.guidedInvoiceLine } : {}),
+    ...(ext.receiptAllocationsDraft && ext.receiptAllocationsDraft.length > 0
+      ? { receipt_allocations_draft: ext.receiptAllocationsDraft }
+      : {}),
+    ...(ext.paymentAllocationsDraft && ext.paymentAllocationsDraft.length > 0
+      ? { payment_allocations_draft: ext.paymentAllocationsDraft }
+      : {}),
   };
 
   // contact_id will be added by migration, using type assertion for now
@@ -75,7 +246,8 @@ export async function saveDraftAction(input: z.infer<typeof SaveDraftSchema>) {
     status: "draft",
     created_by: user.id,
     confidence: payload.confidence,
-    contact_id: (payload as { contactId?: string | null }).contactId ?? null,
+    contact_id: parsedPayload.contactId ?? null,
+    ...(parsedPayload.tax_treatment ? { tax_treatment: parsedPayload.tax_treatment } : {}),
   } as DraftsInsert & { contact_id?: string | null };
   // Use type assertion for insert to fix type inference
   // Type assertion to fix Supabase type inference - this is type-safe as we're using Database types
@@ -111,6 +283,7 @@ export async function saveDraftAction(input: z.infer<typeof SaveDraftSchema>) {
 
   revalidatePath("/drafts");
   revalidatePath("/dashboard");
+  revalidatePath("/prompt");
   return data;
 }
 
@@ -314,7 +487,8 @@ function generatePostReferenceId(): string {
 
 function throwWithReference(message: string, refId: string, isDev: boolean, cause?: unknown): never {
   const refMsg = `Posting failed. Reference: ${refId}`;
-  const fullMsg = isDev && cause instanceof Error ? `${refMsg}\n${cause.message}` : refMsg;
+  const causeMsg = isDev ? getErrorMessage(cause, "") : "";
+  const fullMsg = isDev && causeMsg ? `${refMsg}\n${causeMsg}` : refMsg;
   const err = new Error(fullMsg) as Error & { referenceId?: string; cause?: unknown };
   err.referenceId = refId;
   err.cause = cause;
@@ -380,8 +554,9 @@ export async function postDraftAction(input: z.infer<typeof PostDraftSchema>) {
   // Get accounts for validation and journal line generation (reuse allAccounts from above)
   
   // Check if draft has edited journal lines
-  const draftData = draft.data_json as Record<string, unknown>;
-  const editedLines = draftData.edited_journal_lines as
+  const draftDataRaw = draft.data_json as Record<string, unknown>;
+  const draftDataForParse = normalizeDraftDataJsonForParse(draftDataRaw);
+  const editedLines = draftDataRaw.edited_journal_lines as
     | Array<{
         account_id: string;
         debit: number;
@@ -390,20 +565,58 @@ export async function postDraftAction(input: z.infer<typeof PostDraftSchema>) {
         tax_rate_id?: string | null;
       }>
     | undefined;
-  const editedDescription = draftData.edited_description as string | undefined;
+  const editedDescription = draftDataRaw.edited_description as string | undefined;
 
   // Parse draft first (needed for date extraction)
   // Extract AI-selected accounts from data_json if available
-  const aiSelectedAccounts = draftData.ai_selected_accounts as any;
-  
+  const aiSelectedAccounts = draftDataRaw.ai_selected_accounts as unknown;
+
   const parsedDraft = DraftSchema.parse({
     intent: draft.intent,
-    entities: draft.data_json,
+    entities: draftDataForParse,
     confidence: draft.confidence ? Number(draft.confidence) : 0,
-    accounts: aiSelectedAccounts,
+    accounts: aiSelectedAccounts ?? undefined,
   });
 
-  const tax = (draftData as { tax?: { tax_rate_id?: string } })?.tax;
+  // Deterministic tax math validation (single source of truth)
+  if (draft.intent === "create_bill") {
+    const tx = draftDataRaw.transaction_amounts as
+      | {
+          entered_amount: number;
+          tax_rate: number;
+          tax_treatment: "exclusive" | "inclusive";
+          subtotal_amount: number;
+          tax_amount: number;
+          total_amount: number;
+        }
+      | undefined;
+    if (!tx) {
+      throw new Error("Tax calculation mismatch. Please review tax treatment.");
+    }
+    const taxRateId = (draftDataRaw as { tax?: { tax_rate_id?: string } })?.tax?.tax_rate_id ?? null;
+    let pct = 0;
+    if (taxRateId) {
+      const rates = await listTaxRates();
+      const tr = rates.find((r) => r.id === taxRateId);
+      if (!tr) throw new Error("Select a valid tax rate before posting.");
+      pct = tr.percentage;
+    }
+    const { buildTransactionAmounts, validateTransactionAmountsMatch } = await import(
+      "@/lib/posting/transaction-amounts"
+    );
+    const expected = buildTransactionAmounts({
+      entered_amount: Number(parsedDraft.entities.amount),
+      tax_rate: pct,
+      tax_treatment: ((draft as DraftsRow & { tax_treatment?: "exclusive" | "inclusive" | null }).tax_treatment ??
+        "exclusive") as "exclusive" | "inclusive",
+    });
+    const match = validateTransactionAmountsMatch(expected, tx);
+    if (!match.ok) {
+      throw new Error(match.error);
+    }
+  }
+
+  const tax = (draftDataRaw as { tax?: { tax_rate_id?: string } })?.tax;
   const taxRateIdForLines = tax?.tax_rate_id ?? null;
   if (tax?.tax_rate_id) {
     const rates = await listTaxRates();
@@ -420,7 +633,7 @@ export async function postDraftAction(input: z.infer<typeof PostDraftSchema>) {
 
   if (editedLines && editedLines.length > 0) {
     // Use edited journal lines
-    description = editedDescription ?? draftData.description as string ?? "";
+    description = editedDescription ?? (draftDataRaw.description as string) ?? "";
     lines = editedLines.map((line) => ({
       account_id: line.account_id,
       debit: Number(line.debit),
@@ -462,7 +675,7 @@ export async function postDraftAction(input: z.infer<typeof PostDraftSchema>) {
         throw new Error(`Account ${acc.code} (${acc.name}) is inactive.`);
       }
     }
-    const entryDate = (draftData as { date?: string }).date;
+    const entryDate = (draftDataRaw as { date?: string }).date;
     if (entryDate) {
       const d = new Date(entryDate);
       const today = new Date();
@@ -474,7 +687,7 @@ export async function postDraftAction(input: z.infer<typeof PostDraftSchema>) {
   } catch (validationErr) {
     console.error("[postDraft] validation", { refId, tenant_id: user.tenant.id, draft_id: draft.id, error: validationErr });
     throwWithReference(
-      validationErr instanceof Error ? validationErr.message : "Validation failed.",
+      getErrorMessage(validationErr, "Validation failed."),
       refId,
       isDev,
       validationErr
@@ -483,18 +696,31 @@ export async function postDraftAction(input: z.infer<typeof PostDraftSchema>) {
 
   try {
   // Extract inventory line items from draft if present
-  const inventoryLineItems = draftData.inventory_line_items as
+  const inventoryLineItems = draftDataRaw.inventory_line_items as
     | Array<{
         item_id: string;
         item_name: string;
         quantity: number;
-        rate: number;
+        unit_price?: number;
+        rate?: number;
         discount: number;
         tax_rate: number;
         tax_amount: number;
         total: number;
       }>
     | undefined;
+
+  const itemSnap = draftDataRaw.item_snapshot as
+    | { item_type?: string; inventory_tracked?: boolean }
+    | undefined;
+  const billPurchaseType = draftDataRaw.bill_purchase_type as string | undefined;
+  const guidedRequiresItem = draftDataRaw.guided_event_requires_item === true;
+  if (guidedRequiresItem && !draftDataRaw.selected_item_id) {
+    throw new Error(
+      "Please select or create an item so inventory/accounting can be handled correctly.",
+    );
+  }
+  assertInventoryTrackedLineOrThrow(draft.intent, billPurchaseType, itemSnap, inventoryLineItems);
 
   // Process inventory items for invoices (sales) and bills (purchases)
   const inventoryTransactionIds: string[] = [];
@@ -645,8 +871,11 @@ export async function postDraftAction(input: z.infer<typeof PostDraftSchema>) {
           throw new Error(`Inventory item ${inventoryItem.name} is missing inventory_account_id. Please update the item or run the migration.`);
         }
 
-        // For purchases, unit_cost is the rate (purchase price per unit)
-        const unitCost = lineItem.rate;
+        // For purchases, unit_cost is unit price per unit (legacy field: rate)
+        const unitCost = Number(lineItem.unit_price ?? lineItem.rate);
+        if (!Number.isFinite(unitCost)) {
+          throw new Error("Quantity and Unit Price are required for inventory items.");
+        }
         const totalCost = lineItem.quantity * unitCost;
 
         // Update inventory balance (increases quantity and value)
@@ -700,8 +929,13 @@ export async function postDraftAction(input: z.infer<typeof PostDraftSchema>) {
           const expenseLineIndex = lines.findIndex(
             (line) => line.debit > 0 && line.credit === 0 && line.account_id !== inventoryAccountId
           );
+          const inventoryDebitIndex = lines.findIndex(
+            (line) => line.debit > 0 && line.credit === 0 && line.account_id === inventoryAccountId
+          );
           
-          if (expenseLineIndex >= 0) {
+          if (inventoryDebitIndex >= 0) {
+            // Mapping already debits inventory (preview + posting align). No journal mutation needed here.
+          } else if (expenseLineIndex >= 0) {
             // Replace expense line with inventory line for this item
             lines[expenseLineIndex] = {
               account_id: inventoryAccountId, // Use item-level inventory account
@@ -725,6 +959,8 @@ export async function postDraftAction(input: z.infer<typeof PostDraftSchema>) {
       // This handles cases where inventory purchase total differs from bill amount
     }
   }
+
+  // Asset record is created after journal entry exists (below).
 
   // Validation: Check if any journal line uses an inventory account without inventory_item_id
   // Get all inventory items to check which accounts are inventory accounts
@@ -798,6 +1034,9 @@ export async function postDraftAction(input: z.infer<typeof PostDraftSchema>) {
   }
 
   ensureBalanced(lines);
+
+  const usedEditedLinesForProvenance = Boolean(editedLines && editedLines.length > 0);
+  lines = annotateDraftPostingLines(lines, draft.id, usedEditedLinesForProvenance);
 
   // Get contact_id from draft if available (will be available after migration)
   const draftContactId = (draft as { contact_id?: string | null }).contact_id;
@@ -886,6 +1125,34 @@ export async function postDraftAction(input: z.infer<typeof PostDraftSchema>) {
     throw new Error("Failed to create journal entry.");
   }
 
+  // Asset purchase: create asset record + depreciation schedule (requires posted journal entry id).
+  if (draft.intent === "create_bill" && draftDataRaw.bill_purchase_type === "asset") {
+    const assetDraft = draftDataRaw.fixed_asset_draft as
+      | {
+          name: string;
+          category: string;
+          asset_account_id: string;
+          useful_life_years: number;
+          depreciation_method: "straight_line";
+        }
+      | undefined;
+    const tx = draftDataRaw.transaction_amounts as
+      | { subtotal_amount?: number }
+      | undefined;
+    if (!assetDraft) {
+      throw new Error("Asset details are missing. Please review and try again.");
+    }
+    const { createFixedAssetFromPostedBill } = await import("@/lib/posting/fixed-assets");
+    await createFixedAssetFromPostedBill(supabase, {
+      tenantId: user.tenant.id,
+      draftId: draft.id,
+      journalEntryId: entry.id,
+      purchaseDate: (parsedDraft.entities.date as string) ?? new Date().toISOString().slice(0, 10),
+      subtotalAmount: Number(tx?.subtotal_amount ?? parsedDraft.entities.amount),
+      asset: assetDraft,
+    });
+  }
+
   try {
     const lineCurrency =
       transactionCurrency || baseCurrency || null;
@@ -899,6 +1166,9 @@ export async function postDraftAction(input: z.infer<typeof PostDraftSchema>) {
       contact_id: lineContactId,
       currency_code: lineCurrency,
       tax_rate_id: line.tax_rate_id ?? null,
+      account_source: line.account_source ?? null,
+      reference_type: line.reference_type ?? null,
+      reference_id: line.reference_id ?? null,
     }));
     // Use type assertion for insert to fix type inference
     // Type assertion to fix Supabase type inference - this is type-safe as we're using Database types
@@ -1035,7 +1305,7 @@ export async function postDraftAction(input: z.infer<typeof PostDraftSchema>) {
       postingDate,
       description,
       entities: parsedDraft.entities as Record<string, unknown>,
-      draftData: draftData as Record<string, unknown>,
+      draftData: draftDataRaw as Record<string, unknown>,
     });
     await materializePaymentFromPostedDraft(supabase, {
       tenantId: user.tenant.id,
@@ -1043,7 +1313,7 @@ export async function postDraftAction(input: z.infer<typeof PostDraftSchema>) {
       journalEntryId: entry.id,
       postingDate,
       entities: parsedDraft.entities as Record<string, unknown>,
-      draftData: draftData as Record<string, unknown>,
+      draftData: draftDataRaw as Record<string, unknown>,
     });
   } catch (matErr) {
     console.error("[postDraft] materialize invoice/bill", matErr);
@@ -1056,6 +1326,8 @@ export async function postDraftAction(input: z.infer<typeof PostDraftSchema>) {
   revalidatePath("/invoices");
   revalidatePath("/bills");
   revalidatePath("/payments");
+  revalidatePath("/inventory");
+  revalidatePath("/insights/inventory");
   // Return updated draft for real-time UI updates
   return {
     id: updatedDraft.id,
@@ -1073,7 +1345,7 @@ export async function postDraftAction(input: z.infer<typeof PostDraftSchema>) {
       stack: err instanceof Error ? err.stack : undefined,
     });
     throwWithReference(
-      err instanceof Error ? err.message : "Post failed.",
+      getErrorMessage(err, "Post failed."),
       refId,
       isDev,
       err
@@ -1109,18 +1381,33 @@ export async function getDraftJournalPreview(draftId: string) {
   const accounts = await listAccounts();
 
   // Extract AI-selected accounts from data_json if available
-  const draftData = draft.data_json as Record<string, unknown>;
-  const aiSelectedAccounts = draftData.ai_selected_accounts as any;
+  const draftDataRaw = draft.data_json as Record<string, unknown>;
+  const draftDataForParse = normalizeDraftDataJsonForParse(draftDataRaw);
+  const aiSelectedAccounts = draftDataRaw.ai_selected_accounts as unknown;
 
   const parsedDraft = DraftSchema.parse({
     intent: draft.intent,
-    entities: draft.data_json,
+    entities: draftDataForParse,
     confidence: draft.confidence ? Number(draft.confidence) : 0,
-    accounts: aiSelectedAccounts, // Include AI-selected accounts if available
+    accounts: aiSelectedAccounts ?? undefined,
   });
 
+  const previewLineItems = draftDataRaw.inventory_line_items as
+    | Array<{ item_id: string; quantity?: number; unit_price?: number; rate?: number }>
+    | undefined;
+  const previewSnap = draftDataRaw.item_snapshot as
+    | { item_type?: string; inventory_tracked?: boolean }
+    | undefined;
+  const previewBillPurchase = draftDataRaw.bill_purchase_type as string | undefined;
+  if (draftDataRaw.guided_event_requires_item === true && !draftDataRaw.selected_item_id) {
+    throw new Error(
+      "Please select or create an item so inventory/accounting can be handled correctly.",
+    );
+  }
+  assertInventoryTrackedLineOrThrow(draft.intent, previewBillPurchase, previewSnap, previewLineItems);
+
   // Check if draft has edited journal lines
-  const editedLines = draftData.edited_journal_lines as
+  const editedLines = draftDataRaw.edited_journal_lines as
     | Array<{
         account_id: string;
         debit: number;
@@ -1129,9 +1416,9 @@ export async function getDraftJournalPreview(draftId: string) {
         tax_rate_id?: string | null;
       }>
     | undefined;
-  const editedDescription = draftData.edited_description as string | undefined;
+  const editedDescription = draftDataRaw.edited_description as string | undefined;
 
-  const taxRateIdPreview = (draftData as { tax?: { tax_rate_id?: string } })?.tax?.tax_rate_id ?? null;
+  const taxRateIdPreview = (draftDataRaw as { tax?: { tax_rate_id?: string } })?.tax?.tax_rate_id ?? null;
   const draftWithTaxTreatment = draft as DraftsRow & { tax_treatment?: "exclusive" | "inclusive" | null };
   const taxTreatmentPreview = draftWithTaxTreatment.tax_treatment ?? "exclusive";
 

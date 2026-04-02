@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { listPostedPayments } from "@/lib/data/payments-list";
+import { listPostedReceipts } from "@/lib/data/receipts-list";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Table,
@@ -13,27 +13,27 @@ import { Badge } from "@/components/ui/badge";
 
 export const revalidate = 60;
 
-export default async function PaymentsPage() {
-  const payments = await listPostedPayments(300);
+export default async function ReceiptsPage() {
+  const receipts = await listPostedReceipts(300);
 
   return (
     <div className="space-y-8">
       <div>
-        <h2 className="text-2xl font-semibold">Payments</h2>
+        <h2 className="text-2xl font-semibold">Receipts</h2>
         <p className="text-sm text-muted-foreground">
-          Money paid to suppliers. Posted from payment drafts (Pay supplier).
+          Money received from customers. Posted from payment drafts (Receive money).
         </p>
       </div>
 
       <Card>
         <CardHeader>
-          <CardTitle>Posted payments</CardTitle>
-          <CardDescription>Linked to journal entries.</CardDescription>
+          <CardTitle>Posted receipts</CardTitle>
+          <CardDescription>Linked to journal entries and (soon) invoice settlement.</CardDescription>
         </CardHeader>
         <CardContent>
-          {payments.length === 0 ? (
+          {receipts.length === 0 ? (
             <p className="text-sm text-muted-foreground">
-              No payment rows yet. Post a “Payment sent” draft to create entries.
+              No receipt rows yet. Post a “Payment received” draft to create entries.
             </p>
           ) : (
             <div className="overflow-x-auto rounded-lg border">
@@ -42,19 +42,19 @@ export default async function PaymentsPage() {
                   <TableRow>
                     <TableHead>Date</TableHead>
                     <TableHead>No.</TableHead>
-                    <TableHead>Supplier</TableHead>
+                    <TableHead>Customer</TableHead>
                     <TableHead className="text-right">Amount</TableHead>
                     <TableHead>Reference</TableHead>
                     <TableHead>PDF</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {payments
-                    .filter((p) => p.payment_type === "payment")
-                    .map((p) => (
+                  {receipts.map((p) => (
                     <TableRow key={p.id}>
                       <TableCell className="text-sm">{p.payment_date}</TableCell>
-                      <TableCell className="font-mono text-sm">{(p as { voucher_number?: string | null }).voucher_number ?? "—"}</TableCell>
+                      <TableCell className="font-mono text-sm">
+                        {(p as { voucher_number?: string | null }).voucher_number ?? "—"}
+                      </TableCell>
                       <TableCell className="text-sm">{p.contact_name ?? "—"}</TableCell>
                       <TableCell className="text-right font-mono text-sm">
                         {p.currency_code ?? ""} {Number(p.amount).toFixed(2)}
@@ -62,9 +62,12 @@ export default async function PaymentsPage() {
                       <TableCell className="text-sm text-muted-foreground max-w-[200px] truncate">
                         {p.reference ?? "—"}
                       </TableCell>
+                      <TableCell>
+                        <Badge variant="outline">Receipt</Badge>
+                      </TableCell>
                       <TableCell className="text-sm">
                         <a
-                          href={`/api/payments/${p.id}/pdf`}
+                          href={`/api/receipts/${p.id}/pdf`}
                           target="_blank"
                           rel="noreferrer"
                           className="text-primary underline"
@@ -92,3 +95,4 @@ export default async function PaymentsPage() {
     </div>
   );
 }
+

@@ -4,6 +4,12 @@ import { format } from "date-fns";
 
 export type Account = Database["public"]["Tables"]["chart_of_accounts"]["Row"];
 
+export type JournalAccountSource =
+  | "item"
+  | "tax"
+  | "system_default"
+  | "user_override";
+
 export type JournalLine = {
   account_id: string;
   debit: number;
@@ -11,6 +17,12 @@ export type JournalLine = {
   memo?: string | null;
   /** Set on tax/VAT lines when a tenant tax rate was applied at posting. */
   tax_rate_id?: string | null;
+  /** How this line account was chosen (persisted on journal_lines.account_source). */
+  account_source?: JournalAccountSource | null;
+  /** Business document type for traceability (e.g. draft). */
+  reference_type?: string | null;
+  /** Id for reference_type (e.g. draft id). */
+  reference_id?: string | null;
 };
 
 export type IntentAccountMapping = {
@@ -234,21 +246,22 @@ export async function buildDefaultJournalLines(
 
   if (isCreditNote) {
     // Credit Note (Customer): DR Revenue, DR VAT Output, CR AR
-    debitBaseAmount = subtotal + (hasTax && taxDebitAccount ? taxAmount : 0);
+    // Base lines exclude VAT; VAT is posted on dedicated tax line(s) below.
+    debitBaseAmount = subtotal;
     creditBaseAmount = total;
   } else if (isDebitNote) {
     // Debit Note (Vendor): DR AP, CR Expense, CR VAT Input
     debitBaseAmount = total;
-    creditBaseAmount = subtotal + (hasTax && taxCreditAccount ? taxAmount : 0);
+    creditBaseAmount = subtotal;
   } else if (isInvoice) {
     // Sales Invoice - split tax correctly
     // DR AR = Total, CR Revenue = Subtotal, CR VAT Output = Tax
     debitBaseAmount = total;
-    creditBaseAmount = subtotal + (hasTax && taxCreditAccount ? taxAmount : 0);
+    creditBaseAmount = subtotal;
   } else if (isBill) {
     // Vendor Bill - split tax correctly
     // DR Expense = Subtotal, DR VAT Input = Tax, CR AP = Total
-    debitBaseAmount = subtotal + (hasTax && taxDebitAccount ? taxAmount : 0);
+    debitBaseAmount = subtotal;
     creditBaseAmount = total;
   } else {
     // Other intents - use total for both sides

@@ -110,6 +110,9 @@ export async function createJournalEntryAction(
     debit: line.debit,
     credit: line.credit,
     tax_rate_id: line.tax_rate_id ?? null,
+    account_source: line.tax_rate_id ? "tax" : "user_override",
+    reference_type: "manual_journal",
+    reference_id: entry.id,
   }));
 
   const linesTable = supabase.from("journal_lines") as unknown as {

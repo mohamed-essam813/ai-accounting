@@ -37,10 +37,10 @@ export const mainNavigation: NavItem[] = [
     description: "Chronological business activity linked to the ledger.",
   },
   {
-    title: "Prompt Workspace",
+    title: "Record activity",
     href: "/prompt",
     icon: Bot,
-    description: "Capture natural language prompts and generate drafts.",
+    description: "Log sales, bills, and payments with simple forms.",
   },
   {
     title: "Drafts & Approvals",
@@ -76,7 +76,13 @@ export const mainNavigation: NavItem[] = [
     title: "Payments",
     href: "/payments",
     icon: Wallet,
-    description: "Posted receipts and payments.",
+    description: "Posted supplier payments (bank/cash).",
+  },
+  {
+    title: "Receipts",
+    href: "/receipts",
+    icon: Wallet,
+    description: "Posted customer receipts (bank/cash).",
   },
   {
     title: "Inventory",

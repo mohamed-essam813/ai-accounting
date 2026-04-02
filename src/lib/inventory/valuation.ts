@@ -109,15 +109,18 @@ export async function updateInventoryBalanceAfterPurchase(
       const newQuantity = Number(currentBalance.quantity) + quantity;
       const newValue = Number(currentBalance.total_value) + totalCost;
 
-      await supabase
+      const { error: updErr } = await supabase
         .from("inventory_balances")
         .update({
           quantity: newQuantity,
           total_value: newValue,
+          // Keep an average_cost for UI display even under FIFO (batches still drive COGS).
+          average_cost: newQuantity > 0 ? newValue / newQuantity : null,
           last_transaction_date: date,
           updated_at: new Date().toISOString(),
         })
         .eq("id", currentBalance.id);
+      if (updErr) throw updErr;
     }
   } else {
     // Create new balance
@@ -129,11 +132,11 @@ export async function updateInventoryBalanceAfterPurchase(
       last_transaction_date: date,
     };
 
-    if (valuationMethod === "weighted_average") {
-      balanceData.average_cost = unitCost;
-    }
+    // Keep an average_cost for UI display in both methods.
+    balanceData.average_cost = unitCost;
 
-    await supabase.from("inventory_balances").insert(balanceData);
+    const { error: insErr } = await supabase.from("inventory_balances").insert(balanceData);
+    if (insErr) throw insErr;
   }
 
   // Update inventory ageing for FIFO
@@ -152,7 +155,7 @@ export async function updateInventoryBalanceAfterPurchase(
     const daysInStock = 0; // New purchase
     const ageingBucket = "0-30";
 
-    await supabase.from("inventory_ageing").insert({
+    const { error: ageErr } = await supabase.from("inventory_ageing").insert({
       tenant_id: tenantId,
       item_id: itemId,
       batch_number: nextBatchNumber,
@@ -163,6 +166,7 @@ export async function updateInventoryBalanceAfterPurchase(
       days_in_stock: daysInStock,
       ageing_bucket: ageingBucket,
     });
+    if (ageErr) throw ageErr;
   }
 }
 
