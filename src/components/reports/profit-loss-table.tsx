@@ -59,6 +59,15 @@ export function ProfitLossTable({ data, startDate, endDate, displayCurrency = "A
             </TableRow>
             {items.map((item) => (
               <TableRow key={item.account_code} className="hover:bg-muted/30">
+                <TableCell className="font-mono text-xs text-muted-foreground">
+                  <Link
+                    href={`/ledger?accountCode=${item.account_code}`}
+                    className="hover:text-primary hover:underline decoration-dotted"
+                    title="Click to view ledger transactions"
+                  >
+                    {item.account_code}
+                  </Link>
+                </TableCell>
                 <TableCell className="text-muted-foreground">
                   <Link
                     href={`/ledger?accountCode=${item.account_code}`}

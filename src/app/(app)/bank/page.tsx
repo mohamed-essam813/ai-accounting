@@ -1,4 +1,4 @@
-import { listBankTransactions } from "@/lib/data/bank";
+import { listBankTransactionsWithExistingMatches } from "@/lib/data/bank";
 import { listAccounts } from "@/lib/data/accounts";
 import { BankUploader } from "@/components/bank/bank-uploader";
 import { BankTransactionsTable } from "@/components/bank/bank-transactions-table";
@@ -15,7 +15,7 @@ export default async function BankPage({
 }) {
   const params = await searchParams;
   const [transactions, accounts] = await Promise.all([
-    listBankTransactions(50, params.bankAccountId),
+    listBankTransactionsWithExistingMatches(50, params.bankAccountId),
     listAccounts(),
   ]);
 
@@ -28,8 +28,8 @@ export default async function BankPage({
       <div>
         <h2 className="text-2xl font-semibold">Bank Reconciliation</h2>
         <p className="text-sm text-muted-foreground">
-          Upload a PDF (server-side parse) or a CSV export to import transactions, then match them to posted journal entries.
-          Reconciliation uses your linked bank GL accounts.
+          Import from PDF or CSV. If you already recorded a payment or receipt in Record Activity, we suggest matching
+          the bank line to that entry first so nothing is posted twice. Otherwise, use Resolve to categorize the line.
         </p>
       </div>
       {bankAccounts.length === 0 ? (
@@ -45,7 +45,15 @@ export default async function BankPage({
         <>
           <BankAccountSelector accounts={bankAccounts} selectedAccountId={params.bankAccountId} />
           <BankUploader bankAccountId={params.bankAccountId} accounts={bankAccounts} />
-          <BankTransactionsTable transactions={transactions} />
+          <BankTransactionsTable
+            transactions={transactions}
+            accounts={accounts.map((a) => ({
+              id: a.id,
+              name: a.name,
+              code: a.code,
+              type: a.type,
+            }))}
+          />
         </>
       )}
     </div>

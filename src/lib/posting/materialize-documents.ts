@@ -5,6 +5,7 @@ import {
   lineNetAmountFromInventoryLine,
   type DraftInventoryLine,
 } from "@/lib/posting/materialize-amounts";
+import { parseBillDocumentLines, parseInvoiceDocumentLines } from "@/lib/posting/multi-line-documents";
 import { nextDocumentNumber } from "@/lib/utils/document-numbers";
 
 type DraftsRow = Database["public"]["Tables"]["drafts"]["Row"];
@@ -111,7 +112,25 @@ export async function materializeInvoiceOrBillFromPostedDraft(
     }
     if (!inv?.id) return;
 
-    if (inventoryLineItems && inventoryLineItems.length > 0) {
+    const docInvLines = draftData.document_line_items;
+    if (Array.isArray(docInvLines) && docInvLines.length > 0) {
+      try {
+        const parsed = parseInvoiceDocumentLines(docInvLines);
+        const rows = parsed.map((l) => ({
+          invoice_id: inv.id,
+          product_id: l.item_id,
+          description: l.description,
+          quantity: l.quantity ?? 1,
+          unit_price: Number(l.unit_price ?? l.line_net / Math.max(l.quantity ?? 1, 1)),
+          tax_rate_id: l.tax_rate_id ?? taxRateId,
+          line_total: l.line_net,
+        }));
+        const { error: liErr } = await supabase.from("invoice_items").insert(rows);
+        if (liErr) console.error("[materialize] invoice_items multi", liErr);
+      } catch (e) {
+        console.error("[materialize] invoice multi-line parse", e);
+      }
+    } else if (inventoryLineItems && inventoryLineItems.length > 0) {
       const rows = inventoryLineItems.map((line) => ({
         invoice_id: inv.id,
         product_id: line.item_id,
@@ -181,7 +200,28 @@ export async function materializeInvoiceOrBillFromPostedDraft(
   }
   if (!bill?.id) return;
 
-  if (inventoryLineItems && inventoryLineItems.length > 0) {
+  const docBillLines = draftData.document_line_items;
+  if (Array.isArray(docBillLines) && docBillLines.length > 0) {
+    try {
+      const parsed = parseBillDocumentLines(docBillLines);
+      const rows = parsed.map((l) => ({
+        bill_id: bill.id,
+        product_id: l.classification === "inventory" ? l.item_id ?? null : null,
+        description: `[${l.classification}] ${l.description}`,
+        quantity: l.classification === "inventory" ? l.quantity ?? 1 : 1,
+        unit_cost:
+          l.classification === "inventory"
+            ? Number(l.unit_price ?? 0)
+            : l.line_net,
+        tax_rate_id: l.tax_rate_id ?? taxRateId,
+        line_total: l.line_net,
+      }));
+      const { error: biErr } = await supabase.from("bill_items").insert(rows);
+      if (biErr) console.error("[materialize] bill_items multi", biErr);
+    } catch (e) {
+      console.error("[materialize] bill multi-line parse", e);
+    }
+  } else if (inventoryLineItems && inventoryLineItems.length > 0) {
     const rows = inventoryLineItems.map((line) => ({
       bill_id: bill.id,
       product_id: line.item_id,

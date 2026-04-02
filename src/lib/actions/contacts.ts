@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { getCurrentUser } from "@/lib/data/users";
+import { findContactByNormalizedName } from "@/lib/data/contacts";
 import type { Database } from "@/lib/database.types";
 
 type ContactsInsert = Database["public"]["Tables"]["contacts"]["Insert"];
@@ -30,6 +31,13 @@ export async function createContactAction(input: z.infer<typeof ContactSchema>) 
   const user = await getCurrentUser();
   if (!user?.tenant) {
     throw new Error("User tenant not resolved.");
+  }
+
+  const duplicate = await findContactByNormalizedName(payload.type, payload.name);
+  if (duplicate) {
+    throw new Error(
+      `A ${payload.type} named "${duplicate.name}" already exists. Use the existing record or choose a different name.`,
+    );
   }
 
   const supabase = await createServerSupabaseClient();
@@ -96,21 +104,12 @@ export async function findOrCreateContactAction(
     throw new Error("User tenant not resolved.");
   }
 
-  const supabase = await createServerSupabaseClient();
-
-  // First, try to find existing contact by name (case-insensitive)
-  const { data: existing } = await supabase
-    .from("contacts")
-    .select("*")
-    .eq("tenant_id", user.tenant.id)
-    .eq("type", type)
-    .ilike("name", name)
-    .eq("is_active", true)
-    .maybeSingle();
-
+  const existing = await findContactByNormalizedName(type, name);
   if (existing) {
     return existing;
   }
+
+  const supabase = await createServerSupabaseClient();
 
   // Create new contact if not found
   const insertData: ContactsInsert = {
@@ -166,6 +165,13 @@ export async function updateContactAction(input: z.infer<typeof UpdateContactSch
   const user = await getCurrentUser();
   if (!user?.tenant) {
     throw new Error("User tenant not resolved.");
+  }
+
+  const nameCollision = await findContactByNormalizedName(payload.type, payload.name);
+  if (nameCollision && nameCollision.id !== payload.contactId) {
+    throw new Error(
+      `A ${payload.type} named "${nameCollision.name}" already exists. Choose a different name.`,
+    );
   }
 
   const supabase = await createServerSupabaseClient();

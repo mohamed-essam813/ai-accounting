@@ -7,6 +7,12 @@ import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { getCurrentUser } from "./users";
 import { convertCurrency, getTenantBaseCurrency } from "@/lib/utils/currency-conversion";
 import type { Database } from "../database.types";
+import {
+  classificationToPlSection,
+  isAccountClassification,
+  legacyInferPlSection,
+  type PlLineSection,
+} from "@/lib/accounting/account-classification";
 
 type TrialBalance = Database["public"]["Views"]["v_trial_balance"]["Row"];
 
@@ -25,7 +31,7 @@ export interface PLLineItem {
   account_code: string;
   account_name: string;
   amount: number;
-  section: "revenue" | "cost_of_sales" | "operating_expenses" | "other_income" | "gain_loss";
+  section: PlLineSection;
 }
 
 export interface BalanceSheetLineItem {
@@ -104,66 +110,55 @@ export async function getDetailedProfitAndLoss(
   const otherIncome: PLLineItem[] = [];
   const gainLoss: PLLineItem[] = [];
 
-  // Categorize accounts based on code ranges and types
-  // Revenue: 4000-4999
-  // Cost of Sales: 5000-5099 (typically)
-  // Operating Expenses: 5100-5999
-  // Other Income: 4200
-  // Gain/Loss: 4200 (gain) or 5700/5900 (loss)
-
-  (trialBalance || []).forEach((account) => {
-    const code = parseInt(account.code || "0", 10);
+  (trialBalance || []).forEach((row) => {
+    const account = row as TrialBalance & { account_classification?: string | null };
     const type = account.type;
-    const balance = type === "revenue" 
-      ? (Number(account.total_credit ?? 0) - Number(account.total_debit ?? 0))
-      : (Number(account.total_debit ?? 0) - Number(account.total_credit ?? 0));
+    const balance =
+      type === "revenue"
+        ? Number(account.total_credit ?? 0) - Number(account.total_debit ?? 0)
+        : type === "expense"
+          ? Number(account.total_debit ?? 0) - Number(account.total_credit ?? 0)
+          : 0;
 
-    if (balance === 0) return; // Skip zero balances
+    if (balance === 0) return;
 
-    if (type === "revenue") {
-      if (code === 4200) {
-        // Other Income
-        otherIncome.push({
-          account_code: account.code || "",
-          account_name: account.name || "",
-          amount: balance,
-          section: "other_income",
-        });
-      } else if (code >= 4000 && code < 5000) {
-        // Revenue accounts
-        revenue.push({
-          account_code: account.code || "",
-          account_name: account.name || "",
-          amount: balance,
-          section: "revenue",
-        });
-      }
-    } else if (type === "expense") {
-      if (code >= 5000 && code < 5100) {
-        // Cost of Sales
-        costOfSales.push({
-          account_code: account.code || "",
-          account_name: account.name || "",
-          amount: balance,
-          section: "cost_of_sales",
-        });
-      } else if (code === 5700 || code === 5900) {
-        // Loss on disposal
-        gainLoss.push({
-          account_code: account.code || "",
-          account_name: account.name || "",
-          amount: -balance, // Loss is negative
-          section: "gain_loss",
-        });
-      } else if (code >= 5100 && code < 6000) {
-        // Operating Expenses
-        operatingExpenses.push({
-          account_code: account.code || "",
-          account_name: account.name || "",
-          amount: balance,
-          section: "operating_expenses",
-        });
-      }
+    let section: PlLineSection | null = null;
+    if (account.account_classification && isAccountClassification(account.account_classification)) {
+      section = classificationToPlSection(account.account_classification);
+    } else {
+      section = legacyInferPlSection({
+        code: account.code || "",
+        type: account.type ?? null,
+        name: account.name ?? null,
+      });
+    }
+    if (!section) return;
+
+    const item: PLLineItem = {
+      account_code: account.code || "",
+      account_name: account.name || "",
+      amount: balance,
+      section,
+    };
+
+    switch (section) {
+      case "revenue":
+        revenue.push(item);
+        break;
+      case "cost_of_sales":
+        costOfSales.push(item);
+        break;
+      case "operating_expenses":
+        operatingExpenses.push(item);
+        break;
+      case "other_income":
+        otherIncome.push(item);
+        break;
+      case "gain_loss":
+        gainLoss.push(item);
+        break;
+      default:
+        break;
     }
   });
 
@@ -174,7 +169,7 @@ export async function getDetailedProfitAndLoss(
   const totalOperatingExpenses = operatingExpenses.reduce((sum, item) => sum + item.amount, 0);
   const operatingProfit = grossProfit - totalOperatingExpenses;
   const totalOtherIncome = otherIncome.reduce((sum, item) => sum + item.amount, 0);
-  const gainLossOnDisposal = gainLoss.reduce((sum, item) => sum + item.amount, 0) + totalOtherIncome;
+  const gainLossOnDisposal = gainLoss.reduce((sum, item) => sum + item.amount, 0);
   const netProfit = operatingProfit + totalOtherIncome + gainLossOnDisposal;
 
   if (targetCurrency && asOfDate && user.tenant) {

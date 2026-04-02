@@ -19,7 +19,23 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { toggleAccountStatusAction, deleteAccountAction } from "@/lib/actions/accounts";
+import {
+  toggleAccountStatusAction,
+  deleteAccountAction,
+  updateAccountPnlClassificationAction,
+} from "@/lib/actions/accounts";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  PNL_CLASSIFICATION_LABEL,
+  pnlClassificationOptionsForType,
+  type AccountClassification,
+} from "@/lib/accounting/account-classification";
 import { toast } from "sonner";
 import { Trash2 } from "lucide-react";
 
@@ -30,6 +46,7 @@ type Account = {
   type: string;
   category: "current" | "non_current" | null;
   is_active: boolean;
+  account_classification?: string | null;
 };
 
 type Props = {
@@ -110,6 +127,7 @@ export function AccountsTable({ accounts, canManage, showCategory = false }: Pro
             <TableHead>Name</TableHead>
             <TableHead>Type</TableHead>
             {showCategory ? <TableHead>Category</TableHead> : null}
+            <TableHead className="min-w-[200px]">P&amp;L placement</TableHead>
             <TableHead>Status</TableHead>
             {canManage ? <TableHead className="text-right">Actions</TableHead> : null}
           </TableRow>
@@ -117,7 +135,7 @@ export function AccountsTable({ accounts, canManage, showCategory = false }: Pro
         <TableBody>
           {accounts.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={canManage ? (showCategory ? 6 : 5) : (showCategory ? 5 : 4)} className="py-6 text-center text-sm">
+              <TableCell colSpan={canManage ? (showCategory ? 7 : 6) : (showCategory ? 6 : 5)} className="py-6 text-center text-sm">
                 No accounts found for the selected filter.
               </TableCell>
             </TableRow>
@@ -138,6 +156,47 @@ export function AccountsTable({ accounts, canManage, showCategory = false }: Pro
                     )}
                   </TableCell>
                 ) : null}
+                <TableCell>
+                  {account.type === "revenue" || account.type === "expense" ? (
+                    <Select
+                      disabled={!canManage || isPending}
+                      value={account.account_classification ?? "__auto__"}
+                      onValueChange={(v) => {
+                        startTransition(async () => {
+                          try {
+                            await updateAccountPnlClassificationAction({
+                              accountId: account.id,
+                              account_classification:
+                                v === "__auto__"
+                                  ? null
+                                  : (v as AccountClassification),
+                            });
+                            toast.success("P&L placement updated");
+                          } catch (error) {
+                            console.error(error);
+                            toast.error("Failed to update", {
+                              description: error instanceof Error ? error.message : undefined,
+                            });
+                          }
+                        });
+                      }}
+                    >
+                      <SelectTrigger className="h-8 w-full max-w-[220px] text-xs">
+                        <SelectValue placeholder="Auto" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__auto__">Auto (by type)</SelectItem>
+                        {pnlClassificationOptionsForType(account.type).map((k) => (
+                          <SelectItem key={k} value={k}>
+                            {PNL_CLASSIFICATION_LABEL[k]}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <span className="text-xs text-muted-foreground">—</span>
+                  )}
+                </TableCell>
                 <TableCell>
                   <Badge variant={account.is_active ? "secondary" : "outline"}>
                     {account.is_active ? "Active" : "Inactive"}

@@ -1,6 +1,8 @@
 "use client";
 
+import { useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { dedupeEntitiesForDisplay } from "@/lib/utils/entity-dedupe";
 import {
   Select,
   SelectContent,
@@ -24,6 +26,15 @@ type Props = {
 export function BankAccountSelector({ accounts, selectedAccountId }: Props) {
   const router = useRouter();
   const searchParams = useSearchParams();
+
+  const accountsForUi = useMemo(
+    () =>
+      dedupeEntitiesForDisplay(
+        accounts.map((a) => ({ ...a }) as unknown as Record<string, unknown>),
+        { idKey: "id", entityLabel: "bank-account-selector" },
+      ) as Account[],
+    [accounts],
+  );
 
   const handleChange = (accountId: string) => {
     const params = new URLSearchParams(searchParams.toString());
@@ -52,7 +63,7 @@ export function BankAccountSelector({ accounts, selectedAccountId }: Props) {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All bank accounts</SelectItem>
-                {accounts.map((account) => (
+                {accountsForUi.map((account) => (
                   <SelectItem key={account.id} value={account.id}>
                     {account.code} — {account.name}
                   </SelectItem>

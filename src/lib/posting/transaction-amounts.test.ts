@@ -36,5 +36,27 @@ describe("transaction-amounts", () => {
     const r = validateTransactionAmountsMatch(expected, provided);
     expect(r.ok).toBe(false);
   });
+
+  it("Asset supplier bill – exclusive 5% (5000 + 250 = 5250)", () => {
+    const a = buildTransactionAmounts({
+      entered_amount: 5000,
+      tax_rate: 5,
+      tax_treatment: "exclusive",
+    });
+    expect(a.subtotal_amount).toBe(5000);
+    expect(a.tax_amount).toBe(250);
+    expect(a.total_amount).toBe(5250);
+  });
+
+  it("Asset supplier bill – inclusive 5% (total 5000)", () => {
+    const a = buildTransactionAmounts({
+      entered_amount: 5000,
+      tax_rate: 5,
+      tax_treatment: "inclusive",
+    });
+    expect(a.total_amount).toBe(5000);
+    expect(a.subtotal_amount).toBe(4761.9);
+    expect(a.tax_amount).toBe(238.1);
+  });
 });
 

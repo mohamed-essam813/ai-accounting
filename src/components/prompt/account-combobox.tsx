@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Check, ChevronsUpDown } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { dedupeEntitiesForDisplay } from "@/lib/utils/entity-dedupe";
 
 export type AccountOption = { id: string; name: string; code: string; type: string };
 
@@ -34,14 +35,23 @@ export function AccountCombobox({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
 
+  const accountsForUi = useMemo(
+    () =>
+      dedupeEntitiesForDisplay(
+        accounts.map((a) => ({ ...a }) as unknown as Record<string, unknown>),
+        { idKey: "id", entityLabel: "account-combobox" },
+      ) as AccountOption[],
+    [accounts],
+  );
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const base = typeFilter ? accounts.filter((a) => typeFilter(a.type)) : accounts;
+    const base = typeFilter ? accountsForUi.filter((a) => typeFilter(a.type)) : accountsForUi;
     if (!q) return base;
     return base.filter(
       (a) => a.name.toLowerCase().includes(q) || a.code.toLowerCase().includes(q),
     );
-  }, [accounts, query, typeFilter]);
+  }, [accountsForUi, query, typeFilter]);
 
   return (
     <div className="space-y-2">

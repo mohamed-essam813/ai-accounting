@@ -19,7 +19,7 @@ export default async function AccountsPage() {
       <div>
         <h2 className="text-2xl font-semibold">Chart of Accounts</h2>
         <p className="text-sm text-muted-foreground">
-          Maintain the accounts used when posting journal entries. AI will automatically select appropriate accounts based on transaction context. Only admins can modify this list.
+          Add accounts by choosing what they are for—no accounting setup required unless you turn on advanced settings. These accounts are used when posting journal entries; AI will pick sensible defaults from context. Only admins can modify this list.
         </p>
       </div>
       {canManage ? (

@@ -38,6 +38,7 @@ export async function GET(
     .eq("id", user.tenant.id)
     .maybeSingle();
 
+  /** Supplier label on PDF always comes from contacts (bill.supplier_id), not free-text fields. */
   const supplierId = (bill as { supplier_id?: string | null }).supplier_id ?? null;
   const { data: supplier } = supplierId
     ? await supabase.from("contacts").select("name, address").eq("id", supplierId).maybeSingle()

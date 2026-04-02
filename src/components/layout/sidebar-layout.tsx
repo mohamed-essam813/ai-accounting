@@ -7,6 +7,7 @@ import { useSidebar } from "@/contexts/sidebar-context";
 import { usePathname } from "next/navigation";
 import { Menu } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import type { Database } from "@/lib/database.types";
 
 type Tenant = Database["public"]["Tables"]["tenants"]["Row"];
@@ -97,11 +98,16 @@ export function SidebarLayout({ tenant, user, children }: SidebarLayoutProps) {
     return actualSidebarState === "expanded" ? 256 : actualSidebarState === "collapsed" ? 64 : 0;
   })();
 
+  const isLedgerPage = pathname === "/ledger";
+
   return (
     <>
       <Sidebar tenant={tenant} />
       <div
-        className="flex min-h-screen flex-1 flex-col transition-all duration-300"
+        className={cn(
+          "flex flex-1 flex-col transition-all duration-300",
+          isLedgerPage ? "h-screen min-h-0" : "min-h-screen",
+        )}
         style={{ marginLeft: `${sidebarWidth}px` }}
       >
         {/* Mobile hamburger menu */}
@@ -118,7 +124,16 @@ export function SidebarLayout({ tenant, user, children }: SidebarLayoutProps) {
           </div>
         )}
         <Topbar user={user} sidebarWidth={sidebarWidth} />
-        <main className="flex-1 overflow-y-auto overflow-x-hidden bg-muted/10 p-6 pt-20">{children}</main>
+        <main
+          className={cn(
+            "flex-1 bg-muted/10 p-6 pt-20",
+            isLedgerPage
+              ? "flex min-h-0 flex-col overflow-hidden"
+              : "overflow-y-auto overflow-x-hidden",
+          )}
+        >
+          {children}
+        </main>
       </div>
     </>
   );

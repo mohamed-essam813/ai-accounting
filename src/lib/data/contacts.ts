@@ -1,6 +1,8 @@
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { getCurrentUser } from "./users";
 import type { Database } from "@/lib/database.types";
+import { dedupeEntitiesForDisplay, normalizeEntityName } from "@/lib/utils/entity-dedupe";
+import { accountMatchesContactStatementType } from "@/lib/accounting/ar-ap-subledger";
 
 type ContactsRow = Database["public"]["Tables"]["contacts"]["Row"];
 
@@ -23,7 +25,44 @@ export async function listContacts() {
     throw error;
   }
 
-  return data ?? [];
+  const rows = data ?? [];
+  return dedupeEntitiesForDisplay(rows as unknown as Record<string, unknown>[], {
+    idKey: "id",
+    nameKey: "name",
+    scopeKey: "type",
+    entityLabel: "contacts-table",
+  }) as ContactsRow[];
+}
+
+/**
+ * Find an active contact by normalized display name within tenant + type.
+ * Used to prevent duplicate "Apple" vendor rows from separate inserts.
+ */
+export async function findContactByNormalizedName(
+  type: "customer" | "vendor" | "other",
+  rawName: string,
+): Promise<ContactsRow | null> {
+  const user = await getCurrentUser();
+  if (!user?.tenant) {
+    return null;
+  }
+  const target = normalizeEntityName(rawName);
+  if (!target) return null;
+
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase
+    .from("contacts")
+    .select("*")
+    .eq("tenant_id", user.tenant.id)
+    .eq("type", type)
+    .eq("is_active", true);
+
+  if (error) {
+    console.error("findContactByNormalizedName", error);
+    throw error;
+  }
+
+  return (data ?? []).find((c) => normalizeEntityName(c.name) === target) ?? null;
 }
 
 export async function getContactById(contactId: string) {
@@ -78,6 +117,12 @@ export type StatementTransaction = {
   balance: number;
   document_number?: string | null;
   entry_id?: string;
+  /** Invoice / bill / receipt / payment context when this journal line is tied to a document. */
+  doc_role?: "invoice" | "bill" | "receipt" | "payment" | null;
+  doc_total?: number | null;
+  doc_paid?: number | null;
+  doc_outstanding?: number | null;
+  settlement_status?: string | null;
 };
 
 export async function getContactStatement(
@@ -96,179 +141,247 @@ export async function getContactStatement(
   }
 
   const supabase = await createServerSupabaseClient();
-  
-  // First, try to get entries via contact_id (preferred method)
-  // Get journal entries linked to this contact
-  type JournalEntriesRow = Database["public"]["Tables"]["journal_entries"]["Row"];
+  const tenantId = user.tenant.id;
+
+  const { data: coaRows, error: coaErr } = await supabase
+    .from("chart_of_accounts")
+    .select("id, code, prd_account_kind")
+    .eq("tenant_id", tenantId);
+
+  if (coaErr) {
+    console.error("[statement-of-account] chart_of_accounts load failed", coaErr);
+    throw coaErr;
+  }
+
+  const subledgerAccounts = (coaRows ?? []).filter((a) =>
+    accountMatchesContactStatementType(contact.type as "customer" | "vendor" | "other", a),
+  );
+  const accountIds = subledgerAccounts.map((a) => a.id);
+  const coaById = new Map(subledgerAccounts.map((a) => [a.id, a]));
+
+  if (accountIds.length === 0) {
+    console.warn("[statement-of-account] No AR/AP accounts for tenant subledger.", { tenantId, contactId });
+    return [];
+  }
+
+  const { data: rawLines, error: linesErr } = await supabase
+    .from("journal_lines")
+    .select("id, entry_id, account_id, debit, credit, memo")
+    .eq("contact_id", contactId)
+    .in("account_id", accountIds);
+
+  if (linesErr) {
+    console.error("[statement-of-account] journal_lines query failed", linesErr);
+    throw linesErr;
+  }
+
+  const lines = rawLines ?? [];
+  console.log("[statement-of-account] Subledger lines for contact", {
+    contactId,
+    tenantId,
+    matchingJournalLines: lines.length,
+  });
+
+  if (lines.length === 0) {
+    console.warn(
+      "[statement-of-account] No entries linked to this contact (need contact_id on AR/AP journal lines).",
+      { contactId, tenantId },
+    );
+    return [];
+  }
+
+  const entryIdSet = new Set(lines.map((l) => l.entry_id));
+
   let entriesQuery = supabase
     .from("journal_entries")
-    .select<"id, date, description", Pick<JournalEntriesRow, "id" | "date" | "description">>("id, date, description")
-    .eq("tenant_id", user.tenant.id)
+    .select("id, date, description")
+    .eq("tenant_id", tenantId)
     .eq("status", "posted")
-    .eq("contact_id", contactId);
-  
-  // Apply date filters if provided
+    .in("id", [...entryIdSet])
+    .order("date", { ascending: true });
+
   if (startDate) {
     entriesQuery = entriesQuery.gte("date", startDate);
   }
   if (endDate) {
     entriesQuery = entriesQuery.lte("date", endDate);
   }
-  
-  const { data: entriesByContact } = await entriesQuery.order("date", { ascending: true });
 
-  // Also get drafts linked to this contact
-  const { data: draftsByContact } = await supabase
-    .from("drafts")
-    .select("id, data_json, posted_entry_id, contact_id")
-    .eq("tenant_id", user.tenant.id)
-    .eq("status", "posted")
-    .not("posted_entry_id", "is", null);
+  const { data: entries, error: entErr } = await entriesQuery;
+  if (entErr) {
+    console.error("[statement-of-account] journal_entries query failed", entErr);
+    throw entErr;
+  }
 
-  const entryIds = new Set<string>();
-  const draftMap = new Map<string, { invoice_number?: string | null; counterparty?: string | null }>();
+  const entryList = (entries ?? []).slice().sort((a, b) => {
+    const d = a.date.localeCompare(b.date);
+    if (d !== 0) return d;
+    return a.id.localeCompare(b.id);
+  });
+  const entryIdInRange = new Set(entryList.map((e) => e.id));
+  const entryIdsList = [...entryIdInRange];
 
-  // Add entries found by contact_id
-  if (entriesByContact) {
-    entriesByContact.forEach((entry) => {
-      entryIds.add(entry.id);
+  type InvRow = {
+    journal_entry_id: string;
+    invoice_number: string | null;
+    total_amount: number;
+    amount_received: number;
+    outstanding_amount: number;
+    settlement_status: string;
+  };
+  type BillRow = {
+    journal_entry_id: string;
+    bill_number: string | null;
+    total_amount: number;
+    amount_paid: number;
+    outstanding_amount: number;
+    settlement_status: string;
+  };
+  type PayRow = {
+    journal_entry_id: string;
+    voucher_number: string | null;
+    payment_type: string;
+    amount: number;
+    payment_date: string;
+  };
+
+  const invoiceByJe = new Map<string, InvRow>();
+  const billByJe = new Map<string, BillRow>();
+  const paymentByJe = new Map<string, PayRow>();
+
+  if (entryIdsList.length > 0) {
+    if (contact.type === "customer") {
+      const { data: invs } = await supabase
+        .from("invoices")
+        .select(
+          "journal_entry_id, invoice_number, total_amount, amount_received, outstanding_amount, settlement_status",
+        )
+        .eq("tenant_id", tenantId)
+        .eq("customer_id", contactId)
+        .in("journal_entry_id", entryIdsList);
+      (invs ?? []).forEach((row) => {
+        const r = row as InvRow;
+        invoiceByJe.set(r.journal_entry_id, r);
+      });
+    }
+    if (contact.type === "vendor") {
+      const { data: bills } = await supabase
+        .from("bills")
+        .select(
+          "journal_entry_id, bill_number, total_amount, amount_paid, outstanding_amount, settlement_status",
+        )
+        .eq("tenant_id", tenantId)
+        .eq("supplier_id", contactId)
+        .in("journal_entry_id", entryIdsList);
+      (bills ?? []).forEach((row) => {
+        const r = row as BillRow;
+        billByJe.set(r.journal_entry_id, r);
+      });
+    }
+    const { data: pays } = await supabase
+      .from("payments")
+      .select("journal_entry_id, voucher_number, payment_type, amount, payment_date")
+      .eq("tenant_id", tenantId)
+      .eq("contact_id", contactId)
+      .in("journal_entry_id", entryIdsList);
+    (pays ?? []).forEach((row) => {
+      const r = row as PayRow;
+      if (!paymentByJe.has(r.journal_entry_id)) paymentByJe.set(r.journal_entry_id, r);
     });
   }
 
-  // Process drafts: prefer contact_id, fallback to name matching for backward compatibility
-  (draftsByContact ?? []).forEach((draft) => {
-    const data = draft.data_json as { counterparty?: string | null; invoice_number?: string | null };
-    const matchesByContactId = draft.contact_id === contactId;
-    const matchesByName = data.counterparty && data.counterparty.toLowerCase() === contact.name.toLowerCase();
-    
-    if (matchesByContactId || matchesByName) {
-      if (draft.posted_entry_id) {
-        entryIds.add(draft.posted_entry_id);
-        draftMap.set(draft.posted_entry_id, {
-          invoice_number: data.invoice_number,
-          counterparty: data.counterparty,
-        });
-      }
-    }
+  const { data: draftRows } = await supabase
+    .from("drafts")
+    .select("posted_entry_id, data_json")
+    .eq("tenant_id", tenantId)
+    .in("posted_entry_id", [...entryIdInRange]);
+
+  const docNumByEntry = new Map<string, string | null>();
+  (draftRows ?? []).forEach((d) => {
+    if (!d.posted_entry_id) return;
+    const dj = d.data_json as { invoice_number?: string | null; bill_number?: string | null };
+    docNumByEntry.set(d.posted_entry_id, dj.invoice_number ?? dj.bill_number ?? null);
   });
 
-  // If no entries found via contact_id or drafts, try legacy name matching as fallback
-  if (entryIds.size === 0) {
-    const { data: allDrafts } = await supabase
-      .from("drafts")
-      .select("id, data_json, posted_entry_id")
-      .eq("tenant_id", user.tenant.id)
-      .eq("status", "posted")
-      .not("posted_entry_id", "is", null);
-
-    (allDrafts ?? []).forEach((draft) => {
-      const data = draft.data_json as { counterparty?: string | null; invoice_number?: string | null };
-      if (data.counterparty && data.counterparty.toLowerCase() === contact.name.toLowerCase()) {
-        if (draft.posted_entry_id) {
-          entryIds.add(draft.posted_entry_id);
-          draftMap.set(draft.posted_entry_id, {
-            invoice_number: data.invoice_number,
-            counterparty: data.counterparty,
-          });
-        }
-      }
-    });
-  }
-
-  if (entryIds.size === 0) {
-    return [];
-  }
-
-  // Get journal entries and lines
-  type JournalLinesRow = Database["public"]["Tables"]["journal_lines"]["Row"];
-  
-  // Use entriesByContact if we found entries by contact_id, otherwise fetch by entryIds
-  // Type entries as array of objects with only id, date, description (we only need these fields)
-  type EntryBasic = { id: string; date: string; description: string };
-  let entries: EntryBasic[] = [];
-  if (entriesByContact && entriesByContact.length > 0) {
-    // Filter to only entries that are in our entryIds set
-    entries = entriesByContact.filter((e) => entryIds.has(e.id)) as EntryBasic[];
-  } else {
-    let fetchedQuery = supabase
-      .from("journal_entries")
-      .select<"id, date, description", Pick<JournalEntriesRow, "id" | "date" | "description">>("id, date, description")
-      .in("id", Array.from(entryIds))
-      .eq("status", "posted");
-    
-    // Apply date filters if provided
-    if (startDate) {
-      fetchedQuery = fetchedQuery.gte("date", startDate);
-    }
-    if (endDate) {
-      fetchedQuery = fetchedQuery.lte("date", endDate);
-    }
-    
-    const { data: fetchedEntries } = await fetchedQuery.order("date", { ascending: true });
-    entries = (fetchedEntries ?? []) as EntryBasic[];
-  }
-
-  if (!entries || entries.length === 0) {
-    return [];
-  }
-
-  // Get journal lines for Accounts Receivable (1100) or Accounts Payable (2000)
-  // depending on contact type
-  const accountCode = contact.type === "customer" ? "1100" : "2000";
-  const { data: accounts } = await supabase
-    .from("chart_of_accounts")
-    .select("id")
-    .eq("tenant_id", user.tenant.id)
-    .eq("code", accountCode)
-    .maybeSingle();
-
-  if (!accounts) {
-    return [];
-  }
-
-  const { data: lines } = await supabase
-    .from("journal_lines")
-    .select("entry_id, debit, credit, memo")
-    .in("entry_id", entries.map((e) => e.id))
-    .eq("account_id", accounts.id)
-    .order("entry_id");
-
-  // Build statement transactions
   const transactions: StatementTransaction[] = [];
   let runningBalance = 0;
 
-  entries.forEach((entry) => {
-    const entryLines = lines?.filter((l) => l.entry_id === entry.id) ?? [];
-    const totalDebit = entryLines.reduce((sum, l) => sum + Number(l.debit ?? 0), 0);
-    const totalCredit = entryLines.reduce((sum, l) => sum + Number(l.credit ?? 0), 0);
-    
-    const draftInfo = draftMap.get(entry.id);
-    
-    if (contact.type === "customer") {
-      // For customers: debit increases balance (they owe us), credit decreases (they paid)
-      runningBalance += totalDebit - totalCredit;
-      transactions.push({
-        date: entry.date,
-        description: entry.description,
-        debit: totalDebit,
-        credit: totalCredit,
-        balance: runningBalance,
-        document_number: draftInfo?.invoice_number ?? null,
-        entry_id: entry.id,
-      });
-    } else {
-      // For vendors: credit increases balance (we owe them), debit decreases (we paid)
-      runningBalance += totalCredit - totalDebit;
-      transactions.push({
-        date: entry.date,
-        description: entry.description,
-        debit: totalDebit,
-        credit: totalCredit,
-        balance: runningBalance,
-        document_number: draftInfo?.invoice_number ?? null,
-        entry_id: entry.id,
-      });
+  const isArAccount = (accountId: string) => {
+    const a = coaById.get(accountId);
+    if (!a) return true;
+    return a.prd_account_kind === "accounts_receivable" || a.code === "1100";
+  };
+
+  for (const entry of entryList) {
+    const entryLines = lines.filter((l) => l.entry_id === entry.id && entryIdInRange.has(l.entry_id));
+    let totalDebit = 0;
+    let totalCredit = 0;
+    let delta = 0;
+    for (const l of entryLines) {
+      const dr = Number(l.debit ?? 0);
+      const cr = Number(l.credit ?? 0);
+      totalDebit += dr;
+      totalCredit += cr;
+      if (contact.type === "customer") {
+        delta += dr - cr;
+      } else if (contact.type === "vendor") {
+        delta += cr - dr;
+      } else {
+        delta += isArAccount(l.account_id) ? dr - cr : cr - dr;
+      }
     }
+    runningBalance += delta;
+
+    const inv = invoiceByJe.get(entry.id);
+    const bill = billByJe.get(entry.id);
+    const pay = paymentByJe.get(entry.id);
+
+    let docMeta: Partial<StatementTransaction> = {};
+    if (inv) {
+      docMeta = {
+        doc_role: "invoice",
+        doc_total: Number(inv.total_amount),
+        doc_paid: Number(inv.amount_received),
+        doc_outstanding: Number(inv.outstanding_amount),
+        settlement_status: inv.settlement_status,
+        document_number: inv.invoice_number ?? docNumByEntry.get(entry.id) ?? null,
+      };
+    } else if (bill) {
+      docMeta = {
+        doc_role: "bill",
+        doc_total: Number(bill.total_amount),
+        doc_paid: Number(bill.amount_paid),
+        doc_outstanding: Number(bill.outstanding_amount),
+        settlement_status: bill.settlement_status,
+        document_number: bill.bill_number ?? docNumByEntry.get(entry.id) ?? null,
+      };
+    } else if (pay) {
+      const isReceipt = pay.payment_type === "receipt";
+      docMeta = {
+        doc_role: isReceipt ? "receipt" : "payment",
+        doc_total: Number(pay.amount),
+        doc_paid: Number(pay.amount),
+        doc_outstanding: 0,
+        settlement_status: "paid",
+        document_number: pay.voucher_number ?? docNumByEntry.get(entry.id) ?? null,
+      };
+    }
+
+    transactions.push({
+      date: entry.date,
+      description: entry.description,
+      debit: totalDebit,
+      credit: totalCredit,
+      balance: runningBalance,
+      document_number: docMeta.document_number ?? docNumByEntry.get(entry.id) ?? null,
+      entry_id: entry.id,
+      ...docMeta,
+    });
+  }
+
+  console.log("[statement-of-account] Statement rows", {
+    contactId,
+    entriesInDateRange: transactions.length,
   });
 
   return transactions;

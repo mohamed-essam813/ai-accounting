@@ -38,26 +38,28 @@ export function LedgerTableClient({ entries, displayCurrency }: Props) {
 
   if (entries.length === 0) {
     return (
-      <p className="text-sm text-muted-foreground text-center py-8">
-        No transactions found for the selected criteria.
-      </p>
+      <div className="flex min-h-[10rem] flex-1 items-center justify-center px-6 py-8">
+        <p className="text-sm text-muted-foreground text-center">
+          No transactions found for the selected criteria.
+        </p>
+      </div>
     );
   }
 
   return (
-    <>
-      <div className="overflow-x-auto">
-        <Table>
-          <TableHeader>
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+      <div className="ledger-scroll min-h-0 flex-1 overflow-y-auto overflow-x-auto">
+        <Table className="w-full min-w-[900px]">
+          <TableHeader className="sticky top-0 z-10 bg-card shadow-[0_1px_0_0_hsl(var(--border))]">
             <TableRow>
-              <TableHead>Date</TableHead>
-              <TableHead>Description</TableHead>
-              <TableHead>Account</TableHead>
-              <TableHead className="text-right">Debit</TableHead>
-              <TableHead className="text-right">Credit</TableHead>
-              <TableHead className="text-right">Balance</TableHead>
-              <TableHead>Memo</TableHead>
-              <TableHead className="w-[100px]">Actions</TableHead>
+              <TableHead className="bg-card">Date</TableHead>
+              <TableHead className="bg-card">Description</TableHead>
+              <TableHead className="bg-card">Account</TableHead>
+              <TableHead className="text-right bg-card">Debit</TableHead>
+              <TableHead className="text-right bg-card">Credit</TableHead>
+              <TableHead className="text-right bg-card">Balance</TableHead>
+              <TableHead className="bg-card">Memo</TableHead>
+              <TableHead className="w-[100px] bg-card">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -105,15 +107,17 @@ export function LedgerTableClient({ entries, displayCurrency }: Props) {
         </Table>
       </div>
       {entries.length > 0 && (
-        <DataTablePagination
-          currentPage={currentPage}
-          totalPages={totalPages}
-          totalItems={entries.length}
-          itemsPerPage={itemsPerPage}
-          onPageChange={goToPage}
-          onItemsPerPageChange={setItemsPerPage}
-        />
+        <div className="shrink-0 border-t bg-card px-4 py-3">
+          <DataTablePagination
+            currentPage={currentPage}
+            totalPages={totalPages}
+            totalItems={entries.length}
+            itemsPerPage={itemsPerPage}
+            onPageChange={goToPage}
+            onItemsPerPageChange={setItemsPerPage}
+          />
+        </div>
       )}
-    </>
+    </div>
   );
 }

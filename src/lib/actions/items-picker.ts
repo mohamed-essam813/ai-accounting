@@ -4,14 +4,19 @@ import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { getCurrentUser } from "@/lib/data/users";
-import { searchBusinessItems, getBusinessItemById } from "@/lib/data/inventory";
+import { searchBusinessItems, getBusinessItemById, findActiveItemByNormalizedName } from "@/lib/data/inventory";
+import { dedupeEntitiesForDisplay } from "@/lib/utils/entity-dedupe";
 import { listAccounts } from "@/lib/data/accounts";
 import { listUnitsOfMeasure } from "@/lib/data/units-of-measure";
 import type { Account } from "@/lib/accounting";
 import type { BusinessItem } from "@/lib/data/inventory";
 
 export async function searchItemsPickerAction(query: string): Promise<BusinessItem[]> {
-  return searchBusinessItems(query, 40);
+  const rows = await searchBusinessItems(query, 40);
+  return dedupeEntitiesForDisplay(rows as unknown as Record<string, unknown>[], {
+    idKey: "id",
+    entityLabel: "items-search",
+  }) as unknown as BusinessItem[];
 }
 
 export async function getItemPickerByIdAction(id: string): Promise<BusinessItem | null> {
@@ -74,6 +79,13 @@ export async function createItemWizardAction(input: z.infer<typeof WizardSchema>
   const valuationMethod =
     ((policy as { inventory_valuation_method?: string } | null)?.inventory_valuation_method ||
       "fifo") as "fifo" | "weighted_average";
+
+  const duplicateItem = await findActiveItemByNormalizedName(payload.name);
+  if (duplicateItem) {
+    throw new Error(
+      `An item named "${duplicateItem.name}" already exists. Select it from the list or use a different name.`,
+    );
+  }
 
   if (payload.kind === "service") {
     const uoms = await listUnitsOfMeasure();
@@ -162,12 +174,16 @@ export async function listAccountsForItemWizardAction(): Promise<
   Pick<Account, "id" | "name" | "code" | "type">[]
 > {
   const accounts = await listAccounts();
-  return accounts.map((a) => ({
+  const mapped = accounts.map((a) => ({
     id: a.id,
     name: a.name,
     code: a.code,
     type: a.type,
   }));
+  return dedupeEntitiesForDisplay(mapped as Record<string, unknown>[], {
+    idKey: "id",
+    entityLabel: "item-wizard-accounts",
+  }) as Pick<Account, "id" | "name" | "code" | "type">[];
 }
 
 export async function listUomsForWizardAction() {

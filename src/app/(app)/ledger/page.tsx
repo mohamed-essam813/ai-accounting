@@ -135,7 +135,8 @@ export default async function LedgerPage({
   }
 
   return (
-    <div className="space-y-6">
+    <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-hidden">
+      <div className="header shrink-0 space-y-6">
       {/* Breadcrumb Navigation */}
       <Breadcrumb>
         <BreadcrumbList>
@@ -170,15 +171,16 @@ export default async function LedgerPage({
         </p>
       </div>
 
-      <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center">
+      <div className="filters flex flex-col gap-4 sm:flex-row sm:items-center items-start shrink-0">
         <SearchableAccountSelector accounts={accounts} selectedAccountCode={params.accountCode} />
         <div className="ml-auto">
           <CurrencyFilter initialCurrency={currency} baseCurrency={baseCurrency} currencies={[]} />
         </div>
       </div>
+      </div>
 
       {account && (
-        <Card>
+        <Card className="shrink-0">
           <CardHeader>
             <CardTitle>Account Information</CardTitle>
           </CardHeader>
@@ -201,8 +203,8 @@ export default async function LedgerPage({
         </Card>
       )}
 
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
+      <Card className="flex min-h-0 min-w-0 flex-1 flex-col gap-0 overflow-hidden py-0 shadow-sm">
+        <CardHeader className="flex shrink-0 flex-row items-center justify-between space-y-0 border-b px-6 py-4">
           <div>
             <CardTitle>
               {account ? `${account.name} Ledger` : "General Ledger"}
@@ -232,7 +234,7 @@ export default async function LedgerPage({
             />
           )}
         </CardHeader>
-          <CardContent>
+        <CardContent className="ledger-container flex min-h-0 flex-1 flex-col overflow-hidden px-0 pb-0 pt-0">
           <LedgerTableClient entries={ledgerWithBalance} displayCurrency={targetCurrency ?? baseCurrency} />
         </CardContent>
       </Card>

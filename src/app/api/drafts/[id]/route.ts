@@ -67,11 +67,19 @@ export async function GET(
       }
     }
 
+    let counterpartyDisplayName: string | null = null;
+    const cid = (draft as { contact_id?: string | null }).contact_id;
+    if (cid) {
+      const { data: crow } = await supabase.from("contacts").select("name").eq("id", cid).maybeSingle();
+      counterpartyDisplayName = crow?.name ?? null;
+    }
+
     return NextResponse.json({
       draft: {
         ...draft,
         confidence: draft.confidence ? Number(draft.confidence) : null,
         entities: (draft.data_json as DraftPayload["entities"]) ?? {},
+        counterparty_display_name: counterpartyDisplayName,
       },
       documents: documents ?? [],
       accounts: accounts,

@@ -8,6 +8,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { ChevronsUpDown, Check, UserPlus } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { createContactFromPickerAction } from "@/lib/actions/guided-drafts";
+import { dedupeEntitiesForDisplay, normalizeEntityName } from "@/lib/utils/entity-dedupe";
 import { toast } from "sonner";
 
 export type ContactOption = { id: string; name: string; type: string };
@@ -38,17 +39,34 @@ export function ContactCombobox({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
 
+  const contactsForUi = useMemo(
+    () =>
+      dedupeEntitiesForDisplay(
+        contacts.map((c) => ({ ...c }) as unknown as Record<string, unknown>),
+        {
+          idKey: "id",
+          nameKey: "name",
+          scopeKey: "type",
+          entityLabel: "contact-combobox",
+        },
+      ) as ContactOption[],
+    [contacts],
+  );
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     const roleOk = (c: ContactOption) =>
       kind === "customer" ? c.type === "customer" : c.type === "vendor";
-    if (!q) return contacts.filter(roleOk);
-    return contacts.filter((c) => c.name.toLowerCase().includes(q) && roleOk(c));
-  }, [contacts, query, kind]);
+    if (!q) return contactsForUi.filter(roleOk);
+    return contactsForUi.filter((c) => c.name.toLowerCase().includes(q) && roleOk(c));
+  }, [contactsForUi, query, kind]);
 
   const exactMatch = useMemo(
-    () => contacts.some((c) => c.name.toLowerCase() === query.trim().toLowerCase()),
-    [contacts, query],
+    () =>
+      contactsForUi.some(
+        (c) => normalizeEntityName(c.name) === normalizeEntityName(query),
+      ),
+    [contactsForUi, query],
   );
 
   const showCreate = query.trim().length > 0 && !exactMatch;

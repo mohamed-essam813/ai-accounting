@@ -1,6 +1,8 @@
 "use client";
 
+import { useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { dedupeEntitiesForDisplay } from "@/lib/utils/entity-dedupe";
 import {
   Select,
   SelectContent,
@@ -27,6 +29,14 @@ export function AccountSelector({ accounts, selectedAccountCode }: Props) {
   const router = useRouter();
   const searchParams = useSearchParams();
 
+  const sortedAccounts = useMemo(() => {
+    const deduped = dedupeEntitiesForDisplay(
+      accounts.map((a) => ({ ...a }) as unknown as Record<string, unknown>),
+      { idKey: "id", entityLabel: "ledger-account-select" },
+    ) as Account[];
+    return [...deduped].sort((a, b) => a.code.localeCompare(b.code));
+  }, [accounts]);
+
   const handleChange = (accountCode: string) => {
     const params = new URLSearchParams(searchParams.toString());
     if (accountCode && accountCode !== "all") {
@@ -36,11 +46,6 @@ export function AccountSelector({ accounts, selectedAccountCode }: Props) {
     }
     router.push(`/ledger?${params.toString()}`);
   };
-
-  // Sort accounts by code for easier navigation
-  const sortedAccounts = [...accounts].sort((a, b) => 
-    a.code.localeCompare(b.code)
-  );
 
   return (
     <Card>

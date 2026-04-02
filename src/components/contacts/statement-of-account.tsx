@@ -21,6 +21,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Download, Filter, X } from "lucide-react";
 import type { Database } from "@/lib/database.types";
+import { formatSettlementStatusLabel } from "@/lib/accounting/settlement-status-label";
 
 type Contact = Database["public"]["Tables"]["contacts"]["Row"];
 
@@ -83,13 +84,28 @@ export function StatementOfAccount({ contact, initialStartDate, initialEndDate }
 
   const handleExportCSV = () => {
     // Create CSV content - export filtered transactions, not just current page
-    const headers = ["Date", "Doc #", "Description", "Debit", "Credit", "Balance"];
+    const headers = [
+      "Date",
+      "Doc #",
+      "Description",
+      "Debit",
+      "Credit",
+      "Doc total",
+      "Paid",
+      "Outstanding",
+      "Status",
+      "Balance",
+    ];
     const rows = transactions.map((t) => [
       t.date,
       t.document_number || "",
       t.description,
       t.debit.toFixed(2),
       t.credit.toFixed(2),
+      t.doc_total != null ? t.doc_total.toFixed(2) : "",
+      t.doc_paid != null ? t.doc_paid.toFixed(2) : "",
+      t.doc_outstanding != null ? t.doc_outstanding.toFixed(2) : "",
+      t.settlement_status ? formatSettlementStatusLabel(t.settlement_status) : "",
       t.balance.toFixed(2),
     ]);
     
@@ -112,13 +128,28 @@ export function StatementOfAccount({ contact, initialStartDate, initialEndDate }
       // Dynamic import to avoid loading the library if not needed
       const XLSX = await import("xlsx");
       
-      const headers = ["Date", "Doc #", "Description", "Debit", "Credit", "Balance"];
+      const headers = [
+        "Date",
+        "Doc #",
+        "Description",
+        "Debit",
+        "Credit",
+        "Doc total",
+        "Paid",
+        "Outstanding",
+        "Status",
+        "Balance",
+      ];
       const rows = transactions.map((t) => [
         t.date,
         t.document_number || "",
         t.description,
         t.debit,
         t.credit,
+        t.doc_total ?? "",
+        t.doc_paid ?? "",
+        t.doc_outstanding ?? "",
+        t.settlement_status ? formatSettlementStatusLabel(t.settlement_status) : "",
         t.balance,
       ]);
       
@@ -159,6 +190,10 @@ export function StatementOfAccount({ contact, initialStartDate, initialEndDate }
         t.description,
         t.debit.toFixed(2),
         t.credit.toFixed(2),
+        t.doc_total != null ? t.doc_total.toFixed(2) : "",
+        t.doc_paid != null ? t.doc_paid.toFixed(2) : "",
+        t.doc_outstanding != null ? t.doc_outstanding.toFixed(2) : "",
+        t.settlement_status ? formatSettlementStatusLabel(t.settlement_status) : "",
         t.balance.toFixed(2),
       ]);
       
@@ -172,12 +207,29 @@ export function StatementOfAccount({ contact, initialStartDate, initialEndDate }
         "Current Balance",
         "",
         "",
+        "",
+        "",
+        "",
+        "",
         currentBalance.toFixed(2),
       ]);
       
       // Add table using autoTable function
       autoTable(doc, {
-        head: [["Date", "Doc #", "Description", "Debit", "Credit", "Balance"]],
+        head: [
+          [
+            "Date",
+            "Doc #",
+            "Description",
+            "Debit",
+            "Credit",
+            "Doc total",
+            "Paid",
+            "Outstanding",
+            "Status",
+            "Balance",
+          ],
+        ],
         body: tableData,
         startY: 35,
         styles: { fontSize: 8 },
@@ -312,17 +364,16 @@ export function StatementOfAccount({ contact, initialStartDate, initialEndDate }
                     <TableHead>Description</TableHead>
                     <TableHead className="text-right">Debit</TableHead>
                     <TableHead className="text-right">Credit</TableHead>
+                    <TableHead className="text-right">Doc total</TableHead>
+                    <TableHead className="text-right">Paid</TableHead>
+                    <TableHead className="text-right">Outstanding</TableHead>
+                    <TableHead>Status</TableHead>
                     <TableHead className="text-right">Balance</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {paginatedTransactions.map((transaction, idx) => {
-                    // Calculate running balance for paginated items
-                    const prevTransactions = transactions.slice(0, (currentPage - 1) * itemsPerPage + idx);
-                    const runningBalance = prevTransactions.reduce((sum, t) => sum + t.debit - t.credit, 0) + transaction.debit - transaction.credit;
-                    
-                    return (
-                      <TableRow key={idx}>
+                  {paginatedTransactions.map((transaction, idx) => (
+                      <TableRow key={transaction.entry_id ?? `row-${idx}`}>
                         <TableCell className="text-sm">
                           {formatDate(transaction.date)}
                         </TableCell>
@@ -342,15 +393,28 @@ export function StatementOfAccount({ contact, initialStartDate, initialEndDate }
                         <TableCell className="text-right font-mono text-sm">
                           {transaction.credit > 0 ? formatCurrency(transaction.credit) : "—"}
                         </TableCell>
+                        <TableCell className="text-right font-mono text-sm text-muted-foreground">
+                          {transaction.doc_total != null ? formatCurrency(transaction.doc_total) : "—"}
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-sm text-muted-foreground">
+                          {transaction.doc_paid != null ? formatCurrency(transaction.doc_paid) : "—"}
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-sm text-muted-foreground">
+                          {transaction.doc_outstanding != null ? formatCurrency(transaction.doc_outstanding) : "—"}
+                        </TableCell>
+                        <TableCell className="text-sm">
+                          {transaction.settlement_status
+                            ? formatSettlementStatusLabel(transaction.settlement_status)
+                            : "—"}
+                        </TableCell>
                         <TableCell className="text-right font-mono font-semibold">
-                          {formatCurrency(runningBalance)}
+                          {formatCurrency(transaction.balance)}
                         </TableCell>
                       </TableRow>
-                    );
-                  })}
+                    ))}
                   {paginatedTransactions.length > 0 && currentPage === totalPages && (
                     <TableRow className="bg-muted font-semibold">
-                      <TableCell colSpan={4} className="text-right">
+                      <TableCell colSpan={8} className="text-right">
                         Current Balance
                       </TableCell>
                       <TableCell className="text-right font-mono">

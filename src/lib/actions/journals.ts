@@ -10,6 +10,7 @@ import { canApprove, type UserRole } from "@/lib/auth";
 import type { Database } from "@/lib/database.types";
 import { assertPostingDateAllowed } from "@/lib/accounting/period-lock";
 import { recordTimelineEvent } from "@/lib/data/timeline";
+import { subledgerContactIdForLine } from "@/lib/accounting/ar-ap-subledger";
 
 type JournalEntriesInsert = Database["public"]["Tables"]["journal_entries"]["Insert"];
 type JournalEntriesRow = Database["public"]["Tables"]["journal_entries"]["Row"];
@@ -41,7 +42,12 @@ const CreateJournalEntrySchema = z.object({
     ),
 });
 
-export type CreateJournalOptions = { postImmediately?: boolean; sourceModule?: string };
+export type CreateJournalOptions = {
+  postImmediately?: boolean;
+  sourceModule?: string;
+  /** When set, stored on journal entry and on AR/AP lines only (open-item / statement of account). */
+  counterpartyContactId?: string | null;
+};
 
 /** Manual journals created as draft by default. System journals (depreciation, disposal) use postImmediately. */
 export async function createJournalEntryAction(
@@ -75,7 +81,8 @@ export async function createJournalEntryAction(
     await assertPostingDateAllowed(supabase, user.tenant.id, payload.date);
   }
 
-  const entryData: JournalEntriesInsert = {
+  const counterpartyId = options?.counterpartyContactId ?? null;
+  const entryData = {
     tenant_id: user.tenant.id,
     date: payload.date,
     description: payload.description,
@@ -84,7 +91,8 @@ export async function createJournalEntryAction(
     approved_by: postImmediately ? user.id : null,
     posted_at: postImmediately ? new Date().toISOString() : null,
     source_module: sourceModule,
-  };
+    contact_id: counterpartyId,
+  } as JournalEntriesInsert & { contact_id?: string | null };
 
   const entryTable = supabase.from("journal_entries") as unknown as {
     insert: (values: JournalEntriesInsert[]) => {
@@ -102,18 +110,29 @@ export async function createJournalEntryAction(
     throw new Error("Failed to create journal entry.");
   }
 
+  const accountById = new Map(
+    accounts.map((a) => [a.id, a as { code: string; prd_account_kind?: string | null }]),
+  );
   // Create journal lines
-  const linesData: JournalLinesInsert[] = journalLines.map((line) => ({
-    entry_id: entry.id,
-    account_id: line.account_id,
-    memo: line.memo,
-    debit: line.debit,
-    credit: line.credit,
-    tax_rate_id: line.tax_rate_id ?? null,
-    account_source: line.tax_rate_id ? "tax" : "user_override",
-    reference_type: "manual_journal",
-    reference_id: entry.id,
-  }));
+  const linesData: JournalLinesInsert[] = journalLines.map((line) => {
+    const acc = accountById.get(line.account_id);
+    const contactForLine = subledgerContactIdForLine(
+      { prd_account_kind: acc?.prd_account_kind ?? null, code: acc?.code ?? "" },
+      counterpartyId,
+    );
+    return {
+      entry_id: entry.id,
+      account_id: line.account_id,
+      memo: line.memo,
+      debit: line.debit,
+      credit: line.credit,
+      tax_rate_id: line.tax_rate_id ?? null,
+      account_source: line.tax_rate_id ? "tax" : "user_override",
+      reference_type: "manual_journal",
+      reference_id: entry.id,
+      contact_id: contactForLine,
+    };
+  });
 
   const linesTable = supabase.from("journal_lines") as unknown as {
     insert: (values: JournalLinesInsert[]) => Promise<{ error: unknown }>;

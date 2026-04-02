@@ -16,6 +16,7 @@ type Account = {
   type: string;
   category: "current" | "non_current" | null;
   is_active: boolean;
+  account_classification?: string | null;
 };
 
 type Props = {

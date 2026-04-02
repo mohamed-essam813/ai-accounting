@@ -8,6 +8,10 @@ import { canManageAccounts, type UserRole } from "@/lib/auth";
 import { PromptIntentEnum } from "@/lib/ai/schema";
 import type { Database } from "@/lib/database.types";
 import type { Account } from "@/lib/accounting";
+import {
+  defaultAccountClassificationForCreate,
+  type AccountClassification,
+} from "@/lib/accounting/account-classification";
 
 type ChartOfAccountsInsert = Database["public"]["Tables"]["chart_of_accounts"]["Insert"];
 type ChartOfAccountsRow = Database["public"]["Tables"]["chart_of_accounts"]["Row"];
@@ -45,6 +49,11 @@ const AccountSchema = z.object({
   detail_type: z.enum(["bank", "cash", "other_current_asset", "fixed_asset", "other"]).nullable().optional(), // Only for assets
   /** Optional BRD overlay (MVP schema); supplements type / subtype. */
   prd_account_kind: PrdAccountKindEnum.nullable().optional(),
+  /** P&L section; when omitted, derived from type/prd (not from account name). */
+  account_classification: z
+    .enum(["revenue", "cost_of_sales", "operating_expense", "other_income", "other_expense"])
+    .nullable()
+    .optional(),
 });
 
 export async function createAccountAction(input: z.infer<typeof AccountSchema>): Promise<ChartOfAccountsRow> {
@@ -89,6 +98,12 @@ export async function createAccountAction(input: z.infer<typeof AccountSchema>):
 
   // Set allow_reconciliation based on detail_type
   const allowReconciliation = payload.detail_type === "bank";
+
+  const resolvedClassification = defaultAccountClassificationForCreate({
+    type: payload.type,
+    prd_account_kind: payload.prd_account_kind ?? null,
+    explicit: (payload.account_classification as AccountClassification | null) ?? null,
+  });
   
   const supabase = await createServerSupabaseClient();
   // Use type assertion for category and detail_type since they may not be in database types yet
@@ -100,12 +115,14 @@ export async function createAccountAction(input: z.infer<typeof AccountSchema>):
     ...(category && { category }),
     ...(payload.detail_type && { detail_type: payload.detail_type }),
     ...(payload.prd_account_kind && { prd_account_kind: payload.prd_account_kind }),
+    ...(resolvedClassification !== null && { account_classification: resolvedClassification }),
     allow_reconciliation: allowReconciliation,
   } as ChartOfAccountsInsert & { 
     category?: "current" | "non_current" | null;
     detail_type?: "bank" | "cash" | "other_current_asset" | "fixed_asset" | "other" | null;
     allow_reconciliation?: boolean;
     prd_account_kind?: string | null;
+    account_classification?: string | null;
   };
   // Use type assertion to fix Supabase type inference - type-safe using Database types
   const table = supabase.from("chart_of_accounts") as unknown as {
@@ -156,6 +173,76 @@ export async function createAccountAction(input: z.infer<typeof AccountSchema>):
   return account;
 }
 
+const UpdatePnlClassificationSchema = z.object({
+  accountId: z.string().uuid(),
+  account_classification: z
+    .enum(["revenue", "cost_of_sales", "operating_expense", "other_income", "other_expense"])
+    .nullable(),
+});
+
+export async function updateAccountPnlClassificationAction(
+  input: z.infer<typeof UpdatePnlClassificationSchema>,
+) {
+  const payload = UpdatePnlClassificationSchema.parse(input);
+  const user = await getCurrentUser();
+  if (!user?.tenant) {
+    throw new Error("Tenant not resolved.");
+  }
+  if (!canManageAccounts(user.role as UserRole)) {
+    throw new Error("You do not have permission to manage the chart of accounts.");
+  }
+
+  const supabase = await createServerSupabaseClient();
+  const { data: row, error: fetchErr } = await supabase
+    .from("chart_of_accounts")
+    .select("id, type")
+    .eq("id", payload.accountId)
+    .eq("tenant_id", user.tenant.id)
+    .maybeSingle();
+
+  if (fetchErr) throw fetchErr;
+  if (!row) throw new Error("Account not found.");
+
+  if (row.type !== "revenue" && row.type !== "expense") {
+    throw new Error("P&L classification applies only to revenue and expense accounts.");
+  }
+
+  const nextClassification =
+    payload.account_classification !== null
+      ? payload.account_classification
+      : defaultAccountClassificationForCreate({
+          type: row.type,
+          explicit: null,
+        });
+
+  const updateData: ChartOfAccountsUpdate = {
+    account_classification: nextClassification,
+  };
+  const table = supabase.from("chart_of_accounts") as unknown as {
+    update: (values: ChartOfAccountsUpdate) => {
+      eq: (c: string, v: string) => { eq: (c2: string, v2: string) => Promise<{ error: unknown }> };
+    };
+  };
+  const { error } = await table.update(updateData).eq("id", payload.accountId).eq("tenant_id", user.tenant.id);
+  if (error) throw error;
+
+  const auditData: AuditLogsInsert = {
+    tenant_id: user.tenant.id,
+    actor_id: user.id,
+    action: "account.pnl_classification_updated",
+    entity: "chart_of_accounts",
+    entity_id: payload.accountId,
+    changes: { account_classification: payload.account_classification },
+  };
+  const auditTable = supabase.from("audit_logs") as unknown as {
+    insert: (values: AuditLogsInsert[]) => Promise<{ error: unknown }>;
+  };
+  await auditTable.insert([auditData]);
+
+  revalidatePath("/accounts");
+  revalidatePath("/reports");
+}
+
 /**
  * Auto-create account with generated code (used by AI)
  * This function is called when AI suggests creating a new account
@@ -184,13 +271,15 @@ export async function autoCreateAccountAction(
   }
 
   // Use type assertion for category since it may not be in database types yet
+  const autoClassification = defaultAccountClassificationForCreate({ type, explicit: null });
   const insertData = {
     tenant_id: user.tenant.id,
     name: name.trim(),
     code,
     type,
     ...(finalCategory && { category: finalCategory }),
-  } as ChartOfAccountsInsert & { category?: "current" | "non_current" | null };
+    ...(autoClassification !== null && { account_classification: autoClassification }),
+  } as ChartOfAccountsInsert & { category?: "current" | "non_current" | null; account_classification?: string | null };
 
   const table = supabase.from("chart_of_accounts") as unknown as {
     insert: (values: ChartOfAccountsInsert[]) => {

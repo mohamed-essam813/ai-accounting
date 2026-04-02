@@ -1,6 +1,7 @@
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { getCurrentUser } from "./users";
 import type { Database } from "@/lib/database.types";
+import { dedupeEntitiesForDisplay } from "@/lib/utils/entity-dedupe";
 
 type ChartOfAccountsRow = Database["public"]["Tables"]["chart_of_accounts"]["Row"];
 
@@ -24,7 +25,7 @@ export async function listAccounts() {
   }
 
   // Map to ensure category is included (may be null if migration hasn't run)
-  return (data ?? []).map((acc) => {
+  const mapped = (data ?? []).map((acc) => {
     const account = acc as unknown as ChartOfAccountsRow & { category?: "current" | "non_current" | null };
     return {
       id: account.id,
@@ -37,8 +38,14 @@ export async function listAccounts() {
       created_at: account.created_at,
       detail_type: account.detail_type ?? null,
       allow_reconciliation: account.allow_reconciliation ?? false,
+      prd_account_kind: account.prd_account_kind ?? null,
+      account_classification: account.account_classification ?? null,
     };
   });
+  return dedupeEntitiesForDisplay(mapped as unknown as Record<string, unknown>[], {
+    idKey: "id",
+    entityLabel: "chart-of-accounts",
+  }) as typeof mapped;
 }
 
 export async function getAccountByCode(code: string) {
@@ -64,52 +71,51 @@ export async function getAccountByCode(code: string) {
  */
 export async function ensureDefaultAccounts(tenantId: string) {
   const supabase = await createServerSupabaseClient();
-  
-  const defaultAccounts = [
+  type ChartOfAccountsInsertLocal = Database["public"]["Tables"]["chart_of_accounts"]["Insert"];
+
+  const defaultAccounts: ChartOfAccountsInsertLocal[] = [
     // ASSETS
     // Current Assets (1000-1999)
-    { code: "1000", name: "Cash", type: "asset" as const },
-    { code: "1100", name: "Accounts Receivable", type: "asset" as const },
-    { code: "1200", name: "Inventory", type: "asset" as const },
-    { code: "1300", name: "Prepaid Expenses", type: "asset" as const },
-    { code: "1400", name: "Other Current Assets", type: "asset" as const },
+    { code: "1000", name: "Cash", type: "asset", tenant_id: tenantId },
+    { code: "1100", name: "Accounts Receivable", type: "asset", tenant_id: tenantId },
+    { code: "1200", name: "Inventory", type: "asset", tenant_id: tenantId },
+    { code: "1300", name: "Prepaid Expenses", type: "asset", tenant_id: tenantId },
+    { code: "1400", name: "Other Current Assets", type: "asset", tenant_id: tenantId },
     // Non-Current Assets (1500-1999)
-    { code: "1500", name: "Property, Plant & Equipment", type: "asset" as const },
-    { code: "1600", name: "Accumulated Depreciation", type: "asset" as const },
-    { code: "1700", name: "Intangible Assets", type: "asset" as const },
-    { code: "1800", name: "Long-term Investments", type: "asset" as const },
-    
+    { code: "1500", name: "Property, Plant & Equipment", type: "asset", tenant_id: tenantId },
+    { code: "1600", name: "Accumulated Depreciation", type: "asset", tenant_id: tenantId },
+    { code: "1700", name: "Intangible Assets", type: "asset", tenant_id: tenantId },
+    { code: "1800", name: "Long-term Investments", type: "asset", tenant_id: tenantId },
+
     // LIABILITIES
-    // Current Liabilities (2000-2499)
-    { code: "2000", name: "Accounts Payable", type: "liability" as const },
-    { code: "2100", name: "VAT Output Tax", type: "liability" as const },
-    { code: "2200", name: "Accrued Expenses", type: "liability" as const },
-    { code: "2300", name: "Short-term Debt", type: "liability" as const },
-    { code: "2400", name: "Other Current Liabilities", type: "liability" as const },
-    // Non-Current Liabilities (2500-2999)
-    { code: "2500", name: "Long-term Debt", type: "liability" as const },
-    { code: "2600", name: "Deferred Tax Liabilities", type: "liability" as const },
-    
-    // EQUITY (3000-3999)
-    { code: "3000", name: "Equity", type: "equity" as const },
-    { code: "3100", name: "Retained Earnings", type: "equity" as const },
-    { code: "3200", name: "Share Capital", type: "equity" as const },
-    
-    // REVENUE (4000-4999)
-    { code: "4000", name: "Sales Revenue", type: "revenue" as const },
-    { code: "4100", name: "Service Revenue", type: "revenue" as const },
-    { code: "4200", name: "Other Income", type: "revenue" as const },
-    
-    // EXPENSES (5000-5999)
-    { code: "5000", name: "Consulting Expense", type: "expense" as const },
-    { code: "5200", name: "Marketing Expense", type: "expense" as const },
-    { code: "5300", name: "General Expense", type: "expense" as const },
-    { code: "5400", name: "Salaries & Wages", type: "expense" as const },
-    { code: "5500", name: "Cost of Goods Sold", type: "expense" as const },
-    { code: "5600", name: "Depreciation Expense", type: "expense" as const },
-    { code: "5700", name: "Rent Expense", type: "expense" as const },
-    { code: "5800", name: "Utilities Expense", type: "expense" as const },
-    { code: "5900", name: "Other Expenses", type: "expense" as const },
+    { code: "2000", name: "Accounts Payable", type: "liability", tenant_id: tenantId },
+    { code: "2100", name: "VAT Output Tax", type: "liability", tenant_id: tenantId },
+    { code: "2200", name: "Accrued Expenses", type: "liability", tenant_id: tenantId },
+    { code: "2300", name: "Short-term Debt", type: "liability", tenant_id: tenantId },
+    { code: "2400", name: "Other Current Liabilities", type: "liability", tenant_id: tenantId },
+    { code: "2500", name: "Long-term Debt", type: "liability", tenant_id: tenantId },
+    { code: "2600", name: "Deferred Tax Liabilities", type: "liability", tenant_id: tenantId },
+
+    // EQUITY
+    { code: "3000", name: "Equity", type: "equity", tenant_id: tenantId },
+    { code: "3100", name: "Retained Earnings", type: "equity", tenant_id: tenantId },
+    { code: "3200", name: "Share Capital", type: "equity", tenant_id: tenantId },
+
+    // REVENUE — P&L classification explicit (not inferred from code)
+    { code: "4000", name: "Sales Revenue", type: "revenue", tenant_id: tenantId, account_classification: "revenue" },
+    { code: "4100", name: "Service Revenue", type: "revenue", tenant_id: tenantId, account_classification: "revenue" },
+    { code: "4200", name: "Other Income", type: "revenue", tenant_id: tenantId, account_classification: "other_income" },
+
+    // EXPENSES
+    { code: "5000", name: "Consulting Expense", type: "expense", tenant_id: tenantId, account_classification: "operating_expense" },
+    { code: "5200", name: "Marketing Expense", type: "expense", tenant_id: tenantId, account_classification: "operating_expense" },
+    { code: "5300", name: "General Expense", type: "expense", tenant_id: tenantId, account_classification: "operating_expense" },
+    { code: "5400", name: "Salaries & Wages", type: "expense", tenant_id: tenantId, account_classification: "operating_expense" },
+    { code: "5500", name: "Cost of Goods Sold", type: "expense", tenant_id: tenantId, account_classification: "cost_of_sales" },
+    { code: "5600", name: "Depreciation Expense", type: "expense", tenant_id: tenantId, account_classification: "operating_expense" },
+    { code: "5700", name: "Rent Expense", type: "expense", tenant_id: tenantId, account_classification: "operating_expense" },
+    { code: "5800", name: "Utilities Expense", type: "expense", tenant_id: tenantId, account_classification: "operating_expense" },
+    { code: "5900", name: "Other Expenses", type: "expense", tenant_id: tenantId, account_classification: "operating_expense" },
   ];
 
   // Check which accounts already exist
@@ -133,18 +139,10 @@ export async function ensureDefaultAccounts(tenantId: string) {
     return; // All accounts already exist
   }
 
-  // Insert missing accounts
-  // Type assertion to fix Supabase type inference
-  type ChartOfAccountsInsert = Database["public"]["Tables"]["chart_of_accounts"]["Insert"];
   const insertTable = supabase.from("chart_of_accounts") as unknown as {
-    insert: (values: ChartOfAccountsInsert[]) => Promise<{ error: unknown }>;
+    insert: (values: ChartOfAccountsInsertLocal[]) => Promise<{ error: unknown }>;
   };
-  const { error } = await insertTable.insert(
-    accountsToCreate.map((account) => ({
-      tenant_id: tenantId,
-      ...account,
-    } as ChartOfAccountsInsert)),
-  );
+  const { error } = await insertTable.insert(accountsToCreate);
 
   if (error) {
     console.error("Failed to create default accounts", error);

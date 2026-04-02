@@ -33,10 +33,21 @@ export async function getRecentDrafts(limit = 5) {
     throw error;
   }
 
-  return (data ?? []).map((draft) => ({
+  const rows = data ?? [];
+  const contactIds = [...new Set(rows.map((r) => r.contact_id).filter(Boolean))] as string[];
+  let nameByContactId = new Map<string, string>();
+  if (contactIds.length > 0) {
+    const supabase2 = await createServerSupabaseClient();
+    const { data: contacts } = await supabase2.from("contacts").select("id, name").in("id", contactIds);
+    nameByContactId = new Map((contacts ?? []).map((c) => [c.id, c.name]));
+  }
+
+  return rows.map((draft) => ({
     ...draft,
     confidence: draft.confidence ? Number(draft.confidence) : null,
     entities: (draft.data_json as DraftPayload["entities"]) ?? {},
+    /** Resolved from contacts — prefer this for UI over entities.counterparty */
+    counterparty_display_name: draft.contact_id ? nameByContactId.get(draft.contact_id) ?? null : null,
   }));
 }
 

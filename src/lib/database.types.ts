@@ -569,6 +569,7 @@ export type Database = {
       }
       chart_of_accounts: {
         Row: {
+          account_classification: string | null
           allow_reconciliation: boolean
           category: string | null
           code: string
@@ -582,6 +583,7 @@ export type Database = {
           type: string
         }
         Insert: {
+          account_classification?: string | null
           allow_reconciliation?: boolean
           category?: string | null
           code: string
@@ -595,6 +597,7 @@ export type Database = {
           type: string
         }
         Update: {
+          account_classification?: string | null
           allow_reconciliation?: boolean
           category?: string | null
           code?: string
@@ -2967,6 +2970,7 @@ export type Database = {
       }
       v_trial_balance: {
         Row: {
+          account_classification: string | null
           account_id: string | null
           code: string | null
           name: string | null

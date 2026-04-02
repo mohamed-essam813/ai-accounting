@@ -30,6 +30,7 @@ import {
 } from "@/components/ui/select";
 import { formatCurrency } from "@/lib/format";
 import { getErrorMessage } from "@/lib/utils";
+import { isCounterpartyMismatchError } from "@/lib/drafts/counterparty-resolution";
 import type { DraftPayload } from "@/lib/ai/schema";
 import type { Attachment } from "@/lib/data/documents";
 import type { InventoryItem } from "@/lib/data/inventory";
@@ -113,6 +114,8 @@ type DraftData = {
   confidence: number | null;
   entities: DraftPayload["entities"];
   created_at: string;
+  /** From contacts when draft.contact_id is set */
+  counterparty_display_name?: string | null;
 };
 
 type Props = {
@@ -338,9 +341,23 @@ export function InlineDraftReviewPanel({
 
     startProcessing(async () => {
       try {
-        // First approve, then post
         await approveDraftAction({ draftId: draft.id });
-        await postDraftAction({ draftId: draft.id });
+        try {
+          await postDraftAction({ draftId: draft.id });
+        } catch (postErr) {
+          const msg = getErrorMessage(postErr, "");
+          if (
+            isCounterpartyMismatchError(msg) &&
+            typeof window !== "undefined" &&
+            window.confirm(
+              "This differs from the name extracted from the uploaded document. Continue posting?",
+            )
+          ) {
+            await postDraftAction({ draftId: draft.id, acknowledgeCounterpartyDifference: true });
+          } else {
+            throw postErr;
+          }
+        }
         toast.success("Draft approved and posted");
         onDraftUpdated?.();
         onClose();
@@ -402,7 +419,9 @@ export function InlineDraftReviewPanel({
     });
   };
 
-  const transactionSummary = `${intentLabels[draft.intent] || "Transaction"}${draft.entities.counterparty ? ` for ${draft.entities.counterparty}` : ""}${draft.entities.amount ? ` - ${formatCurrency(draft.entities.amount, draft.entities.currency || "USD")}` : ""}`;
+  const counterpartyLabel =
+    draft.counterparty_display_name ?? draft.entities.counterparty ?? "";
+  const transactionSummary = `${intentLabels[draft.intent] || "Transaction"}${counterpartyLabel ? ` for ${counterpartyLabel}` : ""}${draft.entities.amount ? ` - ${formatCurrency(draft.entities.amount, draft.entities.currency || "USD")}` : ""}`;
 
   return (
     <Card className="flex flex-col max-h-[calc(100vh-8rem)]">
@@ -540,6 +559,12 @@ export function InlineDraftReviewPanel({
                   <Input {...form.register("invoice_number")} />
                 </div>
               )}
+              {draft.intent === "create_bill" && (
+                <div>
+                  <label className="text-sm font-medium mb-1 block">Bill Number</label>
+                  <Input {...form.register("invoice_number")} />
+                </div>
+              )}
               {draft.entities.due_date && (
                 <div>
                   <label className="text-sm font-medium mb-1 block">Due Date</label>
@@ -589,7 +614,7 @@ export function InlineDraftReviewPanel({
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
                 <label className="text-sm font-medium text-muted-foreground">Customer / Supplier</label>
-                <p className="text-sm mt-1">{draft.entities.counterparty || "—"}</p>
+                <p className="text-sm mt-1">{counterpartyLabel || "—"}</p>
               </div>
               <div>
                 <label className="text-sm font-medium text-muted-foreground">Date</label>
@@ -613,7 +638,9 @@ export function InlineDraftReviewPanel({
               </div>
               {draft.entities.invoice_number && (
                 <div>
-                  <label className="text-sm font-medium text-muted-foreground">Invoice Number</label>
+                  <label className="text-sm font-medium text-muted-foreground">
+                    {draft.intent === "create_bill" ? "Bill Number" : "Invoice Number"}
+                  </label>
                   <p className="text-sm mt-1">{draft.entities.invoice_number}</p>
                 </div>
               )}

@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
 import { Search, ChevronDown } from "lucide-react";
+import { dedupeEntitiesForDisplay } from "@/lib/utils/entity-dedupe";
 
 type Account = {
   id: string;
@@ -27,10 +28,13 @@ export function SearchableAccountSelector({ accounts, selectedAccountCode }: Pro
   const inputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const sortedAccounts = useMemo(
-    () => [...accounts].sort((a, b) => a.code.localeCompare(b.code)),
-    [accounts]
-  );
+  const sortedAccounts = useMemo(() => {
+    const deduped = dedupeEntitiesForDisplay(
+      accounts.map((a) => ({ ...a }) as unknown as Record<string, unknown>),
+      { idKey: "id", entityLabel: "ledger-account-selector" },
+    ) as Account[];
+    return [...deduped].sort((a, b) => a.code.localeCompare(b.code));
+  }, [accounts]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();

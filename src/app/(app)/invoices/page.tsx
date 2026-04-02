@@ -11,6 +11,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { FileDown } from "lucide-react";
+import { formatSettlementStatusLabel } from "@/lib/accounting/settlement-status-label";
 
 export const revalidate = 60;
 
@@ -44,6 +45,9 @@ export default async function InvoicesPage() {
                     <TableHead>Invoice #</TableHead>
                     <TableHead>Date</TableHead>
                     <TableHead className="text-right">Total</TableHead>
+                    <TableHead className="text-right">Paid</TableHead>
+                    <TableHead className="text-right">Outstanding</TableHead>
+                    <TableHead>Status</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -56,6 +60,15 @@ export default async function InvoicesPage() {
                       <TableCell>{inv.invoice_date}</TableCell>
                       <TableCell className="text-right font-mono text-sm">
                         {inv.currency_code ?? ""} {Number(inv.total_amount).toFixed(2)}
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-sm">
+                        {inv.currency_code ?? ""} {Number(inv.amount_received).toFixed(2)}
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-sm">
+                        {inv.currency_code ?? ""} {Number(inv.outstanding_amount).toFixed(2)}
+                      </TableCell>
+                      <TableCell className="text-sm">
+                        {formatSettlementStatusLabel(inv.settlement_status)}
                       </TableCell>
                       <TableCell className="text-right">
                         <Button variant="outline" size="sm" asChild>

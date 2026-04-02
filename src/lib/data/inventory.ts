@@ -6,6 +6,7 @@
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { getCurrentUser } from "./users";
 import type { Database } from "@/lib/database.types";
+import { normalizeEntityName } from "@/lib/utils/entity-dedupe";
 
 type InventoryItemRow = Database["public"]["Tables"]["inventory_items"]["Row"];
 type InventoryTransactionRow = Database["public"]["Tables"]["inventory_transactions"]["Row"];
@@ -157,6 +158,33 @@ export async function getInventoryItems(): Promise<InventoryItem[]> {
   }
 
   return (data || []).map((row) => rowToInventoryItem(row));
+}
+
+/** Prevent duplicate product/service rows that differ only by spacing or case. */
+export async function findActiveItemByNormalizedName(
+  rawName: string,
+): Promise<{ id: string; name: string } | null> {
+  const user = await getCurrentUser();
+  if (!user?.tenant) {
+    return null;
+  }
+  const target = normalizeEntityName(rawName);
+  if (!target) return null;
+
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase
+    .from("inventory_items")
+    .select("id, name")
+    .eq("tenant_id", user.tenant.id)
+    .eq("is_active", true);
+
+  if (error) {
+    console.error("findActiveItemByNormalizedName", error);
+    throw error;
+  }
+
+  const hit = (data ?? []).find((r) => normalizeEntityName(r.name) === target);
+  return hit ? { id: hit.id, name: hit.name } : null;
 }
 
 /**

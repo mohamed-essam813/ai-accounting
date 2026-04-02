@@ -37,6 +37,7 @@ import {
 } from "@/components/ui/dialog";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { getErrorMessage } from "@/lib/utils";
+import { isCounterpartyMismatchError } from "@/lib/drafts/counterparty-resolution";
 import { approveDraftAction, postDraftAction, updateDraftAction, deleteDraftAction, convertPostedToDraftAction } from "@/lib/actions/drafts";
 import { PromptIntentEnum } from "@/lib/ai/schema";
 import { toast } from "sonner";
@@ -52,6 +53,11 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { Lock, Trash2, RotateCcw } from "lucide-react";
+import { Label } from "@/components/ui/label";
+import { AccountCombobox, type AccountOption } from "@/components/prompt/account-combobox";
+import { SmartItemSelector } from "@/components/prompt/smart-item-selector";
+import type { BusinessItem } from "@/lib/data/inventory";
+import { getItemPickerByIdAction } from "@/lib/actions/items-picker";
 
 // Account type - new fields are optional since they may not be in database types yet
 type Account = Database["public"]["Tables"]["chart_of_accounts"]["Row"];
@@ -62,6 +68,8 @@ type DraftTableItem = {
   status: string;
   confidence: number | null;
   created_at: string;
+  /** From contacts table when draft.contact_id is set — authoritative for display */
+  counterparty_display_name?: string | null;
   entities: {
     amount?: number;
     currency?: string;
@@ -74,6 +82,18 @@ type DraftTableItem = {
       rate?: number | null;
       amount?: number | null;
     } | null;
+    bill_purchase_type?: "expense" | "inventory" | "asset";
+    fixed_asset_draft?: {
+      name?: string;
+      category?: string;
+      asset_account_id?: string;
+      useful_life_years?: number;
+      depreciation_method?: "straight_line";
+    };
+    selected_item_id?: string | null;
+    ai_selected_accounts?: {
+      debit_account?: { existing_account_id?: string };
+    };
   };
 };
 
@@ -88,6 +108,7 @@ export function DraftsTable({ drafts, accounts = [], userRole, displayCurrency }
   const router = useRouter();
   const queryClient = useQueryClient();
   const [isPending, startTransition] = useTransition();
+  const [postingDraftId, setPostingDraftId] = useState<string | null>(null);
   const [editorDraft, setEditorDraft] = useState<DraftTableItem | null>(null);
   const [isEditorOpen, setIsEditorOpen] = useState(false);
   const [draftToDelete, setDraftToDelete] = useState<DraftTableItem | null>(null);
@@ -129,36 +150,62 @@ export function DraftsTable({ drafts, accounts = [], userRole, displayCurrency }
     },
   });
 
-  const postMutation = useMutation({
-    mutationFn: postDraftAction,
-    onSuccess: (data, variables) => {
-      // Update local state immediately - data is object with id, status, posted_entry_id
-      if (typeof data === "object" && "id" in data) {
-        setLocalDrafts((prev) =>
-          prev.map((d) =>
-            d.id === data.id
-              ? { ...d, status: data.status, posted_entry_id: data.posted_entry_id }
-              : d
-          )
-        );
-      } else {
-        // Fallback: if data is string (entry.id), update by finding the draft
-        setLocalDrafts((prev) =>
-          prev.map((d) => (d.id === variables.draftId ? { ...d, status: "posted" } : d))
-        );
+  const applyPostSuccess = (data: { id: string; status: string; posted_entry_id?: string | null }, draftId: string) => {
+    setLocalDrafts((prev) =>
+      prev.map((d) =>
+        d.id === draftId
+          ? { ...d, status: data.status, posted_entry_id: data.posted_entry_id ?? null }
+          : d
+      ),
+    );
+    toast.success("Journal entry posted");
+    queryClient.invalidateQueries({ queryKey: ["drafts"] });
+    router.refresh();
+  };
+
+  const handlePostEntry = (draftId: string) => {
+    startTransition(async () => {
+      setPostingDraftId(draftId);
+      try {
+        const data = await postDraftAction({ draftId });
+        if (typeof data === "object" && data !== null && "id" in data) {
+          applyPostSuccess(data as { id: string; status: string; posted_entry_id?: string | null }, draftId);
+        }
+      } catch (error) {
+        const msg = getErrorMessage(error, "");
+        if (isCounterpartyMismatchError(msg)) {
+          if (
+            typeof window !== "undefined" &&
+            window.confirm(
+              "This differs from the name extracted from the uploaded document. Continue posting?",
+            )
+          ) {
+            try {
+              const data = await postDraftAction({
+                draftId,
+                acknowledgeCounterpartyDifference: true,
+              });
+              if (typeof data === "object" && data !== null && "id" in data) {
+                applyPostSuccess(data as { id: string; status: string; posted_entry_id?: string | null }, draftId);
+              }
+            } catch (e2) {
+              console.error(e2);
+              toast.error("Failed to post journal entry", {
+                description: getErrorMessage(e2, "Unknown error occurred."),
+              });
+            }
+          }
+        } else {
+          console.error(error);
+          toast.error("Failed to post journal entry", {
+            description: getErrorMessage(error, "Unknown error occurred."),
+          });
+        }
+      } finally {
+        setPostingDraftId(null);
       }
-      toast.success("Journal entry posted");
-      // Invalidate queries to refetch from server
-      queryClient.invalidateQueries({ queryKey: ["drafts"] });
-      router.refresh();
-    },
-    onError: (error) => {
-      console.error(error);
-      toast.error("Failed to post journal entry", {
-        description: getErrorMessage(error, "Unknown error occurred."),
-      });
-    },
-  });
+    });
+  };
 
   // Pagination - use localDrafts for real-time updates
   const {
@@ -226,7 +273,9 @@ export function DraftsTable({ drafts, accounts = [], userRole, displayCurrency }
                     {formatDate(draft.created_at)}
                   </TableCell>
                   <TableCell className="capitalize">{draft.intent.replaceAll("_", " ")}</TableCell>
-                  <TableCell>{draft.entities.counterparty ?? "—"}</TableCell>
+                  <TableCell>
+                    {draft.counterparty_display_name ?? draft.entities.counterparty ?? "—"}
+                  </TableCell>
                   <TableCell className="max-w-xs truncate">
                     {draft.entities.description ?? "—"}
                   </TableCell>
@@ -308,12 +357,14 @@ export function DraftsTable({ drafts, accounts = [], userRole, displayCurrency }
                     <Button
                       size="sm"
                       className="shrink-0"
-                      disabled={draft.status === "posted" || draft.status === "draft" || postMutation.isPending}
-                      onClick={() => {
-                        postMutation.mutate({ draftId: draft.id });
-                      }}
+                      disabled={
+                        draft.status === "posted" ||
+                        draft.status === "draft" ||
+                        postingDraftId === draft.id
+                      }
+                      onClick={() => handlePostEntry(draft.id)}
                     >
-                      {postMutation.isPending ? "Posting…" : "Post Entry"}
+                      {postingDraftId === draft.id ? "Posting…" : "Post Entry"}
                     </Button>
                     {canConvertToDraft(draft) && (
                       <Button
@@ -495,6 +546,8 @@ type DraftEditorDialogProps = {
 
 const DraftIntentOptions = PromptIntentEnum.options;
 
+const BillPurchaseTypeOptions = z.enum(["expense", "inventory", "asset"]);
+
 const DraftEditFormSchema = z
   .object({
     intent: z.enum(DraftIntentOptions),
@@ -531,6 +584,21 @@ const DraftEditFormSchema = z
     tax_rate: z.string().optional(),
     tax_amount: z.string().optional(),
     tax_treatment: z.enum(["exclusive", "inclusive"]).optional(),
+    bill_purchase_type: BillPurchaseTypeOptions.optional(),
+    expense_account_id: z.string().optional(),
+    asset_name: z.string().optional(),
+    asset_category: z.string().optional(),
+    asset_account_id: z.string().optional(),
+    useful_life_years: z
+      .union([z.number(), z.string()])
+      .optional()
+      .transform((val) => {
+        if (val === undefined || val === "") return undefined;
+        if (typeof val === "number") return val;
+        const n = parseInt(val, 10);
+        return Number.isNaN(n) ? undefined : n;
+      }),
+    depreciation_method: z.enum(["straight_line"]).optional(),
   })
   .superRefine((values, ctx) => {
     // Validate due_date is not before transaction_date
@@ -553,11 +621,59 @@ const DraftEditFormSchema = z
         message: "Enter a valid number",
       });
     }
+
+    if (values.intent === "create_bill") {
+      const pt = values.bill_purchase_type ?? "expense";
+      if (pt === "expense" && !values.expense_account_id?.trim()) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["expense_account_id"],
+          message: "Choose an expense category",
+        });
+      }
+      if (pt === "asset") {
+        if (!values.asset_name?.trim()) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["asset_name"],
+            message: "Enter an asset name",
+          });
+        }
+        if (!values.asset_category?.trim()) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["asset_category"],
+            message: "Choose an asset category",
+          });
+        }
+        if (!values.asset_account_id?.trim()) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["asset_account_id"],
+            message: "Choose a fixed asset account",
+          });
+        }
+        const y = values.useful_life_years;
+        if (y === undefined || y <= 0) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["useful_life_years"],
+            message: "Enter useful life (years)",
+          });
+        }
+      }
+    }
   });
 
 type DraftEditFormValues = z.infer<typeof DraftEditFormSchema>;
 
-function getDefaultValues(draft: DraftTableItem): DraftEditFormValues {
+function findAccountOption(accounts: Account[], id: string | undefined): AccountOption | null {
+  if (!id) return null;
+  const a = accounts.find((x) => x.id === id);
+  return a ? { id: a.id, name: a.name, code: a.code, type: a.type } : null;
+}
+
+function getDefaultValues(draft: DraftTableItem, accounts: Account[]): DraftEditFormValues {
   // Ensure date is valid - use today if invalid
   let defaultDate = new Date().toISOString().slice(0, 10);
   if (typeof draft.entities.date === "string") {
@@ -573,8 +689,18 @@ function getDefaultValues(draft: DraftTableItem): DraftEditFormValues {
   }
 
   const tax = draft.entities.tax as { rate?: number; amount?: number; tax_rate_id?: string } | undefined;
-  // Get tax_treatment from draft (default to exclusive)
   const draftWithTaxTreatment = draft as DraftTableItem & { tax_treatment?: "exclusive" | "inclusive" | null };
+  const ent = draft.entities as DraftTableItem["entities"];
+  const bpt = ent.bill_purchase_type ?? "expense";
+  const debitId = ent.ai_selected_accounts?.debit_account?.existing_account_id;
+  const fa = ent.fixed_asset_draft;
+  let expense_account_id = "";
+  let asset_account_id = "";
+  if (bpt === "expense" && debitId) expense_account_id = debitId;
+  if (bpt === "asset") {
+    asset_account_id = fa?.asset_account_id ?? debitId ?? "";
+  }
+
   return {
     intent: (draft.intent as DraftEditFormValues["intent"]) ?? "create_invoice",
     amount: typeof draft.entities.amount === "number" ? draft.entities.amount : 0,
@@ -588,14 +714,32 @@ function getDefaultValues(draft: DraftTableItem): DraftEditFormValues {
     tax_amount:
       tax && typeof tax.amount === "number" ? String(tax.amount) : "",
     tax_treatment: (draftWithTaxTreatment.tax_treatment as "exclusive" | "inclusive") ?? "exclusive",
+    bill_purchase_type: draft.intent === "create_bill" ? bpt : undefined,
+    expense_account_id: draft.intent === "create_bill" ? expense_account_id : undefined,
+    asset_name: fa?.name ?? "",
+    asset_category: fa?.category ?? "Equipment",
+    asset_account_id: draft.intent === "create_bill" ? asset_account_id : undefined,
+    useful_life_years: fa?.useful_life_years ?? 3,
+    depreciation_method: "straight_line",
   };
 }
 
 function DraftEditorDialog({ draft, open, onOpenChange, accounts = [], readOnly = false }: DraftEditorDialogProps) {
   const [isSaving, startTransition] = useTransition();
   const [taxRates, setTaxRates] = useState<TaxRate[]>([]);
+  const [expenseAccount, setExpenseAccount] = useState<AccountOption | null>(null);
+  const [assetAccount, setAssetAccount] = useState<AccountOption | null>(null);
+  const [lineItem, setLineItem] = useState<BusinessItem | null>(null);
 
-  const defaultValues = useMemo(() => (draft ? getDefaultValues(draft) : undefined), [draft]);
+  const accountOptions = useMemo(
+    () => accounts.map((a) => ({ id: a.id, name: a.name, code: a.code, type: a.type })),
+    [accounts],
+  );
+
+  const defaultValues = useMemo(
+    () => (draft ? getDefaultValues(draft, accounts) : undefined),
+    [draft, accounts],
+  );
   const form = useForm<DraftEditFormValues>({
     resolver: zodResolver(DraftEditFormSchema) as any,
     defaultValues,
@@ -605,6 +749,7 @@ function DraftEditorDialog({ draft, open, onOpenChange, accounts = [], readOnly 
   const amountValue = useWatch({ control: form.control, name: "amount" });
   const taxRateValue = useWatch({ control: form.control, name: "tax_rate" });
   const taxTreatmentValue = useWatch({ control: form.control, name: "tax_treatment" }) ?? "exclusive";
+  const billPurchaseType = useWatch({ control: form.control, name: "bill_purchase_type" }) ?? "expense";
 
   // Load tax rates
   useEffect(() => {
@@ -643,9 +788,35 @@ function DraftEditorDialog({ draft, open, onOpenChange, accounts = [], readOnly 
 
   useEffect(() => {
     if (draft) {
-      form.reset(getDefaultValues(draft));
+      const vals = getDefaultValues(draft, accounts);
+      form.reset(vals);
+      const ent = draft.entities as DraftTableItem["entities"];
+      const bpt = ent.bill_purchase_type ?? "expense";
+      const debitId = ent.ai_selected_accounts?.debit_account?.existing_account_id;
+      if (bpt === "expense") {
+        setExpenseAccount(findAccountOption(accounts, debitId));
+        setAssetAccount(null);
+      } else if (bpt === "asset") {
+        const faId = ent.fixed_asset_draft?.asset_account_id ?? debitId;
+        setAssetAccount(findAccountOption(accounts, faId));
+        setExpenseAccount(null);
+      } else {
+        setExpenseAccount(null);
+        setAssetAccount(null);
+      }
+      const sid = ent.selected_item_id;
+      if (bpt === "inventory" && sid && typeof sid === "string") {
+        getItemPickerByIdAction(sid)
+          .then((item) => {
+            if (item) setLineItem(item);
+            else setLineItem(null);
+          })
+          .catch(() => setLineItem(null));
+      } else {
+        setLineItem(null);
+      }
     }
-  }, [draft, form]);
+  }, [draft, form, accounts]);
 
   // Hydrate legacy drafts: tax.rate but no tax_rate_id → match by percentage and set selector
   useEffect(() => {
@@ -662,8 +833,29 @@ function DraftEditorDialog({ draft, open, onOpenChange, accounts = [], readOnly 
     }
   }, [draft, taxRates, open, form]);
 
+  useEffect(() => {
+    if (intentValue === "create_bill" && !form.getValues("bill_purchase_type")) {
+      form.setValue("bill_purchase_type", "expense");
+    }
+  }, [intentValue, form]);
+
+  useEffect(() => {
+    if (expenseAccount) form.setValue("expense_account_id", expenseAccount.id);
+  }, [expenseAccount, form]);
+
+  useEffect(() => {
+    if (assetAccount) form.setValue("asset_account_id", assetAccount.id);
+  }, [assetAccount, form]);
+
   const onSubmit = (values: DraftEditFormValues) => {
     if (!draft) return;
+
+    const existingItemId = (draft.entities as { selected_item_id?: string | null }).selected_item_id;
+    const inventoryItemId = lineItem?.id ?? existingItemId ?? null;
+    if (values.intent === "create_bill" && values.bill_purchase_type === "inventory" && !inventoryItemId) {
+      toast.error("Select an inventory-tracked product.");
+      return;
+    }
 
     startTransition(async () => {
       try {
@@ -674,17 +866,43 @@ function DraftEditorDialog({ draft, open, onOpenChange, accounts = [], readOnly 
         const taxAmount = values.tax_amount ? Number(values.tax_amount) : undefined;
         const taxTreatment = values.tax_treatment ?? "exclusive";
 
+        const desc =
+          values.intent === "create_bill" && values.bill_purchase_type === "asset"
+            ? values.asset_name?.trim() || values.description || null
+            : values.description
+              ? values.description
+              : null;
+
         await updateDraftAction({
           draftId: draft.id,
           intent: values.intent,
           confidence: draft.confidence ?? 0.8,
           tax_treatment: taxTreatment,
+          ...(values.intent === "create_bill"
+            ? {
+                billPurchaseType: values.bill_purchase_type ?? "expense",
+                expenseAccountId:
+                  values.bill_purchase_type === "expense" ? values.expense_account_id : undefined,
+                selectedItemId:
+                  values.bill_purchase_type === "inventory" ? inventoryItemId : null,
+                fixedAssetDraft:
+                  values.bill_purchase_type === "asset"
+                    ? {
+                        name: values.asset_name?.trim() ?? "",
+                        category: values.asset_category ?? "",
+                        asset_account_id: values.asset_account_id ?? "",
+                        useful_life_years: Number(values.useful_life_years) > 0 ? Number(values.useful_life_years) : 1,
+                        depreciation_method: "straight_line" as const,
+                      }
+                    : undefined,
+              }
+            : {}),
           entities: {
             amount: values.amount,
             currency: values.currency,
             date: values.date,
             counterparty: values.counterparty ? values.counterparty : null,
-            description: values.description ? values.description : null,
+            description: desc,
             due_date: values.due_date ? values.due_date : null,
             invoice_number: values.invoice_number ? values.invoice_number : null,
             tax:
@@ -762,6 +980,146 @@ function DraftEditorDialog({ draft, open, onOpenChange, accounts = [], readOnly 
               {/* Confidence field removed - internal metric not shown to users */}
             </div>
 
+            {intentValue === "create_bill" ? (
+              <div className="space-y-4 rounded-md border bg-muted/30 p-4">
+                <div className="space-y-2">
+                  <Label>What did you purchase?</Label>
+                  <div className="grid gap-2 sm:grid-cols-3">
+                    {(["expense", "inventory", "asset"] as const).map((id) => (
+                      <Button
+                        key={id}
+                        type="button"
+                        variant={billPurchaseType === id ? "default" : "secondary"}
+                        size="sm"
+                        disabled={readOnly}
+                        onClick={() => {
+                          form.setValue("bill_purchase_type", id);
+                          if (id !== "expense") setExpenseAccount(null);
+                          if (id !== "asset") setAssetAccount(null);
+                          if (id !== "inventory") setLineItem(null);
+                        }}
+                      >
+                        {id === "expense" ? "Expense" : id === "inventory" ? "Inventory" : "Asset"}
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+                {billPurchaseType === "expense" ? (
+                  <div className="space-y-1">
+                    <AccountCombobox
+                      label="Expense category"
+                      placeholder="Search expense accounts…"
+                      value={expenseAccount}
+                      onChange={setExpenseAccount}
+                      accounts={accountOptions}
+                      typeFilter={(t) => t === "expense"}
+                      disabled={readOnly}
+                    />
+                    {form.formState.errors.expense_account_id ? (
+                      <p className="text-xs text-destructive">
+                        {form.formState.errors.expense_account_id.message}
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
+                {billPurchaseType === "inventory" ? (
+                  <SmartItemSelector
+                    taxRates={taxRates}
+                    value={lineItem}
+                    onChange={setLineItem}
+                    disabled={readOnly}
+                  />
+                ) : null}
+                {billPurchaseType === "asset" ? (
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="space-y-2 sm:col-span-2">
+                      <Label>Asset name</Label>
+                      <Input
+                        {...form.register("asset_name")}
+                        disabled={readOnly}
+                        placeholder="e.g. MacBook Pro"
+                      />
+                      {form.formState.errors.asset_name ? (
+                        <p className="text-xs text-destructive">
+                          {form.formState.errors.asset_name.message}
+                        </p>
+                      ) : null}
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Asset category</Label>
+                      <Select
+                        value={form.watch("asset_category") || "Equipment"}
+                        onValueChange={(v) => form.setValue("asset_category", v)}
+                        disabled={readOnly}
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {["Laptop", "Equipment", "Furniture", "Vehicle", "Other"].map((c) => (
+                            <SelectItem key={c} value={c}>
+                              {c}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      {form.formState.errors.asset_category ? (
+                        <p className="text-xs text-destructive">
+                          {form.formState.errors.asset_category.message}
+                        </p>
+                      ) : null}
+                    </div>
+                    <div className="space-y-2 sm:col-span-2">
+                      <AccountCombobox
+                        label="Fixed asset account"
+                        placeholder="Search fixed asset accounts…"
+                        value={assetAccount}
+                        onChange={setAssetAccount}
+                        accounts={accountOptions}
+                        typeFilter={(t) => t === "asset"}
+                        disabled={readOnly}
+                      />
+                      {form.formState.errors.asset_account_id ? (
+                        <p className="text-xs text-destructive">
+                          {form.formState.errors.asset_account_id.message}
+                        </p>
+                      ) : null}
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Useful life (years)</Label>
+                      <Input
+                        type="number"
+                        min={1}
+                        step={1}
+                        {...form.register("useful_life_years")}
+                        disabled={readOnly}
+                      />
+                      {form.formState.errors.useful_life_years ? (
+                        <p className="text-xs text-destructive">
+                          {form.formState.errors.useful_life_years.message}
+                        </p>
+                      ) : null}
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Depreciation</Label>
+                      <Select
+                        value="straight_line"
+                        onValueChange={() => form.setValue("depreciation_method", "straight_line")}
+                        disabled={readOnly}
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="straight_line">Straight-line</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
                 <label className="text-sm font-medium">Amount</label>
@@ -804,7 +1162,9 @@ function DraftEditorDialog({ draft, open, onOpenChange, accounts = [], readOnly 
                 <Input disabled={readOnly} {...form.register("counterparty")} />
               </div>
               <div className="space-y-2">
-                <label className="text-sm font-medium">Invoice Number</label>
+                <label className="text-sm font-medium">
+                  {intentValue === "create_bill" ? "Bill Number" : "Invoice Number"}
+                </label>
                 <Input 
                   {...form.register("invoice_number")} 
                   disabled={readOnly || intentValue === "create_invoice"}
