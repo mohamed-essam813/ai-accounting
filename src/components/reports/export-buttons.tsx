@@ -10,8 +10,21 @@ type ExportData = {
   title: string;
 };
 
-export function ExportButtons({ data }: { data: ExportData }) {
+export function ExportButtons({
+  data,
+  disabled = false,
+  disabledReason,
+}: {
+  data: ExportData;
+  /** When true, exports are blocked (e.g. balance sheet not balancing). */
+  disabled?: boolean;
+  disabledReason?: string;
+}) {
   const exportToCSV = () => {
+    if (disabled) {
+      toast.error("Export disabled", { description: disabledReason });
+      return;
+    }
     try {
       const csvContent = [
         data.headers.join(","),
@@ -36,6 +49,10 @@ export function ExportButtons({ data }: { data: ExportData }) {
   };
 
   const exportToExcel = async () => {
+    if (disabled) {
+      toast.error("Export disabled", { description: disabledReason });
+      return;
+    }
     try {
       // Dynamic import to avoid loading the library if not needed
       const XLSX = await import("xlsx");
@@ -72,6 +89,10 @@ export function ExportButtons({ data }: { data: ExportData }) {
   };
 
   const exportToPDF = async () => {
+    if (disabled) {
+      toast.error("Export disabled", { description: disabledReason });
+      return;
+    }
     try {
       // Dynamic import to avoid loading the library if not needed
       const { jsPDF } = await import("jspdf");
@@ -117,19 +138,24 @@ export function ExportButtons({ data }: { data: ExportData }) {
   };
 
   return (
-    <div className="flex gap-2">
-      <Button variant="outline" size="sm" onClick={exportToCSV}>
-        <Download className="mr-2 h-4 w-4" />
-        CSV
-      </Button>
-      <Button variant="outline" size="sm" onClick={exportToExcel}>
-        <Download className="mr-2 h-4 w-4" />
-        Excel
-      </Button>
-      <Button variant="outline" size="sm" onClick={exportToPDF}>
-        <Download className="mr-2 h-4 w-4" />
-        PDF
-      </Button>
+    <div className="flex flex-col items-end gap-1">
+      <div className="flex gap-2">
+        <Button variant="outline" size="sm" onClick={exportToCSV} disabled={disabled}>
+          <Download className="mr-2 h-4 w-4" />
+          CSV
+        </Button>
+        <Button variant="outline" size="sm" onClick={exportToExcel} disabled={disabled}>
+          <Download className="mr-2 h-4 w-4" />
+          Excel
+        </Button>
+        <Button variant="outline" size="sm" onClick={exportToPDF} disabled={disabled}>
+          <Download className="mr-2 h-4 w-4" />
+          PDF
+        </Button>
+      </div>
+      {disabled && disabledReason ? (
+        <p className="text-xs text-muted-foreground max-w-[280px] text-right">{disabledReason}</p>
+      ) : null}
     </div>
   );
 }

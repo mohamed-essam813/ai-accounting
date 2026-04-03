@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/database.types";
+import { inferReceiptAllocationsForPosting } from "@/lib/posting/receipt-allocation-inference";
 import {
   deriveDocumentTotalsForMaterialize,
   lineNetAmountFromInventoryLine,
@@ -108,9 +109,11 @@ export async function materializeInvoiceOrBillFromPostedDraft(
 
     if (invErr) {
       console.error("[materialize] invoice insert", invErr);
-      return;
+      throw invErr;
     }
-    if (!inv?.id) return;
+    if (!inv?.id) {
+      throw new Error("Invoice materialization returned no id.");
+    }
 
     const docInvLines = draftData.document_line_items;
     if (Array.isArray(docInvLines) && docInvLines.length > 0) {
@@ -196,9 +199,11 @@ export async function materializeInvoiceOrBillFromPostedDraft(
 
   if (billErr) {
     console.error("[materialize] bill insert", billErr);
-    return;
+    throw billErr;
   }
-  if (!bill?.id) return;
+  if (!bill?.id) {
+    throw new Error("Bill materialization returned no id.");
+  }
 
   const docBillLines = draftData.document_line_items;
   if (Array.isArray(docBillLines) && docBillLines.length > 0) {
@@ -246,8 +251,28 @@ export async function materializeInvoiceOrBillFromPostedDraft(
   }
 }
 
+type CoaLite = {
+  id: string;
+  code: string;
+  type: string;
+  detail_type: string | null;
+  prd_account_kind: string | null;
+};
+
+function isBankCashLine(acc: CoaLite): boolean {
+  if (acc.detail_type === "bank" || acc.prd_account_kind === "bank" || acc.prd_account_kind === "cash") {
+    return true;
+  }
+  const n = parseInt(acc.code, 10);
+  if (acc.type === "asset" && !Number.isNaN(n) && n >= 1000 && n < 1200) {
+    return true;
+  }
+  return acc.code === "1000";
+}
+
 /**
  * MVP `payments` row when a payment/receipt draft posts (`record_payment`).
+ * Creates receipt/payment document, allocations, and relies on DB triggers to update invoice/bill settlement.
  */
 export async function materializePaymentFromPostedDraft(
   supabase: SupabaseClient<Database>,
@@ -271,6 +296,10 @@ export async function materializePaymentFromPostedDraft(
   if (existing) return;
 
   const amount = Math.abs(Number(entities.amount ?? 0));
+  if (amount <= 0) {
+    throw new Error("Payment amount must be greater than zero to post.");
+  }
+
   const currencyCode =
     (entities.currency as string) ||
     (params.draftData.currency as string | undefined) ||
@@ -292,18 +321,31 @@ export async function materializePaymentFromPostedDraft(
   if (ids.length > 0) {
     const { data: accs } = await supabase
       .from("chart_of_accounts")
-      .select("id, code")
+      .select("id, code, type, detail_type, prd_account_kind")
       .in("id", ids);
-    const codeById = new Map((accs ?? []).map((a) => [a.id, a.code]));
+    const accById = new Map((accs ?? []).map((a) => [a.id, a as CoaLite]));
 
     for (const line of lines ?? []) {
-      const code = codeById.get(line.account_id) ?? "";
+      const acc = accById.get(line.account_id);
+      if (!acc) continue;
       const dr = Number(line.debit);
       const cr = Number(line.credit);
-      if (code === "1000" && dr > 0) bankAccountId = line.account_id;
-      if (code === "1000" && cr > 0) bankAccountId = line.account_id;
-      if (code === "2000" && dr > 0) paymentType = "payment";
-      if (code === "1100" && cr > 0) paymentType = "receipt";
+      const isAp =
+        acc.prd_account_kind === "accounts_payable" ||
+        acc.code === "2000" ||
+        (acc.type === "liability" && acc.code.startsWith("200"));
+      const isAr =
+        acc.prd_account_kind === "accounts_receivable" ||
+        acc.code === "1100" ||
+        (acc.type === "asset" && acc.code.startsWith("110"));
+
+      if (isAp && dr > 0) paymentType = "payment";
+      if (isAr && cr > 0) paymentType = "receipt";
+
+      if (isBankCashLine(acc)) {
+        if (paymentType === "receipt" && dr > 0) bankAccountId = line.account_id;
+        if (paymentType === "payment" && cr > 0) bankAccountId = line.account_id;
+      }
     }
   }
 
@@ -313,68 +355,150 @@ export async function materializePaymentFromPostedDraft(
     date: postingDate,
   });
 
+  const draftData = params.draftData as Record<string, unknown>;
+  let referenceText =
+    (typeof entities.reference === "string" && entities.reference.trim()
+      ? entities.reference
+      : null) ?? null;
+
   const { data: payRow, error } = await supabase
     .from("payments")
     .insert({
-    tenant_id: tenantId,
+      tenant_id: tenantId,
+      draft_id: draft.id,
+      journal_entry_id: journalEntryId,
+      contact_id: contactId,
+      payment_type: paymentType,
+      voucher_number: voucherNumber,
+      bank_account_id: bankAccountId,
+      amount,
+      currency_code: currencyCode,
+      payment_date: postingDate,
+      reference: referenceText,
+    })
+    .select("id")
+    .single();
+
+  if (error) {
+    console.error("[materializePayment] payments insert failed", {
+      draft_id: draft.id,
+      journal_entry_id: journalEntryId,
+      error,
+    });
+    throw error;
+  }
+
+  const paymentId = payRow?.id ?? null;
+  if (!paymentId) {
+    throw new Error("Failed to create payment record.");
+  }
+
+  console.log("[materializePayment] receipt/payment created", {
     draft_id: draft.id,
-    journal_entry_id: journalEntryId,
-    contact_id: contactId,
-    payment_type: paymentType,
-    voucher_number: voucherNumber,
+    customer_id: contactId,
     bank_account_id: bankAccountId,
     amount,
-    currency_code: currencyCode,
-    payment_date: postingDate,
-    reference: (entities.reference as string | undefined) ?? null,
-  })
-    .select("id")
-    .maybeSingle();
+    payment_type: paymentType,
+    receipt_id: paymentId,
+    voucher_number: voucherNumber,
+  });
 
-  if (error) console.error("[materialize] payments", error);
+  if (paymentType === "receipt") {
+    let allocs = draftData.receipt_allocations_draft as
+      | Array<{ invoice_id: string; allocated_amount: number }>
+      | undefined;
+    if (!Array.isArray(allocs) || allocs.length === 0) {
+      allocs = await inferReceiptAllocationsForPosting(supabase, {
+        tenantId,
+        contactId,
+        paymentAmount: amount,
+        entities,
+        draftData,
+      });
+      if (allocs.length > 0) {
+        console.log("[materializePayment] inferred receipt_allocations (draft had none)", {
+          draft_id: draft.id,
+          allocations: allocs,
+        });
+      }
+    }
 
-  // Materialize settlement allocations saved on the draft (optional).
-  const paymentId = (payRow as { id?: string } | null)?.id ?? null;
-  if (paymentId) {
-    const draftData = params.draftData as Record<string, unknown>;
-    if (paymentType === "receipt") {
-      const allocs = draftData.receipt_allocations_draft as
-        | Array<{ invoice_id: string; allocated_amount: number }>
-        | undefined;
-      if (allocs && allocs.length > 0) {
-        const ra = supabase.from("receipt_allocations" as never) as unknown as {
-          delete: () => { eq: (c: string, v: string) => Promise<{ error: unknown }> };
-          insert: (values: any[]) => Promise<{ error: unknown }>;
-        };
-        await ra.delete().eq("receipt_id", paymentId);
-        const rows = allocs.map((a) => ({
-          tenant_id: tenantId,
-          receipt_id: paymentId,
-          invoice_id: a.invoice_id,
-          allocated_amount: a.allocated_amount,
-        }));
-        const { error: aErr } = await ra.insert(rows);
-        if (aErr) console.error("[materialize] receipt_allocations", aErr);
+    if (allocs && allocs.length > 0) {
+      const { error: delErr } = await supabase.from("receipt_allocations").delete().eq("receipt_id", paymentId);
+      if (delErr) {
+        console.error("[materializePayment] receipt_allocations delete", delErr);
+        throw delErr;
       }
-    } else {
-      const allocs = draftData.payment_allocations_draft as
-        | Array<{ bill_id: string; allocated_amount: number }>
-        | undefined;
-      if (allocs && allocs.length > 0) {
-        const pa = supabase.from("payment_allocations" as never) as unknown as {
-          delete: () => { eq: (c: string, v: string) => Promise<{ error: unknown }> };
-          insert: (values: any[]) => Promise<{ error: unknown }>;
-        };
-        await pa.delete().eq("payment_id", paymentId);
-        const rows = allocs.map((a) => ({
-          tenant_id: tenantId,
-          payment_id: paymentId,
-          bill_id: a.bill_id,
-          allocated_amount: a.allocated_amount,
-        }));
-        const { error: aErr } = await pa.insert(rows);
-        if (aErr) console.error("[materialize] payment_allocations", aErr);
+      const rows = allocs.map((a) => ({
+        tenant_id: tenantId,
+        receipt_id: paymentId,
+        invoice_id: a.invoice_id,
+        allocated_amount: a.allocated_amount,
+      }));
+      const { data: insertedAllocs, error: aErr } = await supabase
+        .from("receipt_allocations")
+        .insert(rows)
+        .select("id, invoice_id, allocated_amount");
+      if (aErr) {
+        console.error("[materializePayment] receipt_allocations insert", aErr);
+        throw aErr;
       }
+      console.log("[materializePayment] receipt_allocations rows", {
+        receipt_id: paymentId,
+        rows: insertedAllocs,
+      });
+
+      for (const row of rows) {
+        const { data: invAfter } = await supabase
+          .from("invoices")
+          .select("id, amount_received, outstanding_amount, settlement_status")
+          .eq("id", row.invoice_id)
+          .maybeSingle();
+        console.log("[materializePayment] invoice after allocation", {
+          invoice_id: row.invoice_id,
+          amount_received: invAfter?.amount_received,
+          outstanding_amount: invAfter?.outstanding_amount,
+          settlement_status: invAfter?.settlement_status,
+        });
+      }
+
+      if (!referenceText && rows.length > 0) {
+        const invIds = [...new Set(rows.map((r) => r.invoice_id))];
+        const { data: invLabels } = await supabase
+          .from("invoices")
+          .select("invoice_number")
+          .in("id", invIds);
+        const label = (invLabels ?? [])
+          .map((r) => r.invoice_number)
+          .filter(Boolean)
+          .join(", ");
+        if (label) {
+          await supabase.from("payments").update({ reference: label }).eq("id", paymentId);
+        }
+      }
+    }
+  } else {
+    const allocs = draftData.payment_allocations_draft as
+      | Array<{ bill_id: string; allocated_amount: number }>
+      | undefined;
+    if (allocs && allocs.length > 0) {
+      const { error: delErr } = await supabase.from("payment_allocations").delete().eq("payment_id", paymentId);
+      if (delErr) {
+        console.error("[materializePayment] payment_allocations delete", delErr);
+        throw delErr;
+      }
+      const rows = allocs.map((a) => ({
+        tenant_id: tenantId,
+        payment_id: paymentId,
+        bill_id: a.bill_id,
+        allocated_amount: a.allocated_amount,
+      }));
+      const { error: aErr } = await supabase.from("payment_allocations").insert(rows);
+      if (aErr) {
+        console.error("[materializePayment] payment_allocations insert", aErr);
+        throw aErr;
+      }
+      console.log("[materializePayment] payment_allocations inserted", { payment_id: paymentId, count: rows.length });
     }
   }
 }

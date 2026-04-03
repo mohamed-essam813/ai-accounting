@@ -30,7 +30,10 @@ import {
 import {
   listOpenBillsForSupplierAction,
   listOpenInvoicesForCustomerAction,
+  type OpenBillRow,
+  type OpenInvoiceRow,
 } from "@/lib/actions/open-documents";
+import { formatSettlementStatusLabel } from "@/lib/settlement/display-status";
 import { listTaxRatesAction, type TaxRate } from "@/lib/actions/tax-rates";
 import { toast } from "sonner";
 import { getErrorMessage } from "@/lib/utils";
@@ -64,6 +67,15 @@ export function GuidedEventWorkspace({ onDraftCreated }: Props) {
   const refreshContacts = useCallback(async () => {
     const list = await listContactsForPickerAction();
     setContacts(list);
+  }, []);
+
+  const refreshAccounts = useCallback(async () => {
+    try {
+      const accs = await listAccountsForItemWizardAction();
+      setAccounts(accs as AccountOption[]);
+    } catch {
+      // ignore
+    }
   }, []);
 
   useEffect(() => {
@@ -137,6 +149,7 @@ export function GuidedEventWorkspace({ onDraftCreated }: Props) {
           <MultiLineSupplierBillForm
             contacts={contacts}
             onRefreshContacts={refreshContacts}
+            onRefreshAccounts={refreshAccounts}
             inputTax={inputTax}
             accounts={accounts}
             pending={pending}
@@ -194,16 +207,9 @@ function PaymentInForm({
   const [amount, setAmount] = useState("");
   const [refInvoice, setRefInvoice] = useState("");
   const [note, setNote] = useState("");
-  const [openInvoices, setOpenInvoices] = useState<
-    Array<{
-      id: string;
-      invoice_number: string | null;
-      invoice_date: string;
-      total_amount: number;
-      outstanding_amount: number;
-    }>
-  >([]);
+  const [openInvoices, setOpenInvoices] = useState<OpenInvoiceRow[]>([]);
   const [allocByInvoiceId, setAllocByInvoiceId] = useState<Record<string, string>>({});
+  const [showAllInvoices, setShowAllInvoices] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -213,7 +219,7 @@ function PaymentInForm({
       setAllocByInvoiceId({});
       return;
     }
-    listOpenInvoicesForCustomerAction({ contactId: id })
+    listOpenInvoicesForCustomerAction({ contactId: id, includeSettled: showAllInvoices })
       .then((rows) => {
         if (!cancelled) {
           setOpenInvoices(rows);
@@ -226,7 +232,7 @@ function PaymentInForm({
     return () => {
       cancelled = true;
     };
-  }, [customer?.id]);
+  }, [customer?.id, showAllInvoices]);
 
   const submit = () => {
     if (!customer || !bank) {
@@ -245,6 +251,16 @@ function PaymentInForm({
     if (allocSum - amt > 0.01) {
       toast.error("Total allocations cannot exceed receipt amount.");
       return;
+    }
+    const byId = new Map(openInvoices.map((r) => [r.id, r]));
+    for (const a of allocations) {
+      const inv = byId.get(a.invoiceId);
+      if (inv && a.amount - inv.outstanding_amount > 0.01) {
+        toast.error(
+          `Allocation for ${inv.invoice_number ?? "invoice"} cannot exceed outstanding (${inv.outstanding_amount.toFixed(2)}).`,
+        );
+        return;
+      }
     }
     startTransition(async () => {
       try {
@@ -305,42 +321,77 @@ function PaymentInForm({
           <Label>Note (optional)</Label>
           <Textarea rows={2} value={note} onChange={(e) => setNote(e.target.value)} disabled={pending} />
         </div>
+      </div>
 
-        {customer && openInvoices.length > 0 ? (
-          <div className="space-y-2 sm:col-span-2 rounded-md border bg-background p-3">
-            <p className="text-sm font-medium">Apply this receipt to open invoices</p>
-            <p className="text-xs text-muted-foreground">
-              Enter allocation amounts (partial and multi-invoice supported).
+      {customer ? (
+        <div className="space-y-3 rounded-md border bg-background p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <p className="text-sm font-medium">Apply this receipt to open invoices</p>
+              <p className="text-xs text-muted-foreground">
+                Allocate to one or more invoices. Amounts cannot exceed each invoice&apos;s outstanding
+                balance.
+              </p>
+            </div>
+            <label className="flex cursor-pointer items-center gap-2 text-xs text-muted-foreground">
+              <input
+                type="checkbox"
+                className="rounded border-input"
+                checked={showAllInvoices}
+                onChange={(e) => setShowAllInvoices(e.target.checked)}
+                disabled={pending}
+              />
+              Show all invoices (including paid)
+            </label>
+          </div>
+          {openInvoices.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              No invoices found for this customer
+              {showAllInvoices ? "." : " with an open balance."}
             </p>
-            <div className="grid gap-2">
+          ) : (
+            <div className="space-y-3">
               {openInvoices.map((inv) => (
-                <div key={inv.id} className="grid items-center gap-2 sm:grid-cols-5">
-                  <div className="sm:col-span-2 text-sm">
-                    {inv.invoice_number ?? "Invoice"}{" "}
-                    <span className="text-muted-foreground">({inv.invoice_date})</span>
+                <div
+                  key={inv.id}
+                  className="grid gap-2 border-b border-border/60 pb-3 last:border-0 last:pb-0 sm:grid-cols-[1fr_auto]"
+                >
+                  <div className="min-w-0 space-y-1 text-sm">
+                    <div className="font-medium">
+                      {inv.invoice_number ?? "Invoice"}{" "}
+                      <span className="text-muted-foreground font-normal">({inv.invoice_date})</span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-muted-foreground sm:grid-cols-4">
+                      <span>Original: {inv.total_amount.toFixed(2)}</span>
+                      <span>Paid: {inv.amount_received.toFixed(2)}</span>
+                      <span className="font-medium text-foreground">
+                        Outstanding: {inv.outstanding_amount.toFixed(2)}
+                      </span>
+                      <span>Status: {formatSettlementStatusLabel(inv.settlement_status)}</span>
+                    </div>
                   </div>
-                  <div className="text-sm text-muted-foreground sm:text-right">
-                    Outstanding: {inv.outstanding_amount.toFixed(2)}
-                  </div>
-                  <div className="sm:col-span-2">
+                  <div className="flex flex-col gap-1 sm:w-44">
+                    <Label className="text-xs text-muted-foreground">Allocation</Label>
                     <Input
                       type="number"
                       step="0.01"
                       min="0"
-                      placeholder="Allocation amount"
+                      max={inv.outstanding_amount > 0 ? inv.outstanding_amount : undefined}
+                      placeholder="0.00"
                       value={allocByInvoiceId[inv.id] ?? ""}
                       onChange={(e) =>
                         setAllocByInvoiceId((m) => ({ ...m, [inv.id]: e.target.value }))
                       }
-                      disabled={pending}
+                      disabled={pending || inv.outstanding_amount <= 0}
                     />
                   </div>
                 </div>
               ))}
             </div>
-          </div>
-        ) : null}
-      </div>
+          )}
+        </div>
+      ) : null}
+
       <Button type="button" onClick={submit} disabled={pending}>
         {pending ? "Creating…" : "Generate draft"}
       </Button>
@@ -369,16 +420,9 @@ function PaymentOutForm({
   const [amount, setAmount] = useState("");
   const [refBill, setRefBill] = useState("");
   const [note, setNote] = useState("");
-  const [openBills, setOpenBills] = useState<
-    Array<{
-      id: string;
-      bill_number: string | null;
-      bill_date: string;
-      total_amount: number;
-      outstanding_amount: number;
-    }>
-  >([]);
+  const [openBills, setOpenBills] = useState<OpenBillRow[]>([]);
   const [allocByBillId, setAllocByBillId] = useState<Record<string, string>>({});
+  const [showAllBills, setShowAllBills] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -388,7 +432,7 @@ function PaymentOutForm({
       setAllocByBillId({});
       return;
     }
-    listOpenBillsForSupplierAction({ contactId: id })
+    listOpenBillsForSupplierAction({ contactId: id, includeSettled: showAllBills })
       .then((rows) => {
         if (!cancelled) {
           setOpenBills(rows);
@@ -401,7 +445,7 @@ function PaymentOutForm({
     return () => {
       cancelled = true;
     };
-  }, [supplier?.id]);
+  }, [supplier?.id, showAllBills]);
 
   const submit = () => {
     if (!supplier || !bank) {
@@ -420,6 +464,16 @@ function PaymentOutForm({
     if (allocSum - amt > 0.01) {
       toast.error("Total allocations cannot exceed payment amount.");
       return;
+    }
+    const byId = new Map(openBills.map((r) => [r.id, r]));
+    for (const a of allocations) {
+      const bill = byId.get(a.billId);
+      if (bill && a.amount - bill.outstanding_amount > 0.01) {
+        toast.error(
+          `Allocation for ${bill.bill_number ?? "bill"} cannot exceed outstanding (${bill.outstanding_amount.toFixed(2)}).`,
+        );
+        return;
+      }
     }
     startTransition(async () => {
       try {
@@ -480,42 +534,76 @@ function PaymentOutForm({
           <Label>Note (optional)</Label>
           <Textarea rows={2} value={note} onChange={(e) => setNote(e.target.value)} disabled={pending} />
         </div>
+      </div>
 
-        {supplier && openBills.length > 0 ? (
-          <div className="space-y-2 sm:col-span-2 rounded-md border bg-background p-3">
-            <p className="text-sm font-medium">Apply this payment to open bills</p>
-            <p className="text-xs text-muted-foreground">
-              Enter allocation amounts (partial and multi-bill supported).
+      {supplier ? (
+        <div className="space-y-3 rounded-md border bg-background p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <p className="text-sm font-medium">Apply this payment to open bills</p>
+              <p className="text-xs text-muted-foreground">
+                Allocate to one or more bills. Amounts cannot exceed each bill&apos;s outstanding balance.
+              </p>
+            </div>
+            <label className="flex cursor-pointer items-center gap-2 text-xs text-muted-foreground">
+              <input
+                type="checkbox"
+                className="rounded border-input"
+                checked={showAllBills}
+                onChange={(e) => setShowAllBills(e.target.checked)}
+                disabled={pending}
+              />
+              Show all bills (including paid)
+            </label>
+          </div>
+          {openBills.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              No bills found for this supplier
+              {showAllBills ? "." : " with an open balance."}
             </p>
-            <div className="grid gap-2">
+          ) : (
+            <div className="space-y-3">
               {openBills.map((b) => (
-                <div key={b.id} className="grid items-center gap-2 sm:grid-cols-5">
-                  <div className="sm:col-span-2 text-sm">
-                    {b.bill_number ?? "Bill"}{" "}
-                    <span className="text-muted-foreground">({b.bill_date})</span>
+                <div
+                  key={b.id}
+                  className="grid gap-2 border-b border-border/60 pb-3 last:border-0 last:pb-0 sm:grid-cols-[1fr_auto]"
+                >
+                  <div className="min-w-0 space-y-1 text-sm">
+                    <div className="font-medium">
+                      {b.bill_number ?? "Bill"}{" "}
+                      <span className="text-muted-foreground font-normal">({b.bill_date})</span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-muted-foreground sm:grid-cols-4">
+                      <span>Original: {b.total_amount.toFixed(2)}</span>
+                      <span>Paid: {b.amount_paid.toFixed(2)}</span>
+                      <span className="font-medium text-foreground">
+                        Outstanding: {b.outstanding_amount.toFixed(2)}
+                      </span>
+                      <span>Status: {formatSettlementStatusLabel(b.settlement_status)}</span>
+                    </div>
                   </div>
-                  <div className="text-sm text-muted-foreground sm:text-right">
-                    Outstanding: {b.outstanding_amount.toFixed(2)}
-                  </div>
-                  <div className="sm:col-span-2">
+                  <div className="flex flex-col gap-1 sm:w-44">
+                    <Label className="text-xs text-muted-foreground">Allocation</Label>
                     <Input
                       type="number"
                       step="0.01"
                       min="0"
-                      placeholder="Allocation amount"
+                      max={b.outstanding_amount > 0 ? b.outstanding_amount : undefined}
+                      placeholder="0.00"
                       value={allocByBillId[b.id] ?? ""}
                       onChange={(e) =>
                         setAllocByBillId((m) => ({ ...m, [b.id]: e.target.value }))
                       }
-                      disabled={pending}
+                      disabled={pending || b.outstanding_amount <= 0}
                     />
                   </div>
                 </div>
               ))}
             </div>
-          </div>
-        ) : null}
-      </div>
+          )}
+        </div>
+      ) : null}
+
       <Button type="button" onClick={submit} disabled={pending}>
         {pending ? "Creating…" : "Generate draft"}
       </Button>

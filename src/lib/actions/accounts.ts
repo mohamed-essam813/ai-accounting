@@ -23,7 +23,6 @@ type IntentMappingRow = Database["public"]["Tables"]["intent_account_mappings"][
 // Server action to list accounts (for use in client components)
 export async function listAccountsAction(): Promise<Account[]> {
   const { listAccounts } = await import("@/lib/data/accounts");
-  // Accounts may not have new fields in DB types yet - cast to base Account type
   return (await listAccounts()) as Account[];
 }
 
@@ -104,26 +103,34 @@ export async function createAccountAction(input: z.infer<typeof AccountSchema>):
     prd_account_kind: payload.prd_account_kind ?? null,
     explicit: (payload.account_classification as AccountClassification | null) ?? null,
   });
-  
+
+  const { buildStandardizationFieldsForNewAccount } = await import(
+    "@/lib/accounting/account-standardization-fields"
+  );
+  const std = buildStandardizationFieldsForNewAccount({
+    name: payload.name.trim(),
+    type: payload.type,
+    category: category ?? null,
+    accountClassification: resolvedClassification,
+  });
+
   const supabase = await createServerSupabaseClient();
-  // Use type assertion for category and detail_type since they may not be in database types yet
   const insertData = {
     tenant_id: user.tenant.id,
-    name: payload.name,
+    name: payload.name.trim(),
     code: code!, // Code is guaranteed to be defined at this point
     type: payload.type,
     ...(category && { category }),
     ...(payload.detail_type && { detail_type: payload.detail_type }),
     ...(payload.prd_account_kind && { prd_account_kind: payload.prd_account_kind }),
-    ...(resolvedClassification !== null && { account_classification: resolvedClassification }),
+    ...(std.account_classification !== null && { account_classification: std.account_classification }),
+    normalized_name: std.normalized_name,
+    standardized_name: std.standardized_name,
+    ...(std.reporting_classification && { reporting_classification: std.reporting_classification }),
+    is_custom: std.is_custom,
+    is_system_standard: std.is_system_standard,
     allow_reconciliation: allowReconciliation,
-  } as ChartOfAccountsInsert & { 
-    category?: "current" | "non_current" | null;
-    detail_type?: "bank" | "cash" | "other_current_asset" | "fixed_asset" | "other" | null;
-    allow_reconciliation?: boolean;
-    prd_account_kind?: string | null;
-    account_classification?: string | null;
-  };
+  } satisfies ChartOfAccountsInsert;
   // Use type assertion to fix Supabase type inference - type-safe using Database types
   const table = supabase.from("chart_of_accounts") as unknown as {
     insert: (values: ChartOfAccountsInsert[]) => {
@@ -217,7 +224,8 @@ export async function updateAccountPnlClassificationAction(
 
   const updateData: ChartOfAccountsUpdate = {
     account_classification: nextClassification,
-  };
+    reporting_classification: nextClassification ?? undefined,
+  } as ChartOfAccountsUpdate & { reporting_classification?: string | null };
   const table = supabase.from("chart_of_accounts") as unknown as {
     update: (values: ChartOfAccountsUpdate) => {
       eq: (c: string, v: string) => { eq: (c2: string, v2: string) => Promise<{ error: unknown }> };
@@ -272,14 +280,36 @@ export async function autoCreateAccountAction(
 
   // Use type assertion for category since it may not be in database types yet
   const autoClassification = defaultAccountClassificationForCreate({ type, explicit: null });
+  const { buildStandardizationFieldsForNewAccount } = await import(
+    "@/lib/accounting/account-standardization-fields"
+  );
+  const std = buildStandardizationFieldsForNewAccount({
+    name: name.trim(),
+    type,
+    category: finalCategory,
+    accountClassification: autoClassification,
+  });
   const insertData = {
     tenant_id: user.tenant.id,
     name: name.trim(),
     code,
     type,
     ...(finalCategory && { category: finalCategory }),
-    ...(autoClassification !== null && { account_classification: autoClassification }),
-  } as ChartOfAccountsInsert & { category?: "current" | "non_current" | null; account_classification?: string | null };
+    ...(std.account_classification !== null && { account_classification: std.account_classification }),
+    normalized_name: std.normalized_name,
+    standardized_name: std.standardized_name,
+    ...(std.reporting_classification && { reporting_classification: std.reporting_classification }),
+    is_custom: std.is_custom,
+    is_system_standard: std.is_system_standard,
+  } as ChartOfAccountsInsert & {
+    category?: "current" | "non_current" | null;
+    account_classification?: string | null;
+    normalized_name?: string;
+    standardized_name?: string;
+    reporting_classification?: string | null;
+    is_custom?: boolean;
+    is_system_standard?: boolean;
+  };
 
   const table = supabase.from("chart_of_accounts") as unknown as {
     insert: (values: ChartOfAccountsInsert[]) => {

@@ -21,6 +21,8 @@ type AccountOption = { id: string; name: string; code: string; type: string };
 type Props = {
   transactions: BankTxn[];
   accounts: AccountOption[];
+  /** When false and the list is empty, prompt to pick a bank first instead of “no imports”. */
+  bankAccountSelected?: boolean;
 };
 
 function statusLabel(status: string, matchedEntryId?: string | null): string {
@@ -30,7 +32,11 @@ function statusLabel(status: string, matchedEntryId?: string | null): string {
   return "Needs review";
 }
 
-export function BankTransactionsTable({ transactions, accounts }: Props) {
+export function BankTransactionsTable({
+  transactions,
+  accounts,
+  bankAccountSelected = true,
+}: Props) {
   const [resolveTxn, setResolveTxn] = useState<BankTxn | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [, startTransition] = useTransition();
@@ -59,7 +65,9 @@ export function BankTransactionsTable({ transactions, accounts }: Props) {
           {transactions.length === 0 ? (
             <TableRow>
               <TableCell colSpan={6} className="py-6 text-center text-sm">
-                No bank transactions imported yet.
+                {!bankAccountSelected
+                  ? "Select a bank account above to view and reconcile imported lines."
+                  : "No bank transactions imported yet."}
               </TableCell>
             </TableRow>
           ) : (
@@ -76,7 +84,9 @@ export function BankTransactionsTable({ transactions, accounts }: Props) {
                     {transaction.status === "unmatched" && transaction.existingMatch ? (
                       <p className="mt-1 text-xs font-medium text-primary">{transaction.existingMatch.label}</p>
                     ) : transaction.status === "unmatched" ? (
-                      <p className="mt-1 text-xs text-muted-foreground">{suggestion.inlineLabel}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Suggested: {suggestion.inlineLabel}
+                      </p>
                     ) : null}
                   </TableCell>
                   <TableCell>{transaction.counterparty ?? "—"}</TableCell>

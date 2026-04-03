@@ -224,9 +224,9 @@ export function JournalPreview({ draftId, editable = true, accounts: initialAcco
   }));
 
   return (
-    <Card>
+    <Card className="min-w-0 max-w-full">
       <CardHeader>
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-2">
           <CardTitle>Journal Entry Preview</CardTitle>
           {editable && !isEditing && (
             <Button size="sm" variant="outline" onClick={() => setIsEditing(true)}>
@@ -235,54 +235,55 @@ export function JournalPreview({ draftId, editable = true, accounts: initialAcco
           )}
         </div>
       </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="grid gap-4 sm:grid-cols-2">
-          <div>
+      <CardContent className="min-w-0 space-y-4">
+        <div className="grid min-w-0 gap-4 sm:grid-cols-2">
+          <div className="min-w-0">
             <p className="text-xs text-muted-foreground">Date</p>
             <p className="text-sm font-medium">{formatDate(preview.entities.date)}</p>
           </div>
-          <div>
+          <div className="min-w-0">
             <p className="text-xs text-muted-foreground">
               {preview.intent === "create_invoice" ? "Invoice Number" : preview.intent === "create_bill" ? "Bill Number" : "Document"}
             </p>
-            <p className="text-sm font-medium font-mono">
+            <p className="text-sm font-medium font-mono break-all">
               {preview.entities.invoice_number ?? "—"}
             </p>
           </div>
-          <div>
+          <div className="min-w-0">
             <p className="text-xs text-muted-foreground">Counterparty</p>
-            <p className="text-sm font-medium">{preview.entities.counterparty ?? "—"}</p>
+            <p className="text-sm font-medium wrap-break-word">{preview.entities.counterparty ?? "—"}</p>
           </div>
-          <div>
+          <div className="min-w-0">
             <p className="text-xs text-muted-foreground">Amount</p>
-            <p className="text-sm font-medium">
+            <p className="text-sm font-medium tabular-nums">
               {formatCurrency(preview.entities.amount, preview.entities.currency)}
             </p>
           </div>
         </div>
 
-        <div>
+        <div className="min-w-0">
           <p className="text-xs text-muted-foreground mb-2">Description</p>
           {isEditing ? (
             <Textarea
               value={editingDescription}
               onChange={(e) => setEditingDescription(e.target.value)}
               rows={2}
+              className="min-w-0 max-w-full"
             />
           ) : (
-            <p className="text-sm">{displayDescription}</p>
+            <p className="text-sm wrap-break-word">{displayDescription}</p>
           )}
         </div>
 
-        <div className="overflow-hidden rounded-md border">
+        <div className="min-w-0 max-w-full rounded-md border">
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Account</TableHead>
-                <TableHead className="text-right">Debit</TableHead>
-                <TableHead className="text-right">Credit</TableHead>
-                <TableHead>Memo</TableHead>
-                {isEditing && <TableHead className="w-16"></TableHead>}
+                <TableHead className="min-w-0">Account</TableHead>
+                <TableHead className="w-[1%] whitespace-nowrap text-right tabular-nums">Debit</TableHead>
+                <TableHead className="w-[1%] whitespace-nowrap text-right tabular-nums">Credit</TableHead>
+                <TableHead className="min-w-0">Memo</TableHead>
+                {isEditing && <TableHead className="w-16 min-w-18"></TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -290,7 +291,7 @@ export function JournalPreview({ draftId, editable = true, accounts: initialAcco
                 const account = accounts.find((a) => a.id === line.account_id);
                 return (
                   <TableRow key={idx}>
-                    <TableCell>
+                    <TableCell className="min-w-0 align-top">
                       {isEditing ? (
                         <Select
                           value={line.account_id}
@@ -305,7 +306,7 @@ export function JournalPreview({ draftId, editable = true, accounts: initialAcco
                             }
                           }}
                         >
-                          <SelectTrigger className="w-[250px]">
+                          <SelectTrigger className="h-9 w-full min-w-0 max-w-full">
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
@@ -317,13 +318,20 @@ export function JournalPreview({ draftId, editable = true, accounts: initialAcco
                           </SelectContent>
                         </Select>
                       ) : (
-                        <div>
-                          <div className="font-mono text-xs">{line.account_code}</div>
-                          <div className="text-xs text-muted-foreground">{line.account_name}</div>
+                        <div className="min-w-0">
+                          <div className="truncate font-mono text-xs" title={line.account_code}>
+                            {line.account_code}
+                          </div>
+                          <div
+                            className="truncate text-xs text-muted-foreground"
+                            title={line.account_name}
+                          >
+                            {line.account_name}
+                          </div>
                         </div>
                       )}
                     </TableCell>
-                    <TableCell className="text-right">
+                    <TableCell className="text-right tabular-nums">
                       {isEditing ? (
                         <Input
                           type="number"
@@ -344,7 +352,7 @@ export function JournalPreview({ draftId, editable = true, accounts: initialAcco
                         </span>
                       )}
                     </TableCell>
-                    <TableCell className="text-right">
+                    <TableCell className="text-right tabular-nums">
                       {isEditing ? (
                         <Input
                           type="number"
@@ -365,20 +373,25 @@ export function JournalPreview({ draftId, editable = true, accounts: initialAcco
                         </span>
                       )}
                     </TableCell>
-                    <TableCell>
+                    <TableCell className="min-w-0 align-top whitespace-normal">
                       {isEditing ? (
                         <Input
                           value={line.memo || ""}
                           onChange={(e) => updateLine(idx, { memo: e.target.value })}
                           placeholder="Memo"
-                          className="text-xs"
+                          className="w-full min-w-0 max-w-full text-xs"
                         />
                       ) : (
-                        <span className="text-xs text-muted-foreground">{line.memo ?? "—"}</span>
+                        <span
+                          className="line-clamp-4 text-xs text-muted-foreground wrap-break-word"
+                          title={line.memo ?? undefined}
+                        >
+                          {line.memo ?? "—"}
+                        </span>
                       )}
                     </TableCell>
                     {isEditing && (
-                      <TableCell>
+                      <TableCell className="w-14 shrink-0 align-top">
                         <Button
                           size="sm"
                           variant="ghost"
@@ -402,14 +415,14 @@ export function JournalPreview({ draftId, editable = true, accounts: initialAcco
                 </TableRow>
               )}
               <TableRow className="bg-muted font-semibold">
-                <TableCell colSpan={isEditing ? 1 : 2}>Total</TableCell>
-                <TableCell className="text-right font-mono">
+                <TableCell className="min-w-0">Total</TableCell>
+                <TableCell className="text-right font-mono tabular-nums">
                   {formatCurrency(totalDebit, preview.entities.currency)}
                 </TableCell>
-                <TableCell className="text-right font-mono">
+                <TableCell className="text-right font-mono tabular-nums">
                   {formatCurrency(totalCredit, preview.entities.currency)}
                 </TableCell>
-                <TableCell colSpan={isEditing ? 2 : 1}>
+                <TableCell className="min-w-0 whitespace-normal" colSpan={isEditing ? 2 : 1}>
                   {isBalanced ? (
                     <span className="text-green-600 text-xs">✓ Balanced</span>
                   ) : (

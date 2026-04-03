@@ -1,6 +1,11 @@
 import { DraftPayload } from "@/lib/ai/schema";
 import { Database } from "@/lib/database.types";
 import { format } from "date-fns";
+import {
+  assertDebitMatchesBillClassification,
+  logBillClassificationResolution,
+  type BillPurchaseClassification,
+} from "@/lib/drafts/single-line-bill-debit";
 
 export type Account = Database["public"]["Tables"]["chart_of_accounts"]["Row"];
 
@@ -39,6 +44,11 @@ export function ensureBalanced(lines: JournalLine[]) {
   const roundedDebit = Number(totalDebit.toFixed(2));
   const roundedCredit = Number(totalCredit.toFixed(2));
   if (roundedDebit !== roundedCredit) {
+    console.error("[journal] Rejected unbalanced entry", {
+      debit: roundedDebit,
+      credit: roundedCredit,
+      delta: roundedDebit - roundedCredit,
+    });
     throw new Error(
       `Journal entry is not balanced. Debit ${roundedDebit} vs Credit ${roundedCredit}`,
     );
@@ -56,6 +66,13 @@ export async function buildDefaultJournalLines(
     tax_treatment?: "exclusive" | "inclusive";
     /** When posting from a draft with a selected tax rate, links tax lines to tax_rates.id */
     taxRateId?: string | null;
+    /** Single-line create_bill: user classification wins over AI debit account. */
+    billDebitResolution?: {
+      purchaseType: BillPurchaseClassification;
+      debitAccountId: string;
+      aiSuggestedDebitId?: string | null;
+    };
+    draftIdForLog?: string;
   },
 ): Promise<{ description: string; lines: JournalLine[] }> {
   const { intent, entities } = draft;
@@ -147,6 +164,33 @@ export async function buildDefaultJournalLines(
   // Fallback to code-based inference (no manual mapping)
   if (!resolvedMapping) {
     resolvedMapping = inferMappingFromCodes(intent, accounts, resolveByCode);
+  }
+
+  // User-selected bill classification (expense / inventory / asset) overrides AI debit for create_bill.
+  if (intent === "create_bill" && options?.billDebitResolution) {
+    const { purchaseType, debitAccountId, aiSuggestedDebitId } = options.billDebitResolution;
+    const debitAcc = accountMap.get(debitAccountId);
+    if (!debitAcc) {
+      throw new Error(
+        `Debit account is missing from the chart of accounts. Classification is "${purchaseType}".`,
+      );
+    }
+    assertDebitMatchesBillClassification(purchaseType, debitAcc);
+    if (!resolvedMapping) {
+      throw new Error(
+        `No journal mapping available for intent "create_bill". Cannot apply bill classification.`,
+      );
+    }
+    resolvedMapping = {
+      ...resolvedMapping,
+      debit_account_id: debitAccountId,
+    };
+    logBillClassificationResolution({
+      draftId: options.draftIdForLog,
+      purchaseType,
+      aiSuggestedDebitId: aiSuggestedDebitId ?? null,
+      finalDebitAccountId: debitAccountId,
+    });
   }
 
   if (!resolvedMapping) {

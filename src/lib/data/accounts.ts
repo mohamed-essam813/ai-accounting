@@ -1,9 +1,47 @@
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { getCurrentUser } from "./users";
 import type { Database } from "@/lib/database.types";
-import { dedupeEntitiesForDisplay } from "@/lib/utils/entity-dedupe";
+import { dedupeEntitiesForDisplay, normalizeEntityName } from "@/lib/utils/entity-dedupe";
+import { isReportingClassification, type ReportingClassification } from "@/lib/accounting/reporting-classification";
 
 type ChartOfAccountsRow = Database["public"]["Tables"]["chart_of_accounts"]["Row"];
+
+type CoaSeed = Database["public"]["Tables"]["chart_of_accounts"]["Insert"] & {
+  category?: "current" | "non_current" | null;
+  account_classification?: string | null;
+};
+
+function enrichSeedCoaRow(a: CoaSeed, tenantId: string): Record<string, unknown> {
+  const standardized_name = a.name;
+  const normalized_name = normalizeEntityName(a.name);
+  let reporting_classification: ReportingClassification | null = null;
+  const code = a.code;
+  if (code === "1150") {
+    reporting_classification = "tax_input";
+  } else if (code === "2100") {
+    reporting_classification = "tax_output";
+  } else if (a.type === "revenue" || a.type === "expense") {
+    const ac = a.account_classification;
+    if (ac && isReportingClassification(ac)) {
+      reporting_classification = ac;
+    }
+  } else if (a.type === "equity") {
+    reporting_classification = "equity";
+  } else if (a.type === "asset") {
+    reporting_classification = a.category === "non_current" ? "asset_non_current" : "asset_current";
+  } else if (a.type === "liability") {
+    reporting_classification = a.category === "non_current" ? "liability_non_current" : "liability_current";
+  }
+  return {
+    ...a,
+    tenant_id: tenantId,
+    standardized_name,
+    normalized_name,
+    ...(reporting_classification ? { reporting_classification } : {}),
+    is_system_standard: true,
+    is_custom: false,
+  };
+}
 
 export async function listAccounts() {
   const user = await getCurrentUser();
@@ -26,7 +64,14 @@ export async function listAccounts() {
 
   // Map to ensure category is included (may be null if migration hasn't run)
   const mapped = (data ?? []).map((acc) => {
-    const account = acc as unknown as ChartOfAccountsRow & { category?: "current" | "non_current" | null };
+    const account = acc as unknown as ChartOfAccountsRow & {
+      category?: "current" | "non_current" | null;
+      standardized_name?: string | null;
+      normalized_name?: string | null;
+      reporting_classification?: string | null;
+      is_system_standard?: boolean | null;
+      is_custom?: boolean | null;
+    };
     return {
       id: account.id,
       name: account.name,
@@ -40,6 +85,11 @@ export async function listAccounts() {
       allow_reconciliation: account.allow_reconciliation ?? false,
       prd_account_kind: account.prd_account_kind ?? null,
       account_classification: account.account_classification ?? null,
+      standardized_name: account.standardized_name ?? null,
+      normalized_name: account.normalized_name ?? null,
+      reporting_classification: account.reporting_classification ?? null,
+      is_system_standard: account.is_system_standard ?? false,
+      is_custom: account.is_custom ?? true,
     };
   });
   return dedupeEntitiesForDisplay(mapped as unknown as Record<string, unknown>[], {
@@ -71,48 +121,58 @@ export async function getAccountByCode(code: string) {
  */
 export async function ensureDefaultAccounts(tenantId: string) {
   const supabase = await createServerSupabaseClient();
-  type ChartOfAccountsInsertLocal = Database["public"]["Tables"]["chart_of_accounts"]["Insert"];
 
-  const defaultAccounts: ChartOfAccountsInsertLocal[] = [
-    // ASSETS
-    // Current Assets (1000-1999)
-    { code: "1000", name: "Cash", type: "asset", tenant_id: tenantId },
-    { code: "1100", name: "Accounts Receivable", type: "asset", tenant_id: tenantId },
-    { code: "1200", name: "Inventory", type: "asset", tenant_id: tenantId },
-    { code: "1300", name: "Prepaid Expenses", type: "asset", tenant_id: tenantId },
-    { code: "1400", name: "Other Current Assets", type: "asset", tenant_id: tenantId },
-    // Non-Current Assets (1500-1999)
-    { code: "1500", name: "Property, Plant & Equipment", type: "asset", tenant_id: tenantId },
-    { code: "1600", name: "Accumulated Depreciation", type: "asset", tenant_id: tenantId },
-    { code: "1700", name: "Intangible Assets", type: "asset", tenant_id: tenantId },
-    { code: "1800", name: "Long-term Investments", type: "asset", tenant_id: tenantId },
+  const defaultAccounts: CoaSeed[] = [
+    // ASSETS — current
+    { code: "1000", name: "Cash", type: "asset", tenant_id: tenantId, category: "current" },
+    { code: "1010", name: "Bank Accounts", type: "asset", tenant_id: tenantId, category: "current" },
+    { code: "1100", name: "Accounts Receivable", type: "asset", tenant_id: tenantId, category: "current" },
+    { code: "1150", name: "VAT Recoverable", type: "asset", tenant_id: tenantId, category: "current" },
+    { code: "1200", name: "Inventory", type: "asset", tenant_id: tenantId, category: "current" },
+    { code: "1300", name: "Prepaid Expenses", type: "asset", tenant_id: tenantId, category: "current" },
+    { code: "1350", name: "Other Receivables", type: "asset", tenant_id: tenantId, category: "current" },
+    { code: "1400", name: "Other Current Assets", type: "asset", tenant_id: tenantId, category: "current" },
+    // ASSETS — non-current
+    { code: "1500", name: "Property, Plant & Equipment", type: "asset", tenant_id: tenantId, category: "non_current" },
+    { code: "1600", name: "Accumulated Depreciation", type: "asset", tenant_id: tenantId, category: "non_current" },
+    { code: "1700", name: "Intangible Assets", type: "asset", tenant_id: tenantId, category: "non_current" },
+    { code: "1800", name: "Long-term Investments", type: "asset", tenant_id: tenantId, category: "non_current" },
 
-    // LIABILITIES
-    { code: "2000", name: "Accounts Payable", type: "liability", tenant_id: tenantId },
-    { code: "2100", name: "VAT Output Tax", type: "liability", tenant_id: tenantId },
-    { code: "2200", name: "Accrued Expenses", type: "liability", tenant_id: tenantId },
-    { code: "2300", name: "Short-term Debt", type: "liability", tenant_id: tenantId },
-    { code: "2400", name: "Other Current Liabilities", type: "liability", tenant_id: tenantId },
-    { code: "2500", name: "Long-term Debt", type: "liability", tenant_id: tenantId },
-    { code: "2600", name: "Deferred Tax Liabilities", type: "liability", tenant_id: tenantId },
+    // LIABILITIES — current
+    { code: "2000", name: "Accounts Payable", type: "liability", tenant_id: tenantId, category: "current" },
+    { code: "2100", name: "VAT Payable", type: "liability", tenant_id: tenantId, category: "current" },
+    { code: "2200", name: "Accrued Expenses", type: "liability", tenant_id: tenantId, category: "current" },
+    { code: "2300", name: "Short-term Loans", type: "liability", tenant_id: tenantId, category: "current" },
+    { code: "2400", name: "Other Current Liabilities", type: "liability", tenant_id: tenantId, category: "current" },
+    // LIABILITIES — non-current
+    { code: "2500", name: "Long-term Loans", type: "liability", tenant_id: tenantId, category: "non_current" },
+    { code: "2600", name: "Deferred Tax Liabilities", type: "liability", tenant_id: tenantId, category: "non_current" },
+    { code: "2650", name: "Lease Liabilities", type: "liability", tenant_id: tenantId, category: "non_current" },
 
     // EQUITY
     { code: "3000", name: "Equity", type: "equity", tenant_id: tenantId },
     { code: "3100", name: "Retained Earnings", type: "equity", tenant_id: tenantId },
     { code: "3200", name: "Share Capital", type: "equity", tenant_id: tenantId },
+    { code: "3300", name: "Owner's Drawings", type: "equity", tenant_id: tenantId },
 
-    // REVENUE — P&L classification explicit (not inferred from code)
+    // REVENUE
     { code: "4000", name: "Sales Revenue", type: "revenue", tenant_id: tenantId, account_classification: "revenue" },
     { code: "4100", name: "Service Revenue", type: "revenue", tenant_id: tenantId, account_classification: "revenue" },
     { code: "4200", name: "Other Income", type: "revenue", tenant_id: tenantId, account_classification: "other_income" },
 
-    // EXPENSES
-    { code: "5000", name: "Consulting Expense", type: "expense", tenant_id: tenantId, account_classification: "operating_expense" },
-    { code: "5200", name: "Marketing Expense", type: "expense", tenant_id: tenantId, account_classification: "operating_expense" },
+    // EXPENSES — UAE/GCC template
+    { code: "5000", name: "Professional Fees", type: "expense", tenant_id: tenantId, account_classification: "operating_expense" },
+    { code: "5200", name: "Marketing & Advertising", type: "expense", tenant_id: tenantId, account_classification: "operating_expense" },
     { code: "5300", name: "General Expense", type: "expense", tenant_id: tenantId, account_classification: "operating_expense" },
+    { code: "5350", name: "Delivery & Logistics", type: "expense", tenant_id: tenantId, account_classification: "operating_expense" },
     { code: "5400", name: "Salaries & Wages", type: "expense", tenant_id: tenantId, account_classification: "operating_expense" },
+    { code: "5450", name: "Software Subscriptions", type: "expense", tenant_id: tenantId, account_classification: "operating_expense" },
     { code: "5500", name: "Cost of Goods Sold", type: "expense", tenant_id: tenantId, account_classification: "cost_of_sales" },
+    { code: "5520", name: "Direct Labor", type: "expense", tenant_id: tenantId, account_classification: "cost_of_sales" },
+    { code: "5530", name: "Manufacturing Costs", type: "expense", tenant_id: tenantId, account_classification: "cost_of_sales" },
+    { code: "5550", name: "Insurance Expense", type: "expense", tenant_id: tenantId, account_classification: "operating_expense" },
     { code: "5600", name: "Depreciation Expense", type: "expense", tenant_id: tenantId, account_classification: "operating_expense" },
+    { code: "5650", name: "Office Expenses", type: "expense", tenant_id: tenantId, account_classification: "operating_expense" },
     { code: "5700", name: "Rent Expense", type: "expense", tenant_id: tenantId, account_classification: "operating_expense" },
     { code: "5800", name: "Utilities Expense", type: "expense", tenant_id: tenantId, account_classification: "operating_expense" },
     { code: "5900", name: "Other Expenses", type: "expense", tenant_id: tenantId, account_classification: "operating_expense" },
@@ -133,14 +193,16 @@ export async function ensureDefaultAccounts(tenantId: string) {
     .in("code", defaultAccounts.map((a) => a.code));
 
   const existingCodes = new Set(existing?.map((a) => a.code) ?? []);
-  const accountsToCreate = defaultAccounts.filter((a) => !existingCodes.has(a.code));
+  const accountsToCreate = defaultAccounts
+    .filter((a) => !existingCodes.has(a.code))
+    .map((a) => enrichSeedCoaRow(a, tenantId));
 
   if (accountsToCreate.length === 0) {
     return; // All accounts already exist
   }
 
   const insertTable = supabase.from("chart_of_accounts") as unknown as {
-    insert: (values: ChartOfAccountsInsertLocal[]) => Promise<{ error: unknown }>;
+    insert: (values: Record<string, unknown>[]) => Promise<{ error: unknown }>;
   };
   const { error } = await insertTable.insert(accountsToCreate);
 

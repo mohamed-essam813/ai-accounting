@@ -13,6 +13,11 @@ import {
   legacyInferPlSection,
   type PlLineSection,
 } from "@/lib/accounting/account-classification";
+import {
+  isReportingClassification,
+  reportingClassificationToPlSection,
+} from "@/lib/accounting/reporting-classification";
+import { computeBalanceSheetFromTrialBalance } from "@/lib/accounting/balance-sheet-compute";
 
 type TrialBalance = Database["public"]["Views"]["v_trial_balance"]["Row"];
 
@@ -40,6 +45,8 @@ export interface BalanceSheetLineItem {
   amount: number;
   section: "current_assets" | "non_current_assets" | "current_liabilities" | "non_current_liabilities" | "equity";
   category?: "current" | "non_current";
+  /** System lines (P&L net, balancing) — no ledger link. */
+  isSynthetic?: boolean;
 }
 
 export interface CashFlowLineItem {
@@ -111,7 +118,10 @@ export async function getDetailedProfitAndLoss(
   const gainLoss: PLLineItem[] = [];
 
   (trialBalance || []).forEach((row) => {
-    const account = row as TrialBalance & { account_classification?: string | null };
+    const account = row as TrialBalance & {
+      account_classification?: string | null;
+      reporting_classification?: string | null;
+    };
     const type = account.type;
     const balance =
       type === "revenue"
@@ -123,7 +133,9 @@ export async function getDetailedProfitAndLoss(
     if (balance === 0) return;
 
     let section: PlLineSection | null = null;
-    if (account.account_classification && isAccountClassification(account.account_classification)) {
+    if (account.reporting_classification && isReportingClassification(account.reporting_classification)) {
+      section = reportingClassificationToPlSection(account.reporting_classification);
+    } else if (account.account_classification && isAccountClassification(account.account_classification)) {
       section = classificationToPlSection(account.account_classification);
     } else {
       section = legacyInferPlSection({
@@ -257,6 +269,10 @@ export async function getDetailedBalanceSheet(
     totalEquity: number;
     totalLiabilitiesAndEquity: number;
   };
+  /** Abnormal balances, classification notes. */
+  warnings: string[];
+  netProfitIncluded: number;
+  balancingAdjustment: number;
 }> {
   const user = await getCurrentUser();
   if (!user?.tenant) {
@@ -276,6 +292,9 @@ export async function getDetailedBalanceSheet(
         totalEquity: 0,
         totalLiabilitiesAndEquity: 0,
       },
+      warnings: [],
+      netProfitIncluded: 0,
+      balancingAdjustment: 0,
     };
   }
 
@@ -288,77 +307,26 @@ export async function getDetailedBalanceSheet(
 
   if (error) throw error;
 
-  const currentAssets: BalanceSheetLineItem[] = [];
-  const nonCurrentAssets: BalanceSheetLineItem[] = [];
-  const currentLiabilities: BalanceSheetLineItem[] = [];
-  const nonCurrentLiabilities: BalanceSheetLineItem[] = [];
-  const equity: BalanceSheetLineItem[] = [];
-
-  (trialBalance || []).forEach((account) => {
-    const code = parseInt(account.code || "0", 10);
-    const type = account.type;
-    
-    // Get category from account (if available) or infer from code
-    // Assets: 1000-1999 (Current: 1000-1099, Non-Current: 1100-1999)
-    // Liabilities: 2000-2999 (Current: 2000-2099, Non-Current: 2100-2999)
-    // Equity: 3000-3999
-
-    let balance = 0;
-    if (type === "asset") {
-      balance = Number(account.total_debit ?? 0) - Number(account.total_credit ?? 0);
-    } else if (type === "liability" || type === "equity") {
-      balance = Number(account.total_credit ?? 0) - Number(account.total_debit ?? 0);
-    }
-
-    if (balance === 0) return; // Skip zero balances
-
-    const item: BalanceSheetLineItem = {
-      account_code: account.code || "",
-      account_name: account.name || "",
-      amount: balance,
-      section: "current_assets", // Will be set below
-      category: code >= 1000 && code < 1100 ? "current" : code >= 1100 && code < 2000 ? "non_current" : undefined,
-    };
-
-    if (type === "asset") {
-      if (code >= 1000 && code < 1100) {
-        // Current Assets (Cash/Bank)
-        item.section = "current_assets";
-        item.category = "current";
-        currentAssets.push(item);
-      } else if (code >= 1100 && code < 2000) {
-        // Non-Current Assets
-        item.section = "non_current_assets";
-        item.category = "non_current";
-        nonCurrentAssets.push(item);
-      }
-    } else if (type === "liability") {
-      if (code >= 2000 && code < 2100) {
-        // Current Liabilities
-        item.section = "current_liabilities";
-        item.category = "current";
-        currentLiabilities.push(item);
-      } else if (code >= 2100 && code < 3000) {
-        // Non-Current Liabilities
-        item.section = "non_current_liabilities";
-        item.category = "non_current";
-        nonCurrentLiabilities.push(item);
-      }
-    } else if (type === "equity") {
-      item.section = "equity";
-      equity.push(item);
-    }
+  const built = computeBalanceSheetFromTrialBalance((trialBalance ?? []) as never, {
+    tenantId: user.tenant.id,
   });
 
-  // Calculate totals
-  const totalCurrentAssets = currentAssets.reduce((sum, item) => sum + item.amount, 0);
-  const totalNonCurrentAssets = nonCurrentAssets.reduce((sum, item) => sum + item.amount, 0);
-  const totalAssets = totalCurrentAssets + totalNonCurrentAssets;
-  const totalCurrentLiabilities = currentLiabilities.reduce((sum, item) => sum + item.amount, 0);
-  const totalNonCurrentLiabilities = nonCurrentLiabilities.reduce((sum, item) => sum + item.amount, 0);
-  const totalLiabilities = totalCurrentLiabilities + totalNonCurrentLiabilities;
-  const totalEquity = equity.reduce((sum, item) => sum + item.amount, 0);
-  const totalLiabilitiesAndEquity = totalLiabilities + totalEquity;
+  const sortByCode = (a: BalanceSheetLineItem, b: BalanceSheetLineItem) =>
+    (a.account_code || "").localeCompare(b.account_code || "", undefined, { numeric: true });
+
+  let currentAssets = built.currentAssets.map((i) => ({ ...i })) as BalanceSheetLineItem[];
+  let nonCurrentAssets = built.nonCurrentAssets.map((i) => ({ ...i })) as BalanceSheetLineItem[];
+  let currentLiabilities = built.currentLiabilities.map((i) => ({ ...i })) as BalanceSheetLineItem[];
+  let nonCurrentLiabilities = built.nonCurrentLiabilities.map((i) => ({ ...i })) as BalanceSheetLineItem[];
+  let equity = built.equity.map((i) => ({ ...i })) as BalanceSheetLineItem[];
+
+  currentAssets.sort(sortByCode);
+  nonCurrentAssets.sort(sortByCode);
+  currentLiabilities.sort(sortByCode);
+  nonCurrentLiabilities.sort(sortByCode);
+  equity.sort(sortByCode);
+
+  let totals = { ...built.totals };
 
   if (targetCurrency && asOfDate && user.tenant) {
     const base = await getTenantBaseCurrency(user.tenant.id);
@@ -369,36 +337,39 @@ export async function getDetailedBalanceSheet(
       Promise.all(currentLiabilities.map((i) => conv(i.amount))),
       Promise.all(nonCurrentLiabilities.map((i) => conv(i.amount))),
       Promise.all(equity.map((i) => conv(i.amount))),
-      conv(totalCurrentAssets),
-      conv(totalNonCurrentAssets),
-      conv(totalAssets),
-      conv(totalCurrentLiabilities),
-      conv(totalNonCurrentLiabilities),
-      conv(totalLiabilities),
-      conv(totalEquity),
-      conv(totalLiabilitiesAndEquity),
+      conv(totals.totalCurrentAssets),
+      conv(totals.totalNonCurrentAssets),
+      conv(totals.totalAssets),
+      conv(totals.totalCurrentLiabilities),
+      conv(totals.totalNonCurrentLiabilities),
+      conv(totals.totalLiabilities),
+      conv(totals.totalEquity),
+      conv(totals.totalLiabilitiesAndEquity),
     ]);
-    currentAssets.forEach((i, k) => { i.amount = ca[k]!; });
-    nonCurrentAssets.forEach((i, k) => { i.amount = nca[k]!; });
-    currentLiabilities.forEach((i, k) => { i.amount = cl[k]!; });
-    nonCurrentLiabilities.forEach((i, k) => { i.amount = ncl[k]!; });
-    equity.forEach((i, k) => { i.amount = eq[k]!; });
-    return {
-      currentAssets,
-      nonCurrentAssets,
-      currentLiabilities,
-      nonCurrentLiabilities,
-      equity,
-      totals: {
-        totalCurrentAssets: tca,
-        totalNonCurrentAssets: tnca,
-        totalAssets: ta,
-        totalCurrentLiabilities: tcl,
-        totalNonCurrentLiabilities: tncl,
-        totalLiabilities: tl,
-        totalEquity: te,
-        totalLiabilitiesAndEquity: tle,
-      },
+    currentAssets.forEach((i, k) => {
+      i.amount = ca[k]!;
+    });
+    nonCurrentAssets.forEach((i, k) => {
+      i.amount = nca[k]!;
+    });
+    currentLiabilities.forEach((i, k) => {
+      i.amount = cl[k]!;
+    });
+    nonCurrentLiabilities.forEach((i, k) => {
+      i.amount = ncl[k]!;
+    });
+    equity.forEach((i, k) => {
+      i.amount = eq[k]!;
+    });
+    totals = {
+      totalCurrentAssets: tca,
+      totalNonCurrentAssets: tnca,
+      totalAssets: ta,
+      totalCurrentLiabilities: tcl,
+      totalNonCurrentLiabilities: tncl,
+      totalLiabilities: tl,
+      totalEquity: te,
+      totalLiabilitiesAndEquity: tle,
     };
   }
 
@@ -408,16 +379,10 @@ export async function getDetailedBalanceSheet(
     currentLiabilities,
     nonCurrentLiabilities,
     equity,
-    totals: {
-      totalCurrentAssets,
-      totalNonCurrentAssets,
-      totalAssets,
-      totalCurrentLiabilities,
-      totalNonCurrentLiabilities,
-      totalLiabilities,
-      totalEquity,
-      totalLiabilitiesAndEquity,
-    },
+    totals,
+    warnings: built.warnings,
+    netProfitIncluded: built.netProfitIncluded,
+    balancingAdjustment: built.balancingAdjustment,
   };
 }
 

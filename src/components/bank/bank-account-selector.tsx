@@ -12,6 +12,8 @@ import {
 } from "@/components/ui/select";
 import { Card, CardContent } from "@/components/ui/card";
 
+const UNSET = "__unset__";
+
 type Account = {
   id: string;
   code: string;
@@ -38,10 +40,10 @@ export function BankAccountSelector({ accounts, selectedAccountId }: Props) {
 
   const handleChange = (accountId: string) => {
     const params = new URLSearchParams(searchParams.toString());
-    if (accountId && accountId !== "all") {
-      params.set("bankAccountId", accountId);
-    } else {
+    if (accountId === UNSET) {
       params.delete("bankAccountId");
+    } else {
+      params.set("bankAccountId", accountId);
     }
     router.push(`/bank?${params.toString()}`);
   };
@@ -52,17 +54,17 @@ export function BankAccountSelector({ accounts, selectedAccountId }: Props) {
         <div className="space-y-2">
           <div className="flex items-center gap-4">
             <label htmlFor="bank-account" className="text-sm font-medium">
-              Select bank account to reconcile
+              Bank account to reconcile
             </label>
             <Select
-              value={selectedAccountId ?? "all"}
+              value={selectedAccountId ?? UNSET}
               onValueChange={handleChange}
             >
-              <SelectTrigger id="bank-account" className="w-[300px]">
-                <SelectValue placeholder="Select bank account to reconcile" />
+              <SelectTrigger id="bank-account" className="w-[min(100%,380px)]">
+                <SelectValue placeholder="Select a bank account" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All bank accounts</SelectItem>
+                <SelectItem value={UNSET}>Select a bank account…</SelectItem>
                 {accountsForUi.map((account) => (
                   <SelectItem key={account.id} value={account.id}>
                     {account.code} — {account.name}

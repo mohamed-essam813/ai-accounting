@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -9,13 +9,6 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { importBankTransactionsAction } from "@/lib/actions/bank";
 import { toast } from "sonner";
 import { FileSpreadsheet, FileUp } from "lucide-react";
@@ -36,18 +29,24 @@ type Props = {
 };
 
 export function BankUploader({
-  bankAccountId: initialBankAccountId,
+  bankAccountId,
   accounts = [],
 }: Props) {
   const [transactions, setTransactions] = useState<ParsedBankTransaction[]>([]);
   const [fileName, setFileName] = useState<string | null>(null);
-  const [selectedBankAccountId, setSelectedBankAccountId] = useState<string>(
-    initialBankAccountId ?? ""
-  );
   const [isPending, startTransition] = useTransition();
   const [isParsing, setIsParsing] = useState(false);
 
+  const selectedAccount = accounts.find((a) => a.id === bankAccountId);
+  const importDisabled = !bankAccountId;
+
+  useEffect(() => {
+    setTransactions([]);
+    setFileName(null);
+  }, [bankAccountId]);
+
   const handleFile = async (file: File) => {
+    if (importDisabled) return;
     setIsParsing(true);
     setFileName(file.name);
     setTransactions([]);
@@ -88,6 +87,7 @@ export function BankUploader({
   };
 
   const handleCsvFile = async (file: File) => {
+    if (importDisabled) return;
     setIsParsing(true);
     setFileName(file.name);
     setTransactions([]);
@@ -118,12 +118,12 @@ export function BankUploader({
   };
 
   const handleImport = () => {
-    if (transactions.length === 0) {
-      toast.error("No transactions ready for import.");
+    if (importDisabled) {
+      toast.error("Select a bank account above before importing.");
       return;
     }
-    if (!selectedBankAccountId && accounts.length > 0) {
-      toast.error("Please select a bank account before importing.");
+    if (transactions.length === 0) {
+      toast.error("No transactions ready for import.");
       return;
     }
     startTransition(async () => {
@@ -133,7 +133,7 @@ export function BankUploader({
             ...txn,
             sourceFile: fileName ?? undefined,
           })),
-          bankAccountId: selectedBankAccountId || undefined,
+          bankAccountId,
         });
         toast.success("Transactions imported");
         setTransactions([]);
@@ -147,6 +147,8 @@ export function BankUploader({
     });
   };
 
+  const controlsDisabled = importDisabled || isParsing;
+
   return (
     <Card>
       <CardHeader>
@@ -156,35 +158,31 @@ export function BankUploader({
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        {accounts.length > 0 && (
-          <div className="space-y-2">
-            <label className="text-sm font-medium">
-              Select bank account to reconcile *
-            </label>
-            <Select
-              value={selectedBankAccountId}
-              onValueChange={setSelectedBankAccountId}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="Select bank account to reconcile" />
-              </SelectTrigger>
-              <SelectContent>
-                {accounts.map((account) => (
-                  <SelectItem key={account.id} value={account.id}>
-                    {account.code} — {account.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <p className="text-xs text-muted-foreground">
-              Only bank accounts with external statements can be reconciled.
-              Transactions will be imported for the selected account.
-            </p>
-          </div>
+        {importDisabled ? (
+          <p className="text-sm text-muted-foreground rounded-md border border-dashed bg-muted/30 px-3 py-2">
+            Select a bank account above to import and reconcile transactions.
+          </p>
+        ) : selectedAccount ? (
+          <p className="text-sm font-medium">
+            Importing into:{" "}
+            <span className="text-muted-foreground font-normal">
+              {selectedAccount.code} — {selectedAccount.name}
+            </span>
+          </p>
+        ) : (
+          <p className="text-sm text-destructive">
+            Selected bank account is not in the list. Pick a valid account above.
+          </p>
         )}
 
         <div className="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center gap-3">
-          <label className="flex items-center justify-center gap-2 rounded-lg border border-dashed border-muted-foreground/30 bg-muted/30 px-4 py-6 cursor-pointer hover:bg-muted/50 transition-colors">
+          <label
+            className={`flex items-center justify-center gap-2 rounded-lg border border-dashed border-muted-foreground/30 bg-muted/30 px-4 py-6 transition-colors ${
+              controlsDisabled
+                ? "cursor-not-allowed opacity-50"
+                : "cursor-pointer hover:bg-muted/50"
+            }`}
+          >
             <FileUp className="h-5 w-5 text-muted-foreground" />
             <span className="text-sm font-medium">
               {isParsing ? "Parsing…" : "Choose PDF"}
@@ -193,7 +191,7 @@ export function BankUploader({
               type="file"
               accept=".pdf,application/pdf"
               className="sr-only"
-              disabled={isParsing}
+              disabled={controlsDisabled}
               onChange={(e) => {
                 const f = e.target.files?.[0];
                 if (f) handleFile(f);
@@ -201,7 +199,13 @@ export function BankUploader({
               }}
             />
           </label>
-          <label className="flex items-center justify-center gap-2 rounded-lg border border-dashed border-muted-foreground/30 bg-muted/30 px-4 py-6 cursor-pointer hover:bg-muted/50 transition-colors">
+          <label
+            className={`flex items-center justify-center gap-2 rounded-lg border border-dashed border-muted-foreground/30 bg-muted/30 px-4 py-6 transition-colors ${
+              controlsDisabled
+                ? "cursor-not-allowed opacity-50"
+                : "cursor-pointer hover:bg-muted/50"
+            }`}
+          >
             <FileSpreadsheet className="h-5 w-5 text-muted-foreground" />
             <span className="text-sm font-medium">
               {isParsing ? "Parsing…" : "Choose CSV"}
@@ -210,7 +214,7 @@ export function BankUploader({
               type="file"
               accept=".csv,text/csv"
               className="sr-only"
-              disabled={isParsing}
+              disabled={controlsDisabled}
               onChange={(e) => {
                 const f = e.target.files?.[0];
                 if (f) handleCsvFile(f);
@@ -232,7 +236,7 @@ export function BankUploader({
 
         <Button
           disabled={
-            isPending || isParsing || transactions.length === 0
+            importDisabled || isPending || isParsing || transactions.length === 0
           }
           onClick={handleImport}
         >

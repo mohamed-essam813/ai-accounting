@@ -38,6 +38,7 @@ import {
 import { formatCurrency, formatDate } from "@/lib/format";
 import { getErrorMessage } from "@/lib/utils";
 import { isCounterpartyMismatchError } from "@/lib/drafts/counterparty-resolution";
+import { parseBillPurchaseType } from "@/lib/drafts/single-line-bill-debit";
 import { approveDraftAction, postDraftAction, updateDraftAction, deleteDraftAction, convertPostedToDraftAction } from "@/lib/actions/drafts";
 import { PromptIntentEnum } from "@/lib/ai/schema";
 import { toast } from "sonner";
@@ -83,6 +84,8 @@ type DraftTableItem = {
       amount?: number | null;
     } | null;
     bill_purchase_type?: "expense" | "inventory" | "asset";
+    /** Mirrors bill_purchase_type; persisted for debugging / loaders */
+    classification_type?: "EXPENSE" | "INVENTORY" | "ASSET";
     fixed_asset_draft?: {
       name?: string;
       category?: string;
@@ -422,6 +425,7 @@ export function DraftsTable({ drafts, accounts = [], userRole, displayCurrency }
         onOpenChange={handleEditorChange}
         accounts={accounts}
         readOnly={editorDraft?.status === "posted"}
+        onAccountsRefresh={() => router.refresh()}
       />
 
       <Dialog open={!!draftToDelete} onOpenChange={(open) => !open && setDraftToDelete(null)}>
@@ -542,6 +546,7 @@ type DraftEditorDialogProps = {
   onOpenChange: (open: boolean) => void;
   accounts?: Account[];
   readOnly?: boolean;
+  onAccountsRefresh?: () => void | Promise<void>;
 };
 
 const DraftIntentOptions = PromptIntentEnum.options;
@@ -691,7 +696,7 @@ function getDefaultValues(draft: DraftTableItem, accounts: Account[]): DraftEdit
   const tax = draft.entities.tax as { rate?: number; amount?: number; tax_rate_id?: string } | undefined;
   const draftWithTaxTreatment = draft as DraftTableItem & { tax_treatment?: "exclusive" | "inclusive" | null };
   const ent = draft.entities as DraftTableItem["entities"];
-  const bpt = ent.bill_purchase_type ?? "expense";
+  const bpt = parseBillPurchaseType(ent as Record<string, unknown>);
   const debitId = ent.ai_selected_accounts?.debit_account?.existing_account_id;
   const fa = ent.fixed_asset_draft;
   let expense_account_id = "";
@@ -724,7 +729,14 @@ function getDefaultValues(draft: DraftTableItem, accounts: Account[]): DraftEdit
   };
 }
 
-function DraftEditorDialog({ draft, open, onOpenChange, accounts = [], readOnly = false }: DraftEditorDialogProps) {
+function DraftEditorDialog({
+  draft,
+  open,
+  onOpenChange,
+  accounts = [],
+  readOnly = false,
+  onAccountsRefresh,
+}: DraftEditorDialogProps) {
   const [isSaving, startTransition] = useTransition();
   const [taxRates, setTaxRates] = useState<TaxRate[]>([]);
   const [expenseAccount, setExpenseAccount] = useState<AccountOption | null>(null);
@@ -791,7 +803,7 @@ function DraftEditorDialog({ draft, open, onOpenChange, accounts = [], readOnly 
       const vals = getDefaultValues(draft, accounts);
       form.reset(vals);
       const ent = draft.entities as DraftTableItem["entities"];
-      const bpt = ent.bill_purchase_type ?? "expense";
+      const bpt = parseBillPurchaseType(ent as Record<string, unknown>);
       const debitId = ent.ai_selected_accounts?.debit_account?.existing_account_id;
       if (bpt === "expense") {
         setExpenseAccount(findAccountOption(accounts, debitId));
@@ -934,7 +946,7 @@ function DraftEditorDialog({ draft, open, onOpenChange, accounts = [], readOnly 
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+      <DialogContent className="max-h-[90vh] w-full min-w-0 max-w-[min(1100px,calc(100vw-2rem))] overflow-y-auto overflow-x-hidden sm:max-w-[min(1100px,calc(100vw-2rem))]">
         <DialogHeader>
           <DialogTitle>{readOnly ? "View Draft" : "Edit Draft"}</DialogTitle>
           <DialogDescription>
@@ -945,12 +957,12 @@ function DraftEditorDialog({ draft, open, onOpenChange, accounts = [], readOnly 
         </DialogHeader>
 
         {draft ? (
-          <Tabs defaultValue="edit" className="space-y-4">
+          <Tabs defaultValue="edit" className="min-w-0 space-y-4">
             <TabsList>
               <TabsTrigger value="edit">Edit Details</TabsTrigger>
               <TabsTrigger value="preview">Journal Preview</TabsTrigger>
             </TabsList>
-            <TabsContent value="preview">
+            <TabsContent value="preview" className="min-w-0">
               <JournalPreview draftId={draft.id} accounts={accounts} />
             </TabsContent>
             <TabsContent value="edit">
@@ -1014,6 +1026,8 @@ function DraftEditorDialog({ draft, open, onOpenChange, accounts = [], readOnly 
                       accounts={accountOptions}
                       typeFilter={(t) => t === "expense"}
                       disabled={readOnly}
+                      inlineCreateAccountType="expense"
+                      onAccountsRefresh={onAccountsRefresh}
                     />
                     {form.formState.errors.expense_account_id ? (
                       <p className="text-xs text-destructive">
@@ -1078,6 +1092,8 @@ function DraftEditorDialog({ draft, open, onOpenChange, accounts = [], readOnly 
                         accounts={accountOptions}
                         typeFilter={(t) => t === "asset"}
                         disabled={readOnly}
+                        inlineCreateAccountType="asset"
+                        onAccountsRefresh={onAccountsRefresh}
                       />
                       {form.formState.errors.asset_account_id ? (
                         <p className="text-xs text-destructive">

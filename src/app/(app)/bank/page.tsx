@@ -1,27 +1,45 @@
 import { listBankTransactionsWithExistingMatches } from "@/lib/data/bank";
 import { listAccounts } from "@/lib/data/accounts";
+import { getBankReconciliationSummary } from "@/lib/data/bank-reconciliation-summary";
 import { BankUploader } from "@/components/bank/bank-uploader";
 import { BankTransactionsTable } from "@/components/bank/bank-transactions-table";
 import { BankAccountSelector } from "@/components/bank/bank-account-selector";
+import { BankReconciliationSummary } from "@/components/bank/bank-reconciliation-summary";
 import { filterBankReconciliationAccounts } from "@/lib/accounting/is-bank-account";
 import type { Account } from "@/lib/accounting";
 
 export const revalidate = 60;
 
+function parseBalanceParam(v: string | undefined): number | null {
+  if (v === undefined || v === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
 export default async function BankPage({
   searchParams,
 }: {
-  searchParams: Promise<{ bankAccountId?: string }>;
+  searchParams: Promise<{
+    bankAccountId?: string;
+    statementOpening?: string;
+    statementClosing?: string;
+  }>;
 }) {
   const params = await searchParams;
-  const [transactions, accounts] = await Promise.all([
-    listBankTransactionsWithExistingMatches(50, params.bankAccountId),
+  const bankAccountId = params.bankAccountId;
+
+  const [transactions, accounts, summary] = await Promise.all([
+    bankAccountId
+      ? listBankTransactionsWithExistingMatches(200, bankAccountId)
+      : Promise.resolve([]),
     listAccounts(),
+    bankAccountId ? getBankReconciliationSummary(bankAccountId) : Promise.resolve(null),
   ]);
 
-  // Only BANK accounts (detail_type='bank' AND allow_reconciliation=true). Exclude Cash, Petty Cash, etc.
-  // Cast accounts to include optional new fields for filtering
   const bankAccounts = filterBankReconciliationAccounts(accounts as Account[]);
+
+  const statementOpening = parseBalanceParam(params.statementOpening);
+  const statementClosing = parseBalanceParam(params.statementClosing);
 
   return (
     <div className="space-y-8">
@@ -43,10 +61,18 @@ export default async function BankPage({
         </div>
       ) : (
         <>
-          <BankAccountSelector accounts={bankAccounts} selectedAccountId={params.bankAccountId} />
-          <BankUploader bankAccountId={params.bankAccountId} accounts={bankAccounts} />
+          <BankAccountSelector accounts={bankAccounts} selectedAccountId={bankAccountId} />
+          {bankAccountId && summary ? (
+            <BankReconciliationSummary
+              summary={summary}
+              statementOpening={statementOpening}
+              statementClosing={statementClosing}
+            />
+          ) : null}
+          <BankUploader bankAccountId={bankAccountId} accounts={bankAccounts} />
           <BankTransactionsTable
             transactions={transactions}
+            bankAccountSelected={Boolean(bankAccountId)}
             accounts={accounts.map((a) => ({
               id: a.id,
               name: a.name,
@@ -59,4 +85,3 @@ export default async function BankPage({
     </div>
   );
 }
-

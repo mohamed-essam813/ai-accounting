@@ -11,6 +11,7 @@ import {
   BookOpen,
   Users,
   Package,
+  Factory,
   Receipt,
   ScrollText,
   Wallet,
@@ -89,6 +90,12 @@ export const mainNavigation: NavItem[] = [
     href: "/inventory",
     icon: Package,
     description: "Track inventory items with FIFO or Weighted Average valuation.",
+  },
+  {
+    title: "Fixed Assets",
+    href: "/fixed-assets",
+    icon: Factory,
+    description: "Asset register, depreciation, and disposal (PPE).",
   },
   {
     title: "Journals",

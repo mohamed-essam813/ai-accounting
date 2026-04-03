@@ -12,7 +12,12 @@ import { getCurrentUser } from "@/lib/data/users";
 import type { Account } from "@/lib/accounting";
 import { filterBankReconciliationAccounts } from "@/lib/accounting/is-bank-account";
 import type { DraftPayload } from "@/lib/ai/schema";
-import { getBusinessItemById, getInventoryBalance, getInventoryItem } from "@/lib/data/inventory";
+import {
+  getBusinessItemById,
+  getInventoryBalance,
+  getInventoryItem,
+  type BusinessItem,
+} from "@/lib/data/inventory";
 import { round2 } from "@/lib/posting/posting-engine";
 import { buildTransactionAmounts, validateTransactionAmountsMatch } from "@/lib/posting/transaction-amounts";
 import { buildBillAccounts, suggestionForAccount } from "@/lib/posting/bill-accounts";
@@ -20,6 +25,16 @@ import { dedupeEntitiesForDisplay } from "@/lib/utils/entity-dedupe";
 import { resolveInventorySaleCostsForDraft } from "@/lib/inventory/guided-invoice-inventory-validation";
 import { parseBillDocumentLines, parseInvoiceDocumentLines } from "@/lib/posting/multi-line-documents";
 import type { BillDocumentLine, InvoiceDocumentLine } from "@/lib/posting/multi-line-documents";
+import { assertInvoiceLinesValidForDraft } from "@/lib/drafts/multi-line-invoice-validation";
+
+function generateDraftOpReferenceId(): string {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let id = "";
+  for (let i = 0; i < 8; i++) {
+    id += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return id;
+}
 
 type AccountSuggestion = NonNullable<DraftPayload["accounts"]>["debit_account"];
 
@@ -738,134 +753,200 @@ const MultiLineInvoiceGuidedSchema = z.object({
  * Mixed product (inventory) and service lines on one sales invoice (single AR total).
  */
 export async function createGuidedMultiLineInvoiceAction(input: z.infer<typeof MultiLineInvoiceGuidedSchema>) {
+  const refId = generateDraftOpReferenceId();
+  const isProd = process.env.NODE_ENV === "production";
   const parsed = MultiLineInvoiceGuidedSchema.parse(input);
   const user = await getCurrentUser();
   if (!user?.tenant) throw new Error("Tenant not resolved.");
 
-  const baseCurrency = await getTenantBaseCurrency(user.tenant.id);
-  const contactId = await resolveContactId(parsed.customerName, "customer");
-  const accounts = await listAccounts();
-  const rates = await listTaxRates();
+  let contactId: string | null = null;
 
-  const documentLines: InvoiceDocumentLine[] = [];
+  try {
+    const baseCurrency = await getTenantBaseCurrency(user.tenant.id);
+    contactId = await resolveContactId(parsed.customerName, "customer");
+    const accounts = await listAccounts();
+    const rates = await listTaxRates();
+    const defaultRevenueAccountExists = accounts.some((a) => a.code === "4000");
 
-  for (const row of parsed.lines) {
-    const item = await getBusinessItemById(row.item_id);
-    if (!item) throw new Error(`Item not found for line "${row.description}".`);
-
-    const taxId = row.tax_rate_id ?? parsed.defaultTaxRateId ?? item.default_tax_rate_id ?? null;
-    if (row.line_type === "product") {
-      if (!item.inventory_tracked || item.item_type !== "product") {
-        throw new Error(`"${item.name}" is not an inventory-tracked product. Change this line to service or pick a product.`);
-      }
-      if (!row.quantity || row.unit_price == null) {
-        throw new Error(`Quantity and unit price are required for "${row.description}".`);
-      }
-      const expected = round2(row.quantity * row.unit_price);
-      if (Math.abs(expected - row.line_net) > 0.02) {
-        throw new Error(`Line "${row.description}" amount does not match quantity × unit price.`);
-      }
-      await resolveInventorySaleCostsForDraft({
-        tenantId: user.tenant.id,
-        item,
-        quantity: row.quantity,
-        invoiceDate: parsed.invoiceDate,
-        revenueSubtotal: row.line_net,
-      });
-    } else if (row.line_type === "service" && item.item_type === "product" && item.inventory_tracked) {
-      throw new Error(
-        `"${item.name}" is inventory-tracked. Use product line type or pick a service item.`,
-      );
+    const itemsById = new Map<string, BusinessItem>();
+    for (const row of parsed.lines) {
+      const item = await getBusinessItemById(row.item_id);
+      if (item) itemsById.set(row.item_id, item);
     }
 
-    documentLines.push({
-      line_type: row.line_type,
-      description: row.description,
-      line_net: row.line_net,
-      tax_rate_id: taxId,
-      item_id: row.item_id,
-      quantity: row.quantity,
-      unit_price: row.unit_price,
+    assertInvoiceLinesValidForDraft({
+      lines: parsed.lines,
+      itemsById,
+      defaultRevenueAccountExists,
     });
-  }
 
-  parseInvoiceDocumentLines(documentLines);
+    const documentLines: InvoiceDocumentLine[] = [];
 
-  let sumSub = 0;
-  let sumTax = 0;
-  let sumTot = 0;
-  for (const line of documentLines) {
-    const tid = line.tax_rate_id;
-    const pct = tid ? rates.find((r) => r.id === tid && r.tax_type === "output")?.percentage ?? 0 : 0;
-    const tx = buildTransactionAmounts({
-      entered_amount: line.line_net,
-      tax_rate: pct,
-      tax_treatment: parsed.taxTreatment,
-    });
-    sumSub += tx.subtotal_amount;
-    sumTax += tx.tax_amount;
-    sumTot += tx.total_amount;
-  }
+    for (let i = 0; i < parsed.lines.length; i++) {
+      const row = parsed.lines[i];
+      const item = itemsById.get(row.item_id)!;
 
-  const transactionAmounts = {
-    entered_amount: parsed.taxTreatment === "inclusive" ? sumTot : sumSub,
-    tax_rate: sumSub > 0 ? round2((sumTax / sumSub) * 100) : 0,
-    tax_treatment: parsed.taxTreatment,
-    subtotal_amount: round2(sumSub),
-    tax_amount: round2(sumTax),
-    total_amount: round2(sumTot),
-  };
-
-  const primaryTaxId =
-    parsed.lines.find((l) => l.tax_rate_id)?.tax_rate_id ?? parsed.defaultTaxRateId;
-  let tax: { rate: number; amount: null } | null = null;
-  let taxRateLink: { tax_rate_id: string } | undefined;
-  if (primaryTaxId) {
-    const tr = rates.find((r) => r.id === primaryTaxId && r.tax_type === "output");
-    if (tr) {
-      tax = { rate: tr.percentage, amount: null };
-      taxRateLink = { tax_rate_id: tr.id };
-    }
-  }
-
-  const first = await getBusinessItemById(parsed.lines[0].item_id);
-  const accountPayload = await buildInvoiceAccounts(
-    accounts as Account[],
-    first?.revenue_account_id ?? null,
-    primaryTaxId ?? null,
-  );
-
-  const descSummary = documentLines.map((l) => l.description).join("; ");
-
-  return saveDraftAction({
-    intent: "create_invoice",
-    confidence: 1,
-    contactId,
-    entities: {
-      amount: parsed.taxTreatment === "inclusive" ? transactionAmounts.total_amount : transactionAmounts.subtotal_amount,
-      currency: baseCurrency,
-      date: parsed.invoiceDate,
-      counterparty: parsed.customerName,
-      description: descSummary,
-      due_date: parsed.dueDate,
-      tax,
-      invoice_number: null,
-    },
-    taxRateLink,
-    tax_treatment: parsed.taxTreatment,
-    accounts: accountPayload,
-    selectedItemId: parsed.lines[0].item_id,
-    itemSnapshot: first
-      ? {
-          item_type: first.item_type,
-          inventory_tracked: first.inventory_tracked,
-          name: first.name,
+      const taxId = row.tax_rate_id ?? parsed.defaultTaxRateId ?? item.default_tax_rate_id ?? null;
+      if (row.line_type === "product") {
+        try {
+          await resolveInventorySaleCostsForDraft({
+            tenantId: user.tenant.id,
+            item,
+            quantity: row.quantity!,
+            invoiceDate: parsed.invoiceDate,
+            revenueSubtotal: row.line_net,
+          });
+        } catch (invErr) {
+          const base = getErrorMessage(invErr, "Inventory validation failed.");
+          const cleaned = base.replace(/^Cannot generate invoice draft:\s*/i, "");
+          throw new Error(`Line ${i + 1}: ${cleaned}`);
         }
-      : undefined,
-    guidedEventRequiresItem: true,
-    transactionAmounts,
-    documentLineItems: documentLines as unknown as Array<Record<string, unknown>>,
-  });
+      }
+
+      documentLines.push({
+        line_type: row.line_type,
+        description: row.description,
+        line_net: row.line_net,
+        tax_rate_id: taxId,
+        item_id: row.item_id,
+        quantity: row.quantity,
+        unit_price: row.unit_price,
+      });
+    }
+
+    parseInvoiceDocumentLines(documentLines);
+
+    let sumSub = 0;
+    let sumTax = 0;
+    let sumTot = 0;
+    for (const line of documentLines) {
+      const tid = line.tax_rate_id;
+      const pct = tid ? rates.find((r) => r.id === tid && r.tax_type === "output")?.percentage ?? 0 : 0;
+      const tx = buildTransactionAmounts({
+        entered_amount: line.line_net,
+        tax_rate: pct,
+        tax_treatment: parsed.taxTreatment,
+      });
+      sumSub += tx.subtotal_amount;
+      sumTax += tx.tax_amount;
+      sumTot += tx.total_amount;
+    }
+
+    const transactionAmounts = {
+      entered_amount: parsed.taxTreatment === "inclusive" ? sumTot : sumSub,
+      tax_rate: sumSub > 0 ? round2((sumTax / sumSub) * 100) : 0,
+      tax_treatment: parsed.taxTreatment,
+      subtotal_amount: round2(sumSub),
+      tax_amount: round2(sumTax),
+      total_amount: round2(sumTot),
+    };
+
+    const primaryTaxId =
+      parsed.lines.find((l) => l.tax_rate_id)?.tax_rate_id ?? parsed.defaultTaxRateId;
+    let tax: { rate: number; amount: null } | null = null;
+    let taxRateLink: { tax_rate_id: string } | undefined;
+    if (primaryTaxId) {
+      const tr = rates.find((r) => r.id === primaryTaxId && r.tax_type === "output");
+      if (tr) {
+        tax = { rate: tr.percentage, amount: null };
+        taxRateLink = { tax_rate_id: tr.id };
+      }
+    }
+
+    const first = await getBusinessItemById(parsed.lines[0].item_id);
+    const accountPayload = await buildInvoiceAccounts(
+      accounts as Account[],
+      first?.revenue_account_id ?? null,
+      primaryTaxId ?? null,
+    );
+
+    const descSummary = documentLines.map((l) => l.description).join("; ");
+
+    const lineDebug = parsed.lines.map((row, idx) => {
+      const it = itemsById.get(row.item_id);
+      return {
+        line_index: idx + 1,
+        line_type: row.line_type,
+        item_id: row.item_id,
+        description: row.description,
+        quantity: row.quantity,
+        unit_price: row.unit_price,
+        line_net: row.line_net,
+        tax_rate_id: row.tax_rate_id ?? parsed.defaultTaxRateId ?? it?.default_tax_rate_id ?? null,
+        item_name: it?.name,
+        item_type: it?.item_type,
+        revenue_account_id: it?.revenue_account_id ?? null,
+        inventory_account_id: it?.inventory_account_id ?? null,
+        cogs_account_id: it?.cogs_account_id ?? null,
+      };
+    });
+
+    console.info("[createGuidedMultiLineInvoiceAction] generating draft", {
+      refId,
+      tenant_id: user.tenant.id,
+      contact_id: contactId,
+      invoice_date: parsed.invoiceDate,
+      line_count: parsed.lines.length,
+      lines: lineDebug,
+      transaction_amounts: transactionAmounts,
+    });
+
+    return await saveDraftAction({
+      intent: "create_invoice",
+      confidence: 1,
+      contactId,
+      entities: {
+        amount: parsed.taxTreatment === "inclusive" ? transactionAmounts.total_amount : transactionAmounts.subtotal_amount,
+        currency: baseCurrency,
+        date: parsed.invoiceDate,
+        counterparty: parsed.customerName,
+        description: descSummary,
+        due_date: parsed.dueDate,
+        tax,
+        invoice_number: null,
+      },
+      taxRateLink,
+      tax_treatment: parsed.taxTreatment,
+      accounts: accountPayload,
+      selectedItemId: parsed.lines[0].item_id,
+      itemSnapshot: first
+        ? {
+            item_type: first.item_type,
+            inventory_tracked: first.inventory_tracked,
+            name: first.name,
+          }
+        : undefined,
+      guidedEventRequiresItem: true,
+      transactionAmounts,
+      documentLineItems: documentLines as unknown as Array<Record<string, unknown>>,
+    });
+  } catch (err) {
+    const stack = err instanceof Error ? err.stack : undefined;
+    console.error("[createGuidedMultiLineInvoiceAction] failed", {
+      refId,
+      tenant_id: user.tenant.id,
+      contact_id: contactId,
+      invoice_date: parsed.invoiceDate,
+      line_count: parsed.lines.length,
+      lines: parsed.lines.map((row, idx) => ({
+        line_index: idx + 1,
+        item_id: row.item_id,
+        line_type: row.line_type,
+        description: row.description,
+        line_net: row.line_net,
+        quantity: row.quantity,
+        unit_price: row.unit_price,
+        tax_rate_id: row.tax_rate_id,
+      })),
+      error: err,
+      stack,
+    });
+    if (isProd) {
+      throw new Error(`Could not create invoice draft. Reference: ${refId}`);
+    }
+    const msg = getErrorMessage(err, "Could not create invoice draft.");
+    throw new Error(msg);
+  }
 }
 
 export async function createGuidedPaymentReceivedAction(

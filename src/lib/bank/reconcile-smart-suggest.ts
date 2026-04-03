@@ -15,7 +15,7 @@ export type SmartPrimaryKind =
   | "transfer_in";
 
 export type SmartSuggestion = {
-  /** Shown inline, e.g. "Suggested: Expense (Bank charges)" */
+  /** Shown after a "Suggested:" prefix in the UI, e.g. "Expense (Bank charges)" */
   inlineLabel: string;
   primaryKind: SmartPrimaryKind;
   /** Preferred expense/revenue account name (matched against chart of accounts) */
@@ -40,13 +40,13 @@ export function getSmartSuggestion(description: string, amount: number): SmartSu
   if (includesAny(d, ["payroll", "salary", "salaries", "wage"])) {
     return outgoing
       ? {
-          inlineLabel: "Suggested: Expense (Salaries)",
+          inlineLabel: "Expense (Salaries)",
           primaryKind: "expense",
           preferredAccountName: "Salaries & Wages",
           matchReason: "payroll_keywords",
         }
       : {
-          inlineLabel: "Suggested: Income (Other)",
+          inlineLabel: "Income (Other)",
           primaryKind: "income",
           preferredAccountName: "Other Income",
           matchReason: "payroll_in",
@@ -56,13 +56,13 @@ export function getSmartSuggestion(description: string, amount: number): SmartSu
   if (includesAny(d, ["charge", "charges", "fee", "fees", "ips"])) {
     return outgoing
       ? {
-          inlineLabel: "Suggested: Expense (Bank charges)",
+          inlineLabel: "Expense (Bank charges)",
           primaryKind: "expense",
           preferredAccountName: "General Expense",
           matchReason: "bank_charges_keywords",
         }
       : {
-          inlineLabel: "Suggested: Income (Other)",
+          inlineLabel: "Income (Other)",
           primaryKind: "income",
           preferredAccountName: "Other Income",
           matchReason: "fee_refund",
@@ -72,13 +72,13 @@ export function getSmartSuggestion(description: string, amount: number): SmartSu
   if (includesAny(d, ["transfer", "xfer", "trf"])) {
     return outgoing
       ? {
-          inlineLabel: "Suggested: Transfer",
+          inlineLabel: "Transfer",
           primaryKind: "transfer",
           preferredAccountName: "General Expense",
           matchReason: "transfer_keyword_out",
         }
       : {
-          inlineLabel: "Suggested: Transfer",
+          inlineLabel: "Transfer",
           primaryKind: "transfer_in",
           preferredAccountName: "Other Income",
           matchReason: "transfer_keyword_in",
@@ -87,7 +87,7 @@ export function getSmartSuggestion(description: string, amount: number): SmartSu
 
   if (includesAny(d, ["rent", "lease"])) {
     return {
-      inlineLabel: "Suggested: Expense (Rent)",
+      inlineLabel: "Expense (Rent)",
       primaryKind: "expense",
       preferredAccountName: "Rent Expense",
       matchReason: "rent",
@@ -96,7 +96,7 @@ export function getSmartSuggestion(description: string, amount: number): SmartSu
 
   if (includesAny(d, ["utility", "utilities", "electric", "water"])) {
     return {
-      inlineLabel: "Suggested: Expense (Utilities)",
+      inlineLabel: "Expense (Utilities)",
       primaryKind: "expense",
       preferredAccountName: "Utilities Expense",
       matchReason: "utilities",
@@ -105,7 +105,7 @@ export function getSmartSuggestion(description: string, amount: number): SmartSu
 
   if (includesAny(d, ["marketing", "ads", "advertising"])) {
     return {
-      inlineLabel: "Suggested: Expense (Marketing)",
+      inlineLabel: "Expense (Marketing)",
       primaryKind: "expense",
       preferredAccountName: "Marketing Expense",
       matchReason: "marketing",
@@ -115,13 +115,13 @@ export function getSmartSuggestion(description: string, amount: number): SmartSu
   if (includesAny(d, ["supplier", "vendor", "invoice", "bill"])) {
     return outgoing
       ? {
-          inlineLabel: "Suggested: Supplier payment",
+          inlineLabel: "Supplier payment",
           primaryKind: "supplier_payment",
           preferredAccountName: "General Expense",
           matchReason: "supplier_keywords",
         }
       : {
-          inlineLabel: "Suggested: Customer payment",
+          inlineLabel: "Customer payment",
           primaryKind: "customer_receipt",
           preferredAccountName: "Service Revenue",
           matchReason: "customer_keywords",
@@ -131,14 +131,14 @@ export function getSmartSuggestion(description: string, amount: number): SmartSu
   // Default
   if (outgoing) {
     return {
-      inlineLabel: "Suggested: Expense (General)",
+      inlineLabel: "Expense (General)",
       primaryKind: "expense",
       preferredAccountName: "General Expense",
       matchReason: "default_out",
     };
   }
   return {
-    inlineLabel: "Suggested: Income (Services)",
+    inlineLabel: "Income (Services)",
     primaryKind: "income",
     preferredAccountName: "Service Revenue",
     matchReason: "default_in",

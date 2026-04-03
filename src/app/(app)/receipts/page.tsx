@@ -28,7 +28,9 @@ export default async function ReceiptsPage() {
       <Card>
         <CardHeader>
           <CardTitle>Posted receipts</CardTitle>
-          <CardDescription>Linked to journal entries and (soon) invoice settlement.</CardDescription>
+          <CardDescription>
+            Linked to journal entries; allocations update invoice balances when you apply receipts to invoices.
+          </CardDescription>
         </CardHeader>
         <CardContent>
           {receipts.length === 0 ? (
@@ -45,6 +47,7 @@ export default async function ReceiptsPage() {
                     <TableHead>Customer</TableHead>
                     <TableHead className="text-right">Amount</TableHead>
                     <TableHead>Reference</TableHead>
+                    <TableHead>Type</TableHead>
                     <TableHead>PDF</TableHead>
                   </TableRow>
                 </TableHeader>

@@ -463,7 +463,7 @@ export function InlineDraftReviewPanel({
       </CardHeader>
 
       <CardContent className="flex-1 overflow-y-auto">
-        <Tabs defaultValue="details" className="space-y-4">
+        <Tabs defaultValue="details" className="min-w-0 space-y-4">
           <TabsList>
             <TabsTrigger value="details">Details</TabsTrigger>
             <TabsTrigger value="journal">Journal Entry</TabsTrigger>
@@ -777,7 +777,7 @@ export function InlineDraftReviewPanel({
           </div>
           </TabsContent>
 
-          <TabsContent value="journal" className="mt-4">
+          <TabsContent value="journal" className="mt-4 min-w-0">
             <JournalPreview draftId={draftId} editable={false} accounts={accounts} />
           </TabsContent>
         </Tabs>

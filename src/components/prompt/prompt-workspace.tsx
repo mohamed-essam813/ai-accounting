@@ -81,7 +81,7 @@ export function PromptWorkspace() {
     return (
       <div className="grid gap-6 lg:grid-cols-2">
         <GuidedEventWorkspace onDraftCreated={handleDraftCreated} />
-        <div>
+        <div className="min-w-0">
           <InlineDraftReviewPanel
             draftId={draftId}
             initialDraft={draftData.draft}

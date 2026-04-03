@@ -26,6 +26,7 @@ import { getErrorMessage } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Plus, Trash2 } from "lucide-react";
+import { PricesIncludeVatToggle, inferPricesIncludeVatFromText } from "@/components/prompt/prices-include-vat-toggle";
 
 type BillLineUi = {
   id: string;
@@ -72,6 +73,7 @@ function chipLabel(c: BillLineUi["classification"]): string {
 export function MultiLineSupplierBillForm({
   contacts,
   onRefreshContacts,
+  onRefreshAccounts,
   inputTax,
   accounts,
   pending,
@@ -80,6 +82,8 @@ export function MultiLineSupplierBillForm({
 }: {
   contacts: ContactOption[];
   onRefreshContacts: () => Promise<void>;
+  /** Reload chart after inline account create */
+  onRefreshAccounts?: () => Promise<void>;
   inputTax: TaxRate[];
   accounts: AccountOption[];
   pending: boolean;
@@ -113,6 +117,10 @@ export function MultiLineSupplierBillForm({
   };
 
   const parsePaste = () => {
+    const inferred = inferPricesIncludeVatFromText(pasteHint);
+    if (inferred) {
+      setTaxTreatment(inferred);
+    }
     const parsed = parseNaturalLanguageBillLines(pasteHint);
     if (parsed.length === 0) {
       toast.message("No lines found. Try one item per line, e.g. \"10 robots @ 2000\".");
@@ -132,7 +140,13 @@ export function MultiLineSupplierBillForm({
         return base;
       }),
     );
-    toast.success(`We found ${parsed.length} item(s). Review and pick products/categories, then generate draft.`);
+    const hint =
+      inferred === "inclusive"
+        ? " “Prices include VAT” detected — set to Yes."
+        : inferred === "exclusive"
+          ? " “VAT on top” detected — set to No."
+          : "";
+    toast.success(`Found ${parsed.length} item(s).${hint} Review lines, then generate draft.`);
   };
 
   const lineNetAndTax = (L: BillLineUi): { net: number; taxPct: number } | null => {
@@ -315,23 +329,9 @@ export function MultiLineSupplierBillForm({
             </SelectContent>
           </Select>
         </div>
-        <div className="space-y-2">
-          <Label>Tax on price</Label>
-          <Select
-            value={taxTreatment}
-            onValueChange={(v) => setTaxTreatment(v as "exclusive" | "inclusive")}
-            disabled={pending}
-          >
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="exclusive">Added on top (exclusive)</SelectItem>
-              <SelectItem value="inclusive">Included in amount (inclusive)</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
       </div>
+
+      <PricesIncludeVatToggle value={taxTreatment} onChange={setTaxTreatment} disabled={pending} />
 
       <div className="space-y-2 rounded-md border bg-background/50 p-3">
         <Label>Smart paste (optional)</Label>
@@ -432,7 +432,9 @@ export function MultiLineSupplierBillForm({
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label>Unit price</Label>
+                  <Label>
+                    Unit price {taxTreatment === "inclusive" ? "(incl. VAT)" : "(before tax)"}
+                  </Label>
                   <Input
                     type="number"
                     step="0.01"
@@ -458,6 +460,8 @@ export function MultiLineSupplierBillForm({
                 accounts={accounts}
                 typeFilter={(t) => t === "expense"}
                 disabled={pending}
+                inlineCreateAccountType="expense"
+                onAccountsRefresh={onRefreshAccounts}
               />
             ) : null}
 
@@ -483,6 +487,8 @@ export function MultiLineSupplierBillForm({
                   accounts={accounts}
                   typeFilter={(t) => t === "asset"}
                   disabled={pending}
+                  inlineCreateAccountType="asset"
+                  onAccountsRefresh={onRefreshAccounts}
                 />
                 <div className="space-y-2">
                   <Label>Useful life (years)</Label>

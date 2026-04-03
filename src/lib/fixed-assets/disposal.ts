@@ -65,15 +65,31 @@ export async function disposeAsset(
   // MVP Feedback: Gain/Loss = Proceeds - Net Book Value
   const gainLoss = proceeds - netBookValue;
 
-  // Get accounts
-  const ppeAccount = await getAccountByCode("1500"); // Property, Plant & Equipment
+  const assetRow = asset as {
+    cost: number;
+    name: string;
+    asset_account_id?: string | null;
+  };
+
+  const ppeAccount =
+    assetRow.asset_account_id != null
+      ? (
+          await supabase.from("chart_of_accounts").select("id, code, name").eq("id", assetRow.asset_account_id).maybeSingle()
+        ).data
+      : null;
+  const ppeResolved = ppeAccount ?? (await getAccountByCode("1500")); // Property, Plant & Equipment
+
+  if (!ppeResolved) {
+    throw new Error("Set an asset account on the fixed asset, or ensure account 1500 (PPE) exists.");
+  }
+
   const accumulatedDepreciationAccount = await getAccountByCode("1600"); // Accumulated Depreciation
   const cashAccount = await getAccountByCode("1000"); // Cash (or bank account)
   const gainLossAccount = await getAccountByCode("4200"); // Gain on Asset Disposal (Other Income)
 
-  if (!ppeAccount || !accumulatedDepreciationAccount || !cashAccount || !gainLossAccount) {
+  if (!accumulatedDepreciationAccount || !cashAccount || !gainLossAccount) {
     throw new Error(
-      "Required accounts not found. Please ensure accounts 1500 (PPE), 1600 (Accumulated Depreciation), 1000 (Cash), and 4200 (Gain on Asset Disposal) exist.",
+      "Required accounts not found. Please ensure accounts 1600 (Accumulated Depreciation), 1000 (Cash), and 4200 (Gain on Asset Disposal) exist.",
     );
   }
 
@@ -96,11 +112,11 @@ export async function disposeAsset(
       credit: 0,
       memo: `Remove accumulated depreciation for ${asset.name}`,
     },
-    // Remove asset cost
+    // Remove asset cost (at gross cost)
     {
-      account_id: ppeAccount.id,
+      account_id: ppeResolved.id,
       debit: 0,
-      credit: Number(asset.cost),
+      credit: Number(assetRow.cost),
       memo: `Remove asset cost for ${asset.name}`,
     },
     // Record proceeds

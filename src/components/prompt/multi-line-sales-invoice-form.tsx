@@ -23,6 +23,7 @@ import { toast } from "sonner";
 import { getErrorMessage } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Plus, Trash2 } from "lucide-react";
+import { PricesIncludeVatToggle } from "@/components/prompt/prices-include-vat-toggle";
 
 type InvLineUi = {
   id: string;
@@ -191,7 +192,7 @@ export function MultiLineSalesInvoiceForm({
           <Input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} disabled={pending} />
         </div>
         <div className="space-y-2">
-          <Label>Default tax</Label>
+          <Label>Default tax (lines can override)</Label>
           <Select
             value={defaultTaxRateId || "__none__"}
             onValueChange={(v) => setDefaultTaxRateId(v === "__none__" ? "" : v)}
@@ -210,23 +211,9 @@ export function MultiLineSalesInvoiceForm({
             </SelectContent>
           </Select>
         </div>
-        <div className="space-y-2">
-          <Label>Tax on price</Label>
-          <Select
-            value={taxTreatment}
-            onValueChange={(v) => setTaxTreatment(v as "exclusive" | "inclusive")}
-            disabled={pending}
-          >
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="exclusive">Added on top (exclusive)</SelectItem>
-              <SelectItem value="inclusive">Included in amount (inclusive)</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
       </div>
+
+      <PricesIncludeVatToggle value={taxTreatment} onChange={setTaxTreatment} disabled={pending} />
 
       <div className="space-y-3">
         {lines.map((L, idx) => (
@@ -304,7 +291,9 @@ export function MultiLineSalesInvoiceForm({
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label>Unit price</Label>
+                  <Label>
+                    Unit price {taxTreatment === "inclusive" ? "(incl. VAT)" : "(before tax)"}
+                  </Label>
                   <Input
                     type="number"
                     step="0.01"

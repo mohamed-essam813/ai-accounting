@@ -328,7 +328,13 @@ export function parseBillDocumentLines(raw: unknown): BillDocumentLine[] {
 export function parseInvoiceDocumentLines(raw: unknown): InvoiceDocumentLine[] {
   const arr = z.array(InvoiceDocumentLineSchema).safeParse(raw);
   if (!arr.success) {
-    throw new Error("Invalid multi-line invoice data. Check each line has amounts and items.");
+    const issue = arr.error.issues[0];
+    const idx = issue?.path?.[0];
+    const lineHint =
+      typeof idx === "number" ? ` (row ${idx + 1})` : "";
+    throw new Error(
+      `Invalid multi-line invoice data${lineHint}: ${issue?.message ?? arr.error.message}`,
+    );
   }
   return arr.data;
 }

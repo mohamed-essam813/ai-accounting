@@ -14,6 +14,47 @@ export type Database = {
   }
   public: {
     Tables: {
+      account_mapping_keywords: {
+        Row: {
+          confidence_score: number
+          created_at: string
+          id: string
+          keyword: string
+          normalized_keyword: string
+          target_reporting_classification: string
+          target_standard_name: string
+          tenant_id: string | null
+        }
+        Insert: {
+          confidence_score?: number
+          created_at?: string
+          id?: string
+          keyword: string
+          normalized_keyword: string
+          target_reporting_classification: string
+          target_standard_name: string
+          tenant_id?: string | null
+        }
+        Update: {
+          confidence_score?: number
+          created_at?: string
+          id?: string
+          keyword?: string
+          normalized_keyword?: string
+          target_reporting_classification?: string
+          target_standard_name?: string
+          tenant_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "account_mapping_keywords_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       accounting_policies: {
         Row: {
           created_at: string
@@ -571,46 +612,87 @@ export type Database = {
         Row: {
           account_classification: string | null
           allow_reconciliation: boolean
+          balance_sheet_role: string | null
           category: string | null
           code: string
           created_at: string
           detail_type: string | null
           id: string
           is_active: boolean
+          is_custom: boolean
+          is_system_standard: boolean
           name: string
+          normalized_name: string | null
+          parent_standard_account_id: string | null
           prd_account_kind: string | null
+          reporting_classification: string | null
+          reporting_group: string | null
+          reporting_subgroup: string | null
+          standardized_name: string | null
           tenant_id: string
           type: string
         }
         Insert: {
           account_classification?: string | null
           allow_reconciliation?: boolean
+          balance_sheet_role?: string | null
           category?: string | null
           code: string
           created_at?: string
           detail_type?: string | null
           id?: string
           is_active?: boolean
+          is_custom?: boolean
+          is_system_standard?: boolean
           name: string
+          normalized_name?: string | null
+          parent_standard_account_id?: string | null
           prd_account_kind?: string | null
+          reporting_classification?: string | null
+          reporting_group?: string | null
+          reporting_subgroup?: string | null
+          standardized_name?: string | null
           tenant_id: string
           type: string
         }
         Update: {
           account_classification?: string | null
           allow_reconciliation?: boolean
+          balance_sheet_role?: string | null
           category?: string | null
           code?: string
           created_at?: string
           detail_type?: string | null
           id?: string
           is_active?: boolean
+          is_custom?: boolean
+          is_system_standard?: boolean
           name?: string
+          normalized_name?: string | null
+          parent_standard_account_id?: string | null
           prd_account_kind?: string | null
+          reporting_classification?: string | null
+          reporting_group?: string | null
+          reporting_subgroup?: string | null
+          standardized_name?: string | null
           tenant_id?: string
           type?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "chart_of_accounts_parent_standard_account_id_fkey"
+            columns: ["parent_standard_account_id"]
+            isOneToOne: false
+            referencedRelation: "chart_of_accounts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "chart_of_accounts_parent_standard_account_id_fkey"
+            columns: ["parent_standard_account_id"]
+            isOneToOne: false
+            referencedRelation: "v_trial_balance"
+            referencedColumns: ["account_id"]
+          },
           {
             foreignKeyName: "chart_of_accounts_tenant_id_fkey"
             columns: ["tenant_id"]
@@ -983,6 +1065,7 @@ export type Database = {
       }
       fixed_assets: {
         Row: {
+          asset_account_id: string | null
           category: string
           cost: number
           created_at: string
@@ -996,12 +1079,15 @@ export type Database = {
           name: string
           purchase_date: string
           residual_value: number
+          source_draft_id: string | null
+          source_journal_entry_id: string | null
           start_depreciation_date: string | null
           tenant_id: string
           updated_at: string
           useful_life_months: number
         }
         Insert: {
+          asset_account_id?: string | null
           category: string
           cost: number
           created_at?: string
@@ -1015,12 +1101,15 @@ export type Database = {
           name: string
           purchase_date: string
           residual_value?: number
+          source_draft_id?: string | null
+          source_journal_entry_id?: string | null
           start_depreciation_date?: string | null
           tenant_id: string
           updated_at?: string
           useful_life_months: number
         }
         Update: {
+          asset_account_id?: string | null
           category?: string
           cost?: number
           created_at?: string
@@ -1034,12 +1123,49 @@ export type Database = {
           name?: string
           purchase_date?: string
           residual_value?: number
+          source_draft_id?: string | null
+          source_journal_entry_id?: string | null
           start_depreciation_date?: string | null
           tenant_id?: string
           updated_at?: string
           useful_life_months?: number
         }
         Relationships: [
+          {
+            foreignKeyName: "fixed_assets_asset_account_id_fkey"
+            columns: ["asset_account_id"]
+            isOneToOne: false
+            referencedRelation: "chart_of_accounts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "fixed_assets_asset_account_id_fkey"
+            columns: ["asset_account_id"]
+            isOneToOne: false
+            referencedRelation: "v_trial_balance"
+            referencedColumns: ["account_id"]
+          },
+          {
+            foreignKeyName: "fixed_assets_source_draft_id_fkey"
+            columns: ["source_draft_id"]
+            isOneToOne: false
+            referencedRelation: "drafts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "fixed_assets_source_journal_entry_id_fkey"
+            columns: ["source_journal_entry_id"]
+            isOneToOne: false
+            referencedRelation: "journal_entries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "fixed_assets_source_journal_entry_id_fkey"
+            columns: ["source_journal_entry_id"]
+            isOneToOne: false
+            referencedRelation: "v_journal_ledger"
+            referencedColumns: ["entry_id"]
+          },
           {
             foreignKeyName: "fixed_assets_tenant_id_fkey"
             columns: ["tenant_id"]
@@ -2972,8 +3098,12 @@ export type Database = {
         Row: {
           account_classification: string | null
           account_id: string | null
+          balance_sheet_role: string | null
           code: string | null
           name: string | null
+          normalized_name: string | null
+          reporting_classification: string | null
+          standardized_name: string | null
           tenant_id: string | null
           total_credit: number | null
           total_debit: number | null

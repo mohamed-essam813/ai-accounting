@@ -88,10 +88,24 @@ export default async function ReportsPage({
 
   let balanceValidationDisplay = balanceValidation;
   if (currencyForFetch && user?.tenant) {
-    const [a, l, d] = await Promise.all([
+    const [
+      a,
+      liabilities,
+      leq,
+      d,
+      equity,
+      equityChartAccounts,
+      netProfit,
+      balancingAdjustment,
+    ] = await Promise.all([
       convertCurrency(balanceValidation.assets, baseCurrency, currencyForFetch, asOfDate, user.tenant.id),
+      convertCurrency(balanceValidation.liabilities, baseCurrency, currencyForFetch, asOfDate, user.tenant.id),
       convertCurrency(balanceValidation.liabilitiesAndEquity, baseCurrency, currencyForFetch, asOfDate, user.tenant.id),
       convertCurrency(balanceValidation.difference, baseCurrency, currencyForFetch, asOfDate, user.tenant.id),
+      convertCurrency(balanceValidation.equity, baseCurrency, currencyForFetch, asOfDate, user.tenant.id),
+      convertCurrency(balanceValidation.equityChartAccounts, baseCurrency, currencyForFetch, asOfDate, user.tenant.id),
+      convertCurrency(balanceValidation.netProfit, baseCurrency, currencyForFetch, asOfDate, user.tenant.id),
+      convertCurrency(balanceValidation.balancingAdjustment, baseCurrency, currencyForFetch, asOfDate, user.tenant.id),
     ]);
     const convertedOffending = balanceValidation.offendingEntries
       ? await Promise.all(
@@ -104,8 +118,13 @@ export default async function ReportsPage({
     balanceValidationDisplay = {
       ...balanceValidation,
       assets: a,
-      liabilitiesAndEquity: l,
+      liabilities,
+      liabilitiesAndEquity: leq,
       difference: d,
+      equity,
+      equityChartAccounts,
+      netProfit,
+      balancingAdjustment,
       offendingEntries: convertedOffending,
     };
   }
@@ -197,6 +216,12 @@ export default async function ReportsPage({
                 </p>
               </div>
               <ExportButtons
+                disabled={!balanceValidationDisplay.isBalanced}
+                disabledReason={
+                  !balanceValidationDisplay.isBalanced
+                    ? "Fix the balance sheet equation before exporting (assets must equal liabilities plus equity)."
+                    : undefined
+                }
                 data={{
                   title: "Balance-Sheet",
                   headers: ["Code", "Account", "Amount"],
@@ -265,12 +290,13 @@ export default async function ReportsPage({
                 </div>
               )}
               <div className="p-6">
-                <BalanceSheetTable 
-                  data={detailedBalanceSheet} 
+                <BalanceSheetTable
+                  data={detailedBalanceSheet}
                   startDate={params.startDate}
                   endDate={params.endDate}
                   validation={balanceValidationDisplay}
                   displayCurrency={displayCurrency}
+                  warnings={detailedBalanceSheet.warnings}
                 />
               </div>
             </CardContent>
