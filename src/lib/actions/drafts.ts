@@ -26,10 +26,8 @@ import {
 import { annotateDraftPostingLines } from "@/lib/posting/journal-line-provenance";
 import { buildTransactionAmounts, validateTransactionAmountsMatch } from "@/lib/posting/transaction-amounts";
 import { buildBillAccounts } from "@/lib/posting/bill-accounts";
-import {
-  getAiSuggestedDebitFromDraftData,
-  resolveSingleLineBillDebitForJournal,
-} from "@/lib/drafts/single-line-bill-debit";
+import { getAiSuggestedDebitFromDraftData } from "@/lib/drafts/bill-purchase-classification";
+import { resolveSingleLineBillDebitForJournal } from "@/lib/drafts/single-line-bill-debit";
 import {
   COUNTERPARTY_MISMATCH_CODE,
   counterpartyNamesDiffer,

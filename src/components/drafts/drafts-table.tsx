@@ -38,7 +38,7 @@ import {
 import { formatCurrency, formatDate } from "@/lib/format";
 import { getErrorMessage } from "@/lib/utils";
 import { isCounterpartyMismatchError } from "@/lib/drafts/counterparty-resolution";
-import { parseBillPurchaseType } from "@/lib/drafts/single-line-bill-debit";
+import { parseBillPurchaseType } from "@/lib/drafts/bill-purchase-classification";
 import { approveDraftAction, postDraftAction, updateDraftAction, deleteDraftAction, convertPostedToDraftAction } from "@/lib/actions/drafts";
 import { PromptIntentEnum } from "@/lib/ai/schema";
 import { toast } from "sonner";

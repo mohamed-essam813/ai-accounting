@@ -5,7 +5,7 @@ import {
   assertDebitMatchesBillClassification,
   logBillClassificationResolution,
   type BillPurchaseClassification,
-} from "@/lib/drafts/single-line-bill-debit";
+} from "@/lib/drafts/bill-purchase-classification";
 
 export type Account = Database["public"]["Tables"]["chart_of_accounts"]["Row"];
 
