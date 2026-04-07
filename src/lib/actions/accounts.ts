@@ -115,6 +115,21 @@ export async function createAccountAction(input: z.infer<typeof AccountSchema>):
   });
 
   const supabase = await createServerSupabaseClient();
+
+  const { data: nameClash } = await supabase
+    .from("chart_of_accounts")
+    .select("id, name, code")
+    .eq("tenant_id", user.tenant.id)
+    .eq("normalized_name", std.normalized_name)
+    .eq("is_active", true)
+    .maybeSingle();
+
+  if (nameClash) {
+    throw new Error(
+      `An account matching "${payload.name.trim()}" already exists as "${nameClash.name}" (${nameClash.code}). Use that account instead of creating a duplicate.`,
+    );
+  }
+
   const insertData = {
     tenant_id: user.tenant.id,
     name: payload.name.trim(),
@@ -141,6 +156,12 @@ export async function createAccountAction(input: z.infer<typeof AccountSchema>):
   const account = accounts?.[0] ?? null;
 
   if (error) {
+    const code = typeof error === "object" && error && "code" in error ? String((error as { code: string }).code) : "";
+    if (code === "23505") {
+      throw new Error(
+        "An account with this name (or a very similar name) already exists. Choose the existing account instead.",
+      );
+    }
     throw error;
   }
 
@@ -289,6 +310,19 @@ export async function autoCreateAccountAction(
     category: finalCategory,
     accountClassification: autoClassification,
   });
+
+  const { data: existingSame } = await supabase
+    .from("chart_of_accounts")
+    .select("*")
+    .eq("tenant_id", user.tenant.id)
+    .eq("normalized_name", std.normalized_name)
+    .eq("is_active", true)
+    .maybeSingle();
+
+  if (existingSame) {
+    return existingSame as ChartOfAccountsRow;
+  }
+
   const insertData = {
     tenant_id: user.tenant.id,
     name: name.trim(),
@@ -320,6 +354,17 @@ export async function autoCreateAccountAction(
   const account = accounts?.[0] ?? null;
 
   if (error) {
+    const code = typeof error === "object" && error && "code" in error ? String((error as { code: string }).code) : "";
+    if (code === "23505") {
+      const { data: afterRace } = await supabase
+        .from("chart_of_accounts")
+        .select("*")
+        .eq("tenant_id", user.tenant.id)
+        .eq("normalized_name", std.normalized_name)
+        .eq("is_active", true)
+        .maybeSingle();
+      if (afterRace) return afterRace as ChartOfAccountsRow;
+    }
     console.error("Failed to auto-create account:", error);
     throw error;
   }

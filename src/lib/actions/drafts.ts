@@ -34,6 +34,14 @@ import {
 } from "@/lib/drafts/counterparty-resolution";
 import { subledgerContactIdForLine } from "@/lib/accounting/ar-ap-subledger";
 import type { DraftInventoryLine } from "@/lib/posting/materialize-amounts";
+import {
+  mapUnknownErrorToPostDraftResult,
+  type PostDraftResult,
+  type PostDraftSuccessData,
+} from "@/lib/posting/post-draft-errors";
+import { validateDraftPostingJournalLines } from "@/lib/posting/draft-posting-validation";
+
+export type { PostDraftResult, PostDraftSuccessData } from "@/lib/posting/post-draft-errors";
 
 type DraftsInsert = Database["public"]["Tables"]["drafts"]["Insert"];
 type DraftsRow = Database["public"]["Tables"]["drafts"]["Row"];
@@ -695,20 +703,21 @@ function generatePostReferenceId(): string {
   return id;
 }
 
-function throwWithReference(message: string, refId: string, isDev: boolean, cause?: unknown): never {
-  const refMsg = `Posting failed. Reference: ${refId}`;
-  const causeMsg = isDev ? getErrorMessage(cause, "") : "";
-  const fullMsg = isDev && causeMsg ? `${refMsg}\n${causeMsg}` : refMsg;
+function throwWithReference(message: string, refId: string, cause?: unknown): never {
+  const causeMsg = getErrorMessage(cause, "").trim();
+  const refPart = `Reference: ${refId}`;
+  const fullMsg =
+    causeMsg && !message.includes(causeMsg) ? `${message} (${refPart}) ${causeMsg}` : `${message} (${refPart})`;
   const err = new Error(fullMsg) as Error & { referenceId?: string; cause?: unknown };
   err.referenceId = refId;
   err.cause = cause;
   throw err;
 }
 
-export async function postDraftAction(input: z.infer<typeof PostDraftSchema>) {
-  const refId = generatePostReferenceId();
-  const isDev = process.env.NODE_ENV !== "production";
-
+async function postDraftActionImpl(
+  input: z.infer<typeof PostDraftSchema>,
+  refId: string,
+): Promise<PostDraftSuccessData> {
   const payload = PostDraftSchema.parse(input);
   const user = await getCurrentUser();
   if (!user?.tenant) {
@@ -730,7 +739,7 @@ export async function postDraftAction(input: z.infer<typeof PostDraftSchema>) {
 
   if (draftError) {
     console.error("[postDraft]", { refId, tenant_id: user.tenant.id, user_id: user.id, draft_id: payload.draftId, error: draftError });
-    throwWithReference("Draft could not be loaded.", refId, isDev, draftError);
+    throwWithReference("Draft could not be loaded.", refId, draftError);
   }
 
   if (!draft) {
@@ -1048,40 +1057,6 @@ export async function postDraftAction(input: z.infer<typeof PostDraftSchema>) {
     throw new Error("No journal lines generated for draft.");
   }
 
-  // Fail-fast validation before any DB write
-  try {
-    ensureBalanced(lines);
-    const accountIds = [...new Set(lines.map((l) => l.account_id))];
-    const accountMap = new Map((allAccounts as Account[]).map((a) => [a.id, a]));
-    for (const aid of accountIds) {
-      const acc = accountMap.get(aid);
-      if (!acc) {
-        throw new Error(`Account ${aid} not found in chart of accounts.`);
-      }
-      if (acc.is_active === false) {
-        throw new Error(`Account ${acc.code} (${acc.name}) is inactive.`);
-      }
-    }
-    const entryDate = (draftDataRaw as { date?: string }).date;
-    if (entryDate) {
-      const d = new Date(entryDate);
-      const today = new Date();
-      today.setHours(23, 59, 59, 999);
-      if (d > today) {
-        throw new Error("Transaction date cannot be in the future.");
-      }
-    }
-  } catch (validationErr) {
-    console.error("[postDraft] validation", { refId, tenant_id: user.tenant.id, draft_id: draft.id, error: validationErr });
-    throwWithReference(
-      getErrorMessage(validationErr, "Validation failed."),
-      refId,
-      isDev,
-      validationErr
-    );
-  }
-
-  try {
   // Extract inventory line items from draft if present (multi-line documents override)
   let inventoryLineItems = draftDataRaw.inventory_line_items as
     | Array<{
@@ -1437,7 +1412,15 @@ export async function postDraftAction(input: z.infer<typeof PostDraftSchema>) {
     }
   }
 
-  ensureBalanced(lines);
+  const postingDate =
+    (parsedDraft.entities.date as string) ?? new Date().toISOString().slice(0, 10);
+
+  validateDraftPostingJournalLines({
+    intent: draft.intent,
+    lines,
+    accounts: allAccounts as Account[],
+    postingDate,
+  });
 
   const usedEditedLinesForProvenance = Boolean(editedLines && editedLines.length > 0);
   lines = annotateDraftPostingLines(lines, draft.id, usedEditedLinesForProvenance);
@@ -1466,12 +1449,11 @@ export async function postDraftAction(input: z.infer<typeof PostDraftSchema>) {
       // Different currency - fetch FX rate
       try {
         const { convertCurrency } = await import("@/lib/utils/currency-conversion");
-        const entryDate = (parsedDraft.entities.date as string) ?? new Date().toISOString().slice(0, 10);
         amountInBaseCurrency = await convertCurrency(
           transactionAmount,
           transactionCurrency,
           baseCurrency,
-          entryDate,
+          postingDate,
           user.tenant.id
         );
         fxRate = amountInBaseCurrency / transactionAmount;
@@ -1483,9 +1465,25 @@ export async function postDraftAction(input: z.infer<typeof PostDraftSchema>) {
     }
   }
 
-  const postingDate =
-    (parsedDraft.entities.date as string) ?? new Date().toISOString().slice(0, 10);
   await assertPostingDateAllowed(supabase, user.tenant.id, postingDate);
+
+  const debitPreInsert = lines.reduce((s, l) => s + Number(l.debit), 0);
+  const creditPreInsert = lines.reduce((s, l) => s + Number(l.credit), 0);
+  console.log("[postDraft] pre-insert snapshot", {
+    referenceId: refId,
+    draftId: draft.id,
+    intent: draft.intent,
+    postingDate,
+    lineCount: lines.length,
+    debit_total: Number(debitPreInsert.toFixed(2)),
+    credit_total: Number(creditPreInsert.toFixed(2)),
+    lines: lines.map((l) => ({
+      account_id: l.account_id,
+      debit: l.debit,
+      credit: l.credit,
+      memo: typeof l.memo === "string" ? l.memo.slice(0, 120) : l.memo,
+    })),
+  });
 
   // contact_id and currency fields will be added by migration, using type assertion for now
   const entryData = {
@@ -1764,22 +1762,16 @@ export async function postDraftAction(input: z.infer<typeof PostDraftSchema>) {
     status: updatedDraft.status,
     posted_entry_id: updatedDraft.posted_entry_id,
   };
+}
+
+export async function postDraftAction(input: z.infer<typeof PostDraftSchema>): Promise<PostDraftResult> {
+  const refId = generatePostReferenceId();
+  try {
+    const data = await postDraftActionImpl(input, refId);
+    return { success: true, data };
   } catch (err) {
-    console.error("[postDraft]", {
-      refId,
-      tenant_id: user.tenant.id,
-      user_id: user.id,
-      draft_id: draft.id,
-      document_type: draft.intent,
-      error: err,
-      stack: err instanceof Error ? err.stack : undefined,
-    });
-    throwWithReference(
-      getErrorMessage(err, "Post failed."),
-      refId,
-      isDev,
-      err
-    );
+    console.error("[postDraftAction]", { referenceId: refId, err });
+    return mapUnknownErrorToPostDraftResult(err, refId);
   }
 }
 

@@ -10,6 +10,26 @@ export function normalizeEntityName(name: string): string {
     .toLowerCase();
 }
 
+/**
+ * Key for case-insensitive duplicate detection (must match SQL `normalize_account_name_key`).
+ * Trims, lowercases, collapses spaces, and lightly singularizes the last token (e.g. expenses → expense).
+ */
+export function normalizeAccountUniquenessKey(name: string): string {
+  const n = name.trim().replace(/\s+/g, " ").toLowerCase();
+  if (!n) return "";
+  const parts = n.split(" ");
+  let lw = parts[parts.length - 1] ?? "";
+  if (lw.length > 3 && lw.endsWith("ies")) {
+    lw = `${lw.slice(0, -3)}y`;
+  } else if (lw.length > 3 && lw.endsWith("sses")) {
+    lw = `${lw.slice(0, -4)}ss`;
+  } else if (lw.length > 3 && lw.endsWith("s") && !lw.endsWith("ss")) {
+    lw = lw.slice(0, -1);
+  }
+  parts[parts.length - 1] = lw;
+  return parts.join(" ");
+}
+
 export type DedupeEntitiesForDisplayOptions<T extends Record<string, unknown>> = {
   idKey: keyof T & string;
   /** Used for secondary dedupe: same normalized name collapses to one row (first wins). */

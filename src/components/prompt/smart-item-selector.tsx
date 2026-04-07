@@ -33,28 +33,43 @@ import {
 } from "@/lib/actions/items-picker";
 import type { BusinessItem } from "@/lib/data/inventory";
 import type { TaxRate } from "@/lib/actions/tax-rates";
-import { ChevronDown, Loader2, Package, Search, Sparkles, X } from "lucide-react";
+import { ChevronDown, Loader2, Package, Plus, Search, Sparkles, X } from "lucide-react";
 import { toast } from "sonner";
 import { getErrorMessage } from "@/lib/utils";
 
 type AccountOpt = { id: string; name: string; code: string; type: string };
 type UomOpt = { id: string; name: string; abbreviation: string };
 
+/** `expense_line`: supplier bill expense rows — item is optional; collapsed until user opts in */
+export type SmartItemSelectorUxMode = "default" | "expense_line";
+
 type Props = {
   label?: string;
+  /** Shown below the label when `uxMode` is `expense_line` and the picker is visible */
+  expenseLineHelperText?: string;
+  uxMode?: SmartItemSelectorUxMode;
   taxRates: TaxRate[];
   value: BusinessItem | null;
   onChange: (item: BusinessItem | null) => void;
   disabled?: boolean;
 };
 
+const DEFAULT_EXPENSE_HELPER =
+  "Optional: select a saved item for faster entry";
+
 export function SmartItemSelector({
-  label = "Product or service",
+  label,
+  expenseLineHelperText = DEFAULT_EXPENSE_HELPER,
+  uxMode = "default",
   taxRates,
   value,
   onChange,
   disabled = false,
 }: Props) {
+  const resolvedLabel =
+    label ?? (uxMode === "expense_line" ? "Item (optional)" : "Product or service");
+  const isExpenseProgressive = uxMode === "expense_line";
+  const [pickerRevealed, setPickerRevealed] = useState(() => Boolean(value));
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
@@ -81,9 +96,18 @@ export function SmartItemSelector({
     return () => clearTimeout(t);
   }, [open, query, runSearch]);
 
-  return (
-    <div className="space-y-2 sm:col-span-2">
-      <Label>{label}</Label>
+  useEffect(() => {
+    if (value) setPickerRevealed(true);
+  }, [value]);
+
+  useEffect(() => {
+    if (!isExpenseProgressive) setPickerRevealed(false);
+  }, [isExpenseProgressive]);
+
+  const showFullPicker = !isExpenseProgressive || Boolean(value) || pickerRevealed;
+
+  const pickerBlock = (
+    <>
       <div className="flex flex-wrap items-center gap-2">
         {value ? (
           <div className="flex items-center gap-2 rounded-md border bg-background px-3 py-2 text-sm">
@@ -189,6 +213,32 @@ export function SmartItemSelector({
           </PopoverContent>
         </Popover>
       </div>
+    </>
+  );
+
+  return (
+    <div className="space-y-2 sm:col-span-2">
+      {isExpenseProgressive && !showFullPicker ? (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="gap-2"
+          disabled={disabled}
+          onClick={() => setPickerRevealed(true)}
+        >
+          <Plus className="h-4 w-4" />
+          Add saved item
+        </Button>
+      ) : (
+        <>
+          <Label>{resolvedLabel}</Label>
+          {isExpenseProgressive ? (
+            <p className="text-xs text-muted-foreground">{expenseLineHelperText}</p>
+          ) : null}
+          {pickerBlock}
+        </>
+      )}
 
       <CreateItemDialog
         kind={createKind}

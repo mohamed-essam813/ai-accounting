@@ -13,11 +13,19 @@ type TaxRatesRow = {
   is_active: boolean;
   created_at: string;
   updated_at: string;
+  vat_supply_treatment?: string | null;
 };
 
 function rowToPercentage(row: TaxRatesRow): number {
   const r = Number(row.rate ?? (row.percentage != null ? row.percentage / 100 : 0));
   return Math.round(r * 10000) / 100;
+}
+
+export type VatSupplyTreatment = "standard" | "zero_rated" | "exempt";
+
+function parseVatSupplyTreatment(v: unknown): VatSupplyTreatment {
+  if (v === "zero_rated" || v === "exempt") return v;
+  return "standard";
 }
 
 export interface TaxRate {
@@ -31,6 +39,7 @@ export interface TaxRate {
   is_active: boolean;
   created_at: string;
   updated_at: string;
+  vat_supply_treatment: VatSupplyTreatment;
 }
 
 export async function listTaxRates(): Promise<TaxRate[]> {
@@ -55,6 +64,7 @@ export async function listTaxRates(): Promise<TaxRate[]> {
   return (data ?? []).map((rate: TaxRatesRow) => ({
     ...rate,
     percentage: rowToPercentage(rate),
+    vat_supply_treatment: parseVatSupplyTreatment(rate.vat_supply_treatment),
   }));
 }
 
@@ -80,5 +90,9 @@ export async function getTaxRateById(id: string): Promise<TaxRate | null> {
   if (!data) return null;
 
   const row = data as TaxRatesRow;
-  return { ...row, percentage: rowToPercentage(row) };
+  return {
+    ...row,
+    percentage: rowToPercentage(row),
+    vat_supply_treatment: parseVatSupplyTreatment(row.vat_supply_treatment),
+  };
 }

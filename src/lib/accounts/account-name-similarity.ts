@@ -2,7 +2,7 @@
  * Fuzzy matching for chart-of-accounts search (inline create / duplicate avoidance).
  */
 
-import { normalizeEntityName } from "@/lib/utils/entity-dedupe";
+import { normalizeAccountUniquenessKey, normalizeEntityName } from "@/lib/utils/entity-dedupe";
 
 export type AccountLike = { id: string; name: string; code: string; type: string };
 
@@ -29,6 +29,9 @@ function levenshtein(a: string, b: string): number {
  * Returns 0–1 where 1 is identical normalized names.
  */
 export function accountNameSimilarityScore(query: string, accountName: string): number {
+  const qk = normalizeAccountUniquenessKey(query);
+  const nk = normalizeAccountUniquenessKey(accountName);
+  if (qk && nk && qk === nk) return 1;
   const q = normalizeEntityName(query);
   const n = normalizeEntityName(accountName);
   if (!q || !n) return 0;
@@ -76,3 +79,9 @@ export function findBestSimilarAccount<T extends AccountLike>(
 
 /** Above this score, prompt user before creating a near-duplicate. */
 export const DUPLICATE_WARNING_SCORE = 0.82;
+
+/** Show “similar accounts” / top pick when substring search is empty but fuzzy match is strong. */
+export const FUZZY_SUGGEST_MIN_SCORE = 0.72;
+
+/** AI / server: prefer mapping to existing account above this similarity. */
+export const AI_MAP_EXISTING_MIN_SCORE = 0.8;

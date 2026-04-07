@@ -37,7 +37,7 @@ type InvLineUi = {
   taxRateId: string;
 };
 
-function newInvLine(): InvLineUi {
+function newInvLine(inheritTaxRateId = ""): InvLineUi {
   return {
     id: crypto.randomUUID(),
     line_type: "service",
@@ -47,8 +47,21 @@ function newInvLine(): InvLineUi {
     qty: "1",
     unitPrice: "",
     serviceAmount: "",
-    taxRateId: "",
+    taxRateId: inheritTaxRateId,
   };
+}
+
+function taxFromItemOrInherit(
+  item: BusinessItem | null,
+  currentTax: string,
+  prevLineTax: string,
+  rates: TaxRate[],
+): string {
+  if (item?.default_tax_rate_id && rates.some((t) => t.id === item.default_tax_rate_id)) {
+    return item.default_tax_rate_id;
+  }
+  if (currentTax) return currentTax;
+  return prevLineTax;
 }
 
 export function MultiLineSalesInvoiceForm({
@@ -70,27 +83,10 @@ export function MultiLineSalesInvoiceForm({
   const [invoiceDate, setInvoiceDate] = useState("");
   const [dueDate, setDueDate] = useState("");
   const [taxTreatment, setTaxTreatment] = useState<"exclusive" | "inclusive">("exclusive");
-  const [defaultTaxRateId, setDefaultTaxRateId] = useState<string>("");
   const [lines, setLines] = useState<InvLineUi[]>(() => [newInvLine()]);
 
-  const applyItem = (lineId: string, item: BusinessItem | null) => {
-    setLines((prev) =>
-      prev.map((L) => {
-        if (L.id !== lineId) return L;
-        const sug = suggestInvoiceLineType(item);
-        return {
-          ...L,
-          item,
-          description: item?.name ?? L.description,
-          line_type: sug.line_type,
-          confidence: sug.confidence,
-        };
-      }),
-    );
-  };
-
   const lineNet = (L: InvLineUi): number | null => {
-    const tid = L.taxRateId || defaultTaxRateId;
+    const tid = L.taxRateId;
     const tr = tid ? outputTax.find((t) => t.id === tid) : null;
     const taxPct = tr?.percentage ?? 0;
     if (L.line_type === "product") {
@@ -110,7 +106,7 @@ export function MultiLineSalesInvoiceForm({
     for (const L of lines) {
       const net = lineNet(L);
       if (net == null) return null;
-      const tid = L.taxRateId || defaultTaxRateId;
+      const tid = L.taxRateId;
       const tr = tid ? outputTax.find((t) => t.id === tid) : null;
       const taxPct = tr?.percentage ?? 0;
       const tx = buildTransactionAmounts({
@@ -143,7 +139,7 @@ export function MultiLineSalesInvoiceForm({
         line_net: net,
         quantity: L.line_type === "product" ? parseFloat(L.qty) : undefined,
         unit_price: L.line_type === "product" ? parseFloat(L.unitPrice) : undefined,
-        tax_rate_id: L.taxRateId || defaultTaxRateId || null,
+        tax_rate_id: L.taxRateId || null,
       });
     }
     startTransition(async () => {
@@ -153,7 +149,7 @@ export function MultiLineSalesInvoiceForm({
           invoiceDate,
           dueDate,
           taxTreatment,
-          defaultTaxRateId: defaultTaxRateId || null,
+          defaultTaxRateId: null,
           lines: payload,
         });
         if (draft?.id) {
@@ -170,7 +166,8 @@ export function MultiLineSalesInvoiceForm({
     <div className="space-y-4 rounded-lg border bg-muted/20 p-4">
       <h3 className="text-sm font-medium">Sales invoice</h3>
       <p className="text-xs text-muted-foreground">
-        Add lines with products or services. Line type updates when you pick an item.
+        Add lines with products or services. Pick the tax rate on each line (new lines copy the previous line&apos;s
+        tax). Line type updates when you pick an item.
       </p>
       <div className="grid gap-4 sm:grid-cols-2">
         <ContactCombobox
@@ -190,26 +187,6 @@ export function MultiLineSalesInvoiceForm({
         <div className="space-y-2">
           <Label>Due date</Label>
           <Input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} disabled={pending} />
-        </div>
-        <div className="space-y-2">
-          <Label>Default tax (lines can override)</Label>
-          <Select
-            value={defaultTaxRateId || "__none__"}
-            onValueChange={(v) => setDefaultTaxRateId(v === "__none__" ? "" : v)}
-            disabled={pending}
-          >
-            <SelectTrigger>
-              <SelectValue placeholder="No tax" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__none__">No tax</SelectItem>
-              {outputTax.map((t) => (
-                <SelectItem key={t.id} value={t.id}>
-                  {t.name} ({t.percentage}%)
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
         </div>
       </div>
 
@@ -260,8 +237,23 @@ export function MultiLineSalesInvoiceForm({
               taxRates={outputTax}
               value={L.item}
               onChange={(item) => {
-                setLines((prev) => prev.map((x) => (x.id === L.id ? { ...x, item } : x)));
-                applyItem(L.id, item);
+                setLines((prev) =>
+                  prev.map((x) => {
+                    if (x.id !== L.id) return x;
+                    const idx = prev.findIndex((z) => z.id === L.id);
+                    const prevTax = idx > 0 ? prev[idx - 1]?.taxRateId ?? "" : "";
+                    const sug = suggestInvoiceLineType(item);
+                    const taxRateId = taxFromItemOrInherit(item, x.taxRateId, prevTax, outputTax);
+                    return {
+                      ...x,
+                      item,
+                      description: item?.name ?? x.description,
+                      line_type: sug.line_type,
+                      confidence: sug.confidence,
+                      taxRateId,
+                    };
+                  }),
+                );
               }}
               disabled={pending}
             />
@@ -322,21 +314,21 @@ export function MultiLineSalesInvoiceForm({
               </div>
             )}
             <div className="space-y-2">
-              <Label>Line tax</Label>
+              <Label>Tax rate for this line</Label>
               <Select
-                value={L.taxRateId ? L.taxRateId : "__default__"}
+                value={L.taxRateId || "__none__"}
                 onValueChange={(v) =>
                   setLines((prev) =>
-                    prev.map((x) => (x.id === L.id ? { ...x, taxRateId: v === "__default__" ? "" : v } : x)),
+                    prev.map((x) => (x.id === L.id ? { ...x, taxRateId: v === "__none__" ? "" : v } : x)),
                   )
                 }
                 disabled={pending}
               >
                 <SelectTrigger>
-                  <SelectValue />
+                  <SelectValue placeholder="No tax" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="__default__">Same as default</SelectItem>
+                  <SelectItem value="__none__">No tax (0%)</SelectItem>
                   {outputTax.map((t) => (
                     <SelectItem key={t.id} value={t.id}>
                       {t.name} ({t.percentage}%)
@@ -347,17 +339,43 @@ export function MultiLineSalesInvoiceForm({
             </div>
           </div>
         ))}
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="gap-2"
-          onClick={() => setLines((prev) => [...prev, newInvLine()])}
-          disabled={pending}
-        >
-          <Plus className="h-4 w-4" />
-          Add another item
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="gap-2"
+            onClick={() =>
+              setLines((prev) => {
+                const inherit = prev[prev.length - 1]?.taxRateId ?? "";
+                return [...prev, newInvLine(inherit)];
+              })
+            }
+            disabled={pending}
+          >
+            <Plus className="h-4 w-4" />
+            Add another item
+          </Button>
+          {lines.length > 1 ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="text-muted-foreground"
+              disabled={pending}
+              onClick={() => {
+                const source = lines.find((l) => l.taxRateId)?.taxRateId;
+                if (!source) {
+                  toast.message("Choose a tax rate on at least one line first.");
+                  return;
+                }
+                setLines((prev) => prev.map((l) => ({ ...l, taxRateId: source })));
+              }}
+            >
+              Apply same tax to all lines
+            </Button>
+          ) : null}
+        </div>
       </div>
 
       <div className="rounded-md border bg-muted/40 p-4 space-y-2 text-sm">

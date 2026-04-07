@@ -87,7 +87,7 @@ describe("resolveInventorySaleCostsForDraft", () => {
     expect(mockWa).not.toHaveBeenCalled();
   });
 
-  it("rejects missing revenue account mapping", async () => {
+  it("rejects missing revenue account mapping when no default", async () => {
     await expect(
       resolveInventorySaleCostsForDraft({
         tenantId: "b0000000-0000-4000-8000-000000000001",
@@ -97,6 +97,20 @@ describe("resolveInventorySaleCostsForDraft", () => {
         revenueSubtotal: 100,
       }),
     ).rejects.toThrow(/revenue account/i);
+  });
+
+  it("accepts default revenue account when item has none", async () => {
+    mockFifo.mockResolvedValue(1000);
+    const item = makeItem({ revenue_account_id: null });
+    const r = await resolveInventorySaleCostsForDraft({
+      tenantId: item.tenant_id,
+      item,
+      quantity: 1,
+      invoiceDate: "2026-04-02",
+      revenueSubtotal: 5000,
+      defaultRevenueAccountId: "e0000000-0000-4000-8000-000000000099",
+    });
+    expect(r.cogsAmount).toBe(1000);
   });
 
   it("rejects missing inventory account mapping", async () => {

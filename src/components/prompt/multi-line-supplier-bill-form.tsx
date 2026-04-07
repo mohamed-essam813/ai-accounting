@@ -45,7 +45,7 @@ type BillLineUi = {
   taxRateId: string;
 };
 
-function newLine(): BillLineUi {
+function newLine(inheritTaxRateId = ""): BillLineUi {
   return {
     id: crypto.randomUUID(),
     classification: "expense",
@@ -60,8 +60,21 @@ function newLine(): BillLineUi {
     assetCategory: "Equipment",
     assetAccount: null,
     usefulLifeYears: "3",
-    taxRateId: "",
+    taxRateId: inheritTaxRateId,
   };
+}
+
+function billTaxFromItemOrInherit(
+  item: BusinessItem | null,
+  currentTax: string,
+  prevLineTax: string,
+  rates: TaxRate[],
+): string {
+  if (item?.default_tax_rate_id && rates.some((t) => t.id === item.default_tax_rate_id)) {
+    return item.default_tax_rate_id;
+  }
+  if (currentTax) return currentTax;
+  return prevLineTax;
 }
 
 function chipLabel(c: BillLineUi["classification"]): string {
@@ -94,27 +107,8 @@ export function MultiLineSupplierBillForm({
   const [billDate, setBillDate] = useState("");
   const [dueDate, setDueDate] = useState("");
   const [taxTreatment, setTaxTreatment] = useState<"exclusive" | "inclusive">("exclusive");
-  const [defaultTaxRateId, setDefaultTaxRateId] = useState<string>("");
   const [lines, setLines] = useState<BillLineUi[]>(() => [newLine()]);
   const [pasteHint, setPasteHint] = useState("");
-
-  const applyItemSuggestion = (lineId: string, item: BusinessItem | null) => {
-    setLines((prev) =>
-      prev.map((L) => {
-        if (L.id !== lineId) return L;
-        const sug = suggestBillLineClassification(item);
-        let next = { ...L, item, description: item?.name ?? L.description };
-        if (sug.classification === "inventory") {
-          next.classification = "inventory";
-          next.confidence = sug.confidence;
-        } else {
-          next.classification = "expense";
-          next.confidence = sug.confidence;
-        }
-        return next;
-      }),
-    );
-  };
 
   const parsePaste = () => {
     const inferred = inferPricesIncludeVatFromText(pasteHint);
@@ -126,9 +120,11 @@ export function MultiLineSupplierBillForm({
       toast.message("No lines found. Try one item per line, e.g. \"10 robots @ 2000\".");
       return;
     }
+    let inheritTax = "";
     setLines(
       parsed.map((p) => {
-        const base = newLine();
+        const base = newLine(inheritTax);
+        inheritTax = base.taxRateId;
         base.description = p.description;
         base.classification = p.classification;
         base.confidence = p.confidence;
@@ -150,7 +146,7 @@ export function MultiLineSupplierBillForm({
   };
 
   const lineNetAndTax = (L: BillLineUi): { net: number; taxPct: number } | null => {
-    const tid = L.taxRateId || defaultTaxRateId;
+    const tid = L.taxRateId;
     const tr = tid ? inputTax.find((t) => t.id === tid) : null;
     const taxPct = tr?.percentage ?? 0;
     if (L.classification === "inventory") {
@@ -220,7 +216,7 @@ export function MultiLineSupplierBillForm({
           classification: "inventory",
           description: L.description || L.item.name,
           line_net: netTax.net,
-          tax_rate_id: L.taxRateId || defaultTaxRateId || null,
+          tax_rate_id: L.taxRateId || null,
           item_id: L.item.id,
           quantity: q,
           unit_price: u,
@@ -234,8 +230,9 @@ export function MultiLineSupplierBillForm({
           classification: "expense",
           description: L.description || "Expense",
           line_net: netTax.net,
-          tax_rate_id: L.taxRateId || defaultTaxRateId || null,
+          tax_rate_id: L.taxRateId || null,
           expense_account_id: L.expenseAccount.id,
+          ...(L.item?.id ? { item_id: L.item.id } : {}),
         });
       } else {
         if (!L.assetAccount || !L.assetName.trim()) {
@@ -251,7 +248,7 @@ export function MultiLineSupplierBillForm({
           classification: "asset",
           description: L.description || L.assetName.trim(),
           line_net: netTax.net,
-          tax_rate_id: L.taxRateId || defaultTaxRateId || null,
+          tax_rate_id: L.taxRateId || null,
           asset: {
             name: L.assetName.trim(),
             category: L.assetCategory,
@@ -270,7 +267,7 @@ export function MultiLineSupplierBillForm({
           billDate,
           dueDate,
           taxTreatment,
-          defaultTaxRateId: defaultTaxRateId || null,
+          defaultTaxRateId: null,
           lines: payloadLines,
         });
         if (draft?.id) {
@@ -287,7 +284,8 @@ export function MultiLineSupplierBillForm({
     <div className="space-y-4 rounded-lg border bg-muted/20 p-4">
       <h3 className="text-sm font-medium">Supplier bill</h3>
       <p className="text-xs text-muted-foreground">
-        Add one or more lines — inventory, expense, or asset — in one bill. Classification updates when you pick an item.
+        Add one or more lines — inventory, expense, or asset — in one bill. Choose tax on each line (new lines inherit
+        from the line above). Classification updates when you pick an item.
       </p>
 
       <div className="grid gap-4 sm:grid-cols-2">
@@ -308,26 +306,6 @@ export function MultiLineSupplierBillForm({
         <div className="space-y-2">
           <Label>Due date</Label>
           <Input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} disabled={pending} />
-        </div>
-        <div className="space-y-2">
-          <Label>Default tax (lines can override)</Label>
-          <Select
-            value={defaultTaxRateId || "__none__"}
-            onValueChange={(v) => setDefaultTaxRateId(v === "__none__" ? "" : v)}
-            disabled={pending}
-          >
-            <SelectTrigger>
-              <SelectValue placeholder="No tax" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__none__">No tax</SelectItem>
-              {inputTax.map((t) => (
-                <SelectItem key={t.id} value={t.id}>
-                  {t.name} ({t.percentage}%)
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
         </div>
       </div>
 
@@ -395,11 +373,35 @@ export function MultiLineSupplierBillForm({
             </div>
 
             <SmartItemSelector
+              uxMode={L.classification === "expense" ? "expense_line" : "default"}
               taxRates={inputTax}
               value={L.item}
               onChange={(item) => {
-                setLines((prev) => prev.map((x) => (x.id === L.id ? { ...x, item } : x)));
-                applyItemSuggestion(L.id, item);
+                setLines((prev) =>
+                  prev.map((x) => {
+                    if (x.id !== L.id) return x;
+                    const idx = prev.findIndex((z) => z.id === L.id);
+                    const prevTax = idx > 0 ? prev[idx - 1]?.taxRateId ?? "" : "";
+                    const sug = suggestBillLineClassification(item);
+                    const taxRateId = billTaxFromItemOrInherit(item, x.taxRateId, prevTax, inputTax);
+                    let next: BillLineUi = {
+                      ...x,
+                      item,
+                      description: item?.name ?? x.description,
+                      taxRateId,
+                    };
+                    if (sug.classification === "inventory") {
+                      next = { ...next, classification: "inventory", confidence: sug.confidence };
+                    } else {
+                      next = { ...next, classification: "expense", confidence: sug.confidence };
+                    }
+                    if (item?.expense_account_id && next.classification === "expense") {
+                      const acc = accounts.find((a) => a.id === item.expense_account_id);
+                      if (acc) next = { ...next, expenseAccount: acc };
+                    }
+                    return next;
+                  }),
+                );
               }}
               disabled={pending}
             />
@@ -522,21 +524,21 @@ export function MultiLineSupplierBillForm({
             )}
 
             <div className="space-y-2">
-              <Label>Line tax (optional)</Label>
+              <Label>Tax rate for this line</Label>
               <Select
-                value={L.taxRateId ? L.taxRateId : "__default__"}
+                value={L.taxRateId || "__none__"}
                 onValueChange={(v) =>
                   setLines((prev) =>
-                    prev.map((x) => (x.id === L.id ? { ...x, taxRateId: v === "__default__" ? "" : v } : x)),
+                    prev.map((x) => (x.id === L.id ? { ...x, taxRateId: v === "__none__" ? "" : v } : x)),
                   )
                 }
                 disabled={pending}
               >
                 <SelectTrigger>
-                  <SelectValue />
+                  <SelectValue placeholder="No tax" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="__default__">Same as default tax</SelectItem>
+                  <SelectItem value="__none__">No tax (0%)</SelectItem>
                   {inputTax.map((t) => (
                     <SelectItem key={t.id} value={t.id}>
                       {t.name} ({t.percentage}%)
@@ -548,17 +550,43 @@ export function MultiLineSupplierBillForm({
           </div>
         ))}
 
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="gap-2"
-          onClick={() => setLines((prev) => [...prev, newLine()])}
-          disabled={pending}
-        >
-          <Plus className="h-4 w-4" />
-          Add another item
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="gap-2"
+            onClick={() =>
+              setLines((prev) => {
+                const inherit = prev[prev.length - 1]?.taxRateId ?? "";
+                return [...prev, newLine(inherit)];
+              })
+            }
+            disabled={pending}
+          >
+            <Plus className="h-4 w-4" />
+            Add another item
+          </Button>
+          {lines.length > 1 ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="text-muted-foreground"
+              disabled={pending}
+              onClick={() => {
+                const source = lines.find((l) => l.taxRateId)?.taxRateId;
+                if (!source) {
+                  toast.message("Choose a tax rate on at least one line first.");
+                  return;
+                }
+                setLines((prev) => prev.map((l) => ({ ...l, taxRateId: source })));
+              }}
+            >
+              Apply same tax to all lines
+            </Button>
+          ) : null}
+        </div>
       </div>
 
       <div className="rounded-md border bg-muted/40 p-4 space-y-2 text-sm">

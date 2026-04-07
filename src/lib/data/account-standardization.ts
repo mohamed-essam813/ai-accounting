@@ -1,6 +1,6 @@
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { resolveKeywordFromStaticMap } from "@/lib/accounting/account-keyword-resolution";
-import { normalizeEntityName } from "@/lib/utils/entity-dedupe";
+import { normalizeAccountUniquenessKey, normalizeEntityName } from "@/lib/utils/entity-dedupe";
 
 export type CoaMatchAccount = {
   id: string;
@@ -17,6 +17,7 @@ export type CoaMatchAccount = {
  */
 export async function resolveCoaUserText(tenantId: string, rawText: string) {
   const normalizedInput = normalizeEntityName(rawText);
+  const accountUniquenessKey = normalizeAccountUniquenessKey(rawText);
   const staticKeyword = resolveKeywordFromStaticMap(rawText);
 
   const supabase = await createServerSupabaseClient();
@@ -50,7 +51,7 @@ export async function resolveCoaUserText(tenantId: string, rawText: string) {
       "id, name, code, standardized_name, normalized_name, reporting_classification, is_system_standard",
     )
     .eq("tenant_id", tenantId)
-    .eq("normalized_name", normalizedInput);
+    .eq("normalized_name", accountUniquenessKey);
 
   let standardNameMatches: CoaMatchAccount[] = [];
   if (targetStandardName) {

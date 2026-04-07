@@ -5,6 +5,8 @@ import { getCurrentUser } from "@/lib/data/users";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
+export type VatSupplyTreatment = "standard" | "zero_rated" | "exempt";
+
 export interface TaxRate {
   id: string;
   tenant_id: string;
@@ -16,19 +18,38 @@ export interface TaxRate {
   is_active: boolean;
   created_at: string;
   updated_at: string;
+  vat_supply_treatment: VatSupplyTreatment;
 }
 
-const CreateTaxRateSchema = z.object({
-  name: z.string().min(1, "Tax rate name is required"),
-  percentage: z
-    .number()
-    .refine((n) => !Number.isNaN(n), "Enter a valid number")
-    .refine((n) => n > 0, "Rate must be greater than 0")
-    .refine((n) => n <= 100, "Rate cannot exceed 100"),
-  tax_type: z.enum(["input", "output"]),
-  output_vat_account_id: z.string().uuid().optional().nullable(),
-  input_vat_account_id: z.string().uuid().optional().nullable(),
-});
+function parseVatSupplyTreatment(v: unknown): VatSupplyTreatment {
+  if (v === "zero_rated" || v === "exempt") return v;
+  return "standard";
+}
+
+const CreateTaxRateSchema = z
+  .object({
+    name: z.string().min(1, "Tax rate name is required"),
+    percentage: z
+      .number()
+      .refine((n) => !Number.isNaN(n), "Enter a valid number")
+      .refine((n) => n >= 0, "Rate cannot be negative")
+      .refine((n) => n <= 100, "Rate cannot exceed 100"),
+    tax_type: z.enum(["input", "output"]),
+    output_vat_account_id: z.string().uuid().optional().nullable(),
+    input_vat_account_id: z.string().uuid().optional().nullable(),
+    vat_supply_treatment: z.enum(["zero_rated", "exempt"]).optional(),
+  })
+  .superRefine((data, ctx) => {
+    if (data.percentage === 0) {
+      if (!data.vat_supply_treatment) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["vat_supply_treatment"],
+          message: "For 0% tax, choose Zero rated or Exempt.",
+        });
+      }
+    }
+  });
 
 const UpdateTaxRateSchema = CreateTaxRateSchema.extend({
   id: z.string().uuid(),
@@ -85,7 +106,11 @@ export async function listTaxRatesAction(): Promise<TaxRate[]> {
 
     return (data ?? []).map((rate: any) => {
       const r = Number(rate.rate ?? rate.percentage / 100);
-      return { ...rate, percentage: Math.round(r * 10000) / 100 };
+      return {
+        ...rate,
+        percentage: Math.round(r * 10000) / 100,
+        vat_supply_treatment: parseVatSupplyTreatment(rate.vat_supply_treatment),
+      };
     });
   } catch (e) {
     console.error("listTaxRatesAction", e);
@@ -171,6 +196,8 @@ export async function createTaxRateAction(
     }
 
     const rateDecimal = payload.percentage / 100;
+    const vat_supply_treatment: VatSupplyTreatment =
+      payload.percentage === 0 ? payload.vat_supply_treatment! : "standard";
     const insertPayload = {
       tenant_id: user.tenant.id,
       name: payload.name,
@@ -180,6 +207,7 @@ export async function createTaxRateAction(
       output_vat_account_id: payload.tax_type === "output" ? payload.output_vat_account_id : null,
       input_vat_account_id: payload.tax_type === "input" ? payload.input_vat_account_id : null,
       is_active: true,
+      vat_supply_treatment,
     };
 
     const { data, error } = await (supabase.from("tax_rates" as any) as any)
@@ -199,7 +227,11 @@ export async function createTaxRateAction(
     const r = Number(data.rate ?? data.percentage / 100);
     return {
       success: true,
-      data: { ...data, percentage: Math.round(r * 10000) / 100 },
+      data: {
+        ...data,
+        percentage: Math.round(r * 10000) / 100,
+        vat_supply_treatment: parseVatSupplyTreatment(data.vat_supply_treatment),
+      },
     };
   } catch (e) {
     console.error("createTaxRateAction", e);
@@ -313,6 +345,8 @@ export async function updateTaxRateAction(
     }
 
     const rateDecimal = payload.percentage / 100;
+    const vat_supply_treatment: VatSupplyTreatment =
+      payload.percentage === 0 ? payload.vat_supply_treatment! : "standard";
     const updatePayload = {
       name: payload.name,
       rate: rateDecimal,
@@ -320,6 +354,7 @@ export async function updateTaxRateAction(
       tax_type: payload.tax_type,
       output_vat_account_id: payload.tax_type === "output" ? payload.output_vat_account_id : null,
       input_vat_account_id: payload.tax_type === "input" ? payload.input_vat_account_id : null,
+      vat_supply_treatment,
       ...(typeof payload.is_active === "boolean" && { is_active: payload.is_active }),
       updated_at: new Date().toISOString(),
     };
@@ -343,7 +378,11 @@ export async function updateTaxRateAction(
     const r = Number(data.rate ?? data.percentage / 100);
     return {
       success: true,
-      data: { ...data, percentage: Math.round(r * 10000) / 100 },
+      data: {
+        ...data,
+        percentage: Math.round(r * 10000) / 100,
+        vat_supply_treatment: parseVatSupplyTreatment(data.vat_supply_treatment),
+      },
     };
   } catch (e) {
     console.error("updateTaxRateAction", e);

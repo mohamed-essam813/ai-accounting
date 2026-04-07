@@ -1,12 +1,13 @@
 /**
- * Auto-create missing accounts silently
- * Part of stateful prompt resolution pipeline
- * Fixes bug where prompt execution stops after account creation confirmation
+ * Auto-create missing accounts in the prompt pipeline — prefers mapping to existing CoA
+ * (normalized name + fuzzy match) before inserting, to avoid silent duplicates.
  */
 
 import { createAccountAction } from "@/lib/actions/accounts";
 import { generateAccountCode } from "@/lib/accounting/generate-account-code";
+import { accountNameSimilarityScore, AI_MAP_EXISTING_MIN_SCORE } from "@/lib/accounts/account-name-similarity";
 import { listAccounts } from "@/lib/data/accounts";
+import { normalizeAccountUniquenessKey } from "@/lib/utils/entity-dedupe";
 
 type AccountSuggestion = {
   suggested_name?: string;
@@ -30,17 +31,42 @@ export type CreatedAccount = {
   type: string;
 };
 
+type ListAccount = Awaited<ReturnType<typeof listAccounts>>[number];
+
+function findExistingForAiSuggestion(
+  suggestedName: string,
+  accountType: ListAccount["type"],
+  allAccounts: ListAccount[],
+): ListAccount | null {
+  const key = normalizeAccountUniquenessKey(suggestedName);
+  const candidates = allAccounts.filter((a) => a.type === accountType && a.is_active !== false);
+  const exactKey = candidates.find((a) => normalizeAccountUniquenessKey(a.name) === key);
+  if (exactKey) return exactKey;
+
+  let best: ListAccount | null = null;
+  let bestScore = 0;
+  for (const a of candidates) {
+    const s = accountNameSimilarityScore(suggestedName, a.name);
+    if (s > bestScore) {
+      bestScore = s;
+      best = a;
+    }
+  }
+  if (best && bestScore >= AI_MAP_EXISTING_MIN_SCORE) return best;
+  return null;
+}
+
 /**
- * Auto-create missing accounts silently (no blocking confirmation)
- * Returns list of created accounts
+ * Ensures suggested accounts exist: maps to existing CoA when similar, otherwise creates.
+ * Returns both newly created and matched existing accounts so callers can re-parse the prompt.
  */
 export async function autoCreateMissingAccounts(
   accounts: AccountsFromAI,
   tenantId: string,
 ): Promise<CreatedAccount[]> {
-  const created: CreatedAccount[] = [];
+  const resolved: CreatedAccount[] = [];
+  let allAccounts = await listAccounts();
 
-  // Check each account and create if needed
   const accountsToCheck = [
     { key: "debit_account", account: accounts.debit_account },
     { key: "credit_account", account: accounts.credit_account },
@@ -50,43 +76,46 @@ export async function autoCreateMissingAccounts(
 
   for (const { account } of accountsToCheck) {
     if (!account?.suggested_name || account.existing_account_id) {
-      continue; // Skip if no name suggested or account already exists
+      continue;
     }
 
-    // Check if account exists by name (case-insensitive)
-    const allAccounts = await listAccounts();
-    const exists = allAccounts.some(
-      (a) => a.name.toLowerCase() === account.suggested_name!.toLowerCase(),
-    );
+    const suggestedType = account.suggested_type;
+    if (!suggestedType) continue;
 
-    if (!exists && account.suggested_type) {
-      // Auto-create account silently
-      try {
-        const code = account.suggested_code || await generateAccountCode(
-          account.suggested_type,
-          tenantId,
-          account.suggested_category ?? undefined,
-        );
+    const existing = findExistingForAiSuggestion(account.suggested_name, suggestedType, allAccounts);
+    if (existing) {
+      resolved.push({
+        id: existing.id,
+        name: existing.name,
+        code: existing.code,
+        type: existing.type,
+      });
+      continue;
+    }
 
-        const newAccount = await createAccountAction({
-          name: account.suggested_name,
-          code,
-          type: account.suggested_type,
-          category: account.suggested_category ?? undefined,
-        });
+    try {
+      const code =
+        account.suggested_code ||
+        (await generateAccountCode(suggestedType, tenantId, account.suggested_category ?? undefined));
 
-        created.push({
-          id: newAccount.id,
-          name: newAccount.name,
-          code: newAccount.code,
-          type: newAccount.type,
-        });
-      } catch (error) {
-        console.error(`Failed to auto-create account ${account.suggested_name}:`, error);
-        // Continue - don't block on account creation failure
-      }
+      const newAccount = await createAccountAction({
+        name: account.suggested_name,
+        code,
+        type: suggestedType,
+        category: account.suggested_category ?? undefined,
+      });
+
+      resolved.push({
+        id: newAccount.id,
+        name: newAccount.name,
+        code: newAccount.code,
+        type: newAccount.type,
+      });
+      allAccounts = await listAccounts();
+    } catch (error) {
+      console.error(`Failed to auto-create account ${account.suggested_name}:`, error);
     }
   }
 
-  return created;
+  return resolved;
 }

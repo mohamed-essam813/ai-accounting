@@ -1,7 +1,7 @@
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { getCurrentUser } from "./users";
 import type { Database } from "@/lib/database.types";
-import { dedupeEntitiesForDisplay, normalizeEntityName } from "@/lib/utils/entity-dedupe";
+import { dedupeEntitiesForDisplay, normalizeAccountUniquenessKey } from "@/lib/utils/entity-dedupe";
 import { isReportingClassification, type ReportingClassification } from "@/lib/accounting/reporting-classification";
 
 type ChartOfAccountsRow = Database["public"]["Tables"]["chart_of_accounts"]["Row"];
@@ -13,7 +13,7 @@ type CoaSeed = Database["public"]["Tables"]["chart_of_accounts"]["Insert"] & {
 
 function enrichSeedCoaRow(a: CoaSeed, tenantId: string): Record<string, unknown> {
   const standardized_name = a.name;
-  const normalized_name = normalizeEntityName(a.name);
+  const normalized_name = normalizeAccountUniquenessKey(a.name);
   let reporting_classification: ReportingClassification | null = null;
   const code = a.code;
   if (code === "1150") {

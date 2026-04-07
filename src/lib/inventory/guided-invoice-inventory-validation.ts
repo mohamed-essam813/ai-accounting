@@ -29,10 +29,13 @@ export async function resolveInventorySaleCostsForDraft(params: {
   quantity: number;
   invoiceDate: string;
   revenueSubtotal: number;
+  /** When the item has no revenue_account_id, use default sales account (e.g. code 4000). */
+  defaultRevenueAccountId?: string | null;
 }): Promise<ResolvedInventorySaleCosts> {
-  const { tenantId, item, quantity, invoiceDate, revenueSubtotal } = params;
+  const { tenantId, item, quantity, invoiceDate, revenueSubtotal, defaultRevenueAccountId } = params;
 
-  requireUuid(item.revenue_account_id, "revenue account");
+  const effectiveRevenueId = item.revenue_account_id ?? defaultRevenueAccountId ?? null;
+  requireUuid(effectiveRevenueId, "revenue account");
   requireUuid(item.inventory_account_id, "inventory account");
   requireUuid(item.cogs_account_id, "COGS account");
 

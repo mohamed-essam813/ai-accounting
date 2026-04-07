@@ -2567,6 +2567,7 @@ export type Database = {
           tax_type: string
           tenant_id: string
           updated_at: string
+          vat_supply_treatment: string
         }
         Insert: {
           created_at?: string
@@ -2580,6 +2581,7 @@ export type Database = {
           tax_type: string
           tenant_id: string
           updated_at?: string
+          vat_supply_treatment?: string
         }
         Update: {
           created_at?: string
@@ -2593,6 +2595,7 @@ export type Database = {
           tax_type?: string
           tenant_id?: string
           updated_at?: string
+          vat_supply_treatment?: string
         }
         Relationships: [
           {
@@ -3205,6 +3208,7 @@ export type Database = {
         Args: { p_date: string; p_document_type: string; p_tenant_id: string }
         Returns: string
       }
+      normalize_account_name_key: { Args: { raw: string }; Returns: string }
       recompute_bill_settlement: {
         Args: { p_bill_id: string }
         Returns: undefined

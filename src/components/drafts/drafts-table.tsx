@@ -37,9 +37,14 @@ import {
 } from "@/components/ui/dialog";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { getErrorMessage } from "@/lib/utils";
-import { isCounterpartyMismatchError } from "@/lib/drafts/counterparty-resolution";
 import { parseBillPurchaseType } from "@/lib/drafts/bill-purchase-classification";
-import { approveDraftAction, postDraftAction, updateDraftAction, deleteDraftAction, convertPostedToDraftAction } from "@/lib/actions/drafts";
+import {
+  approveDraftAction,
+  postDraftAction,
+  updateDraftAction,
+  deleteDraftAction,
+  convertPostedToDraftAction,
+} from "@/lib/actions/drafts";
 import { PromptIntentEnum } from "@/lib/ai/schema";
 import { toast } from "sonner";
 import { JournalPreview } from "./journal-preview";
@@ -170,40 +175,32 @@ export function DraftsTable({ drafts, accounts = [], userRole, displayCurrency }
     startTransition(async () => {
       setPostingDraftId(draftId);
       try {
-        const data = await postDraftAction({ draftId });
-        if (typeof data === "object" && data !== null && "id" in data) {
-          applyPostSuccess(data as { id: string; status: string; posted_entry_id?: string | null }, draftId);
-        }
-      } catch (error) {
-        const msg = getErrorMessage(error, "");
-        if (isCounterpartyMismatchError(msg)) {
+        let res = await postDraftAction({ draftId });
+        if (!res.success && res.error.code === "COUNTERPARTY_MISMATCH") {
           if (
             typeof window !== "undefined" &&
             window.confirm(
               "This differs from the name extracted from the uploaded document. Continue posting?",
             )
           ) {
-            try {
-              const data = await postDraftAction({
-                draftId,
-                acknowledgeCounterpartyDifference: true,
-              });
-              if (typeof data === "object" && data !== null && "id" in data) {
-                applyPostSuccess(data as { id: string; status: string; posted_entry_id?: string | null }, draftId);
-              }
-            } catch (e2) {
-              console.error(e2);
-              toast.error("Failed to post journal entry", {
-                description: getErrorMessage(e2, "Unknown error occurred."),
-              });
-            }
+            res = await postDraftAction({
+              draftId,
+              acknowledgeCounterpartyDifference: true,
+            });
           }
-        } else {
-          console.error(error);
-          toast.error("Failed to post journal entry", {
-            description: getErrorMessage(error, "Unknown error occurred."),
-          });
         }
+        if (!res.success) {
+          toast.error(`Posting failed: ${res.error.message}`, {
+            description: `${res.error.code} · Ref ${res.error.referenceId}`,
+          });
+          return;
+        }
+        applyPostSuccess(res.data, draftId);
+      } catch (error) {
+        console.error(error);
+        toast.error("Failed to post journal entry", {
+          description: getErrorMessage(error, "Unknown error occurred."),
+        });
       } finally {
         setPostingDraftId(null);
       }

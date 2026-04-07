@@ -36,7 +36,7 @@ export function assertInvoiceLinesValidForDraft(params: {
 
     if (!item) {
       throw new Error(
-        `${lp}: selected item was not found. Select a valid product or service item from the catalog.`,
+        `${lp}: selected record is not a valid invoice item (not found in your item catalog). Pick a product or service item, not a bare account name.`,
       );
     }
 

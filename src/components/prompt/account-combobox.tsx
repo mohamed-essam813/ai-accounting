@@ -13,11 +13,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Check, ChevronsUpDown, Plus } from "lucide-react";
+import { AlertTriangle, Check, ChevronsUpDown, Plus } from "lucide-react";
 import { cn, getErrorMessage } from "@/lib/utils";
-import { dedupeEntitiesForDisplay } from "@/lib/utils/entity-dedupe";
+import { dedupeEntitiesForDisplay, normalizeAccountUniquenessKey } from "@/lib/utils/entity-dedupe";
 import {
   DUPLICATE_WARNING_SCORE,
+  FUZZY_SUGGEST_MIN_SCORE,
   accountNameSimilarityScore,
   findSimilarAccountOptions,
 } from "@/lib/accounts/account-name-similarity";
@@ -105,10 +106,27 @@ export function AccountCombobox({
     );
   }, [typeScoped, query]);
 
+  const duplicateNormalizedNameClash = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const a of typeScoped) {
+      const k = normalizeAccountUniquenessKey(a.name);
+      if (!k) continue;
+      counts.set(k, (counts.get(k) ?? 0) + 1);
+    }
+    return [...counts.values()].some((c) => c > 1);
+  }, [typeScoped]);
+
+  const fuzzyTopPick = useMemo(() => {
+    const q = query.trim();
+    if (q.length < 2) return null;
+    const hits = findSimilarAccountOptions(q, typeScoped, FUZZY_SUGGEST_MIN_SCORE, 1);
+    return hits[0] ?? null;
+  }, [query, typeScoped]);
+
   const similarWhenNoSubstringMatch = useMemo(() => {
     const q = query.trim();
     if (!q || !inlineCreateAccountType || filtered.length > 0) return [];
-    return findSimilarAccountOptions(q, typeScoped, 0.38, 5);
+    return findSimilarAccountOptions(q, typeScoped, FUZZY_SUGGEST_MIN_SCORE, 5);
   }, [query, filtered.length, typeScoped, inlineCreateAccountType]);
 
   const openCreateDialog = () => {
@@ -192,6 +210,39 @@ export function AccountCombobox({
             />
           </div>
           <div className="max-h-56 overflow-y-auto p-1">
+            {duplicateNormalizedNameClash ? (
+              <div className="flex items-start gap-2 border-b border-amber-200/80 bg-amber-50/90 px-2 py-2 text-xs text-amber-950 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-50">
+                <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" aria-hidden />
+                <span>
+                  Duplicate accounts detected — the same category name exists on more than one code. Pick one
+                  account for reporting consistency, or merge duplicates under Chart of Accounts.
+                </span>
+              </div>
+            ) : null}
+            {fuzzyTopPick &&
+            query.trim().length >= 2 &&
+            !filtered.some((a) => a.id === fuzzyTopPick.option.id) ? (
+              <div className="border-b p-2 space-y-1">
+                <p className="text-xs font-medium text-muted-foreground">Suggested match</p>
+                <button
+                  type="button"
+                  className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent"
+                  onClick={() => {
+                    onChange(fuzzyTopPick.option);
+                    setOpen(false);
+                    setQuery("");
+                  }}
+                >
+                  <Check className="h-4 w-4 opacity-0" />
+                  <span className="truncate">
+                    {fuzzyTopPick.option.code} — {fuzzyTopPick.option.name}
+                    <span className="ml-1 text-xs text-muted-foreground">
+                      ({Math.round(fuzzyTopPick.score * 100)}% match)
+                    </span>
+                  </span>
+                </button>
+              </div>
+            ) : null}
             {filtered.length > 0 ? (
               filtered.map((a) => (
                 <button

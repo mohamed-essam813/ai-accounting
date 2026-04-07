@@ -30,7 +30,6 @@ import {
 } from "@/components/ui/select";
 import { formatCurrency } from "@/lib/format";
 import { getErrorMessage } from "@/lib/utils";
-import { isCounterpartyMismatchError } from "@/lib/drafts/counterparty-resolution";
 import type { DraftPayload } from "@/lib/ai/schema";
 import type { Attachment } from "@/lib/data/documents";
 import type { InventoryItem } from "@/lib/data/inventory";
@@ -342,21 +341,25 @@ export function InlineDraftReviewPanel({
     startProcessing(async () => {
       try {
         await approveDraftAction({ draftId: draft.id });
-        try {
-          await postDraftAction({ draftId: draft.id });
-        } catch (postErr) {
-          const msg = getErrorMessage(postErr, "");
+        let postRes = await postDraftAction({ draftId: draft.id });
+        if (!postRes.success && postRes.error.code === "COUNTERPARTY_MISMATCH") {
           if (
-            isCounterpartyMismatchError(msg) &&
             typeof window !== "undefined" &&
             window.confirm(
               "This differs from the name extracted from the uploaded document. Continue posting?",
             )
           ) {
-            await postDraftAction({ draftId: draft.id, acknowledgeCounterpartyDifference: true });
-          } else {
-            throw postErr;
+            postRes = await postDraftAction({
+              draftId: draft.id,
+              acknowledgeCounterpartyDifference: true,
+            });
           }
+        }
+        if (!postRes.success) {
+          toast.error(`Posting failed: ${postRes.error.message}`, {
+            description: `${postRes.error.code} · Ref ${postRes.error.referenceId}`,
+          });
+          return;
         }
         toast.success("Draft approved and posted");
         onDraftUpdated?.();

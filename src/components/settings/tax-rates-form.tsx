@@ -49,11 +49,12 @@ const TaxRateFormSchema = z
     percentage: z
       .number()
       .refine((n) => !Number.isNaN(n), "Enter a valid number")
-      .refine((n) => n > 0, "Rate must be greater than 0")
+      .refine((n) => n >= 0, "Rate cannot be negative")
       .refine((n) => n <= 100, "Rate cannot exceed 100"),
     tax_type: z.enum(["input", "output"]),
     output_vat_account_id: z.string().uuid().optional().nullable(),
     input_vat_account_id: z.string().uuid().optional().nullable(),
+    vat_supply_treatment: z.enum(["zero_rated", "exempt"]).optional(),
   })
   .superRefine((data, ctx) => {
     const msg = "Please create and select a tax control account first.";
@@ -66,11 +67,27 @@ const TaxRateFormSchema = z
         ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["input_vat_account_id"], message: msg });
       }
     }
+    if (data.percentage === 0 && !data.vat_supply_treatment) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["vat_supply_treatment"],
+        message: "For 0% tax, choose Zero rated or Exempt.",
+      });
+    }
   });
 
 type TaxRateFormValues = z.infer<typeof TaxRateFormSchema>;
 
 const LINKED_ACCOUNT_MSG = "Please create and select a tax control account first.";
+
+function formatSupplyTreatmentLabel(rate: TaxRate): string {
+  if (rate.percentage === 0) {
+    if (rate.vat_supply_treatment === "exempt") return "Exempt";
+    if (rate.vat_supply_treatment === "zero_rated") return "Zero rated";
+    return "—";
+  }
+  return "Standard";
+}
 
 export function TaxRatesForm() {
   const [taxRates, setTaxRates] = useState<TaxRate[]>([]);
@@ -88,10 +105,18 @@ export function TaxRatesForm() {
       tax_type: "output",
       output_vat_account_id: null,
       input_vat_account_id: null,
+      vat_supply_treatment: undefined,
     },
   });
 
   const taxType = form.watch("tax_type");
+  const percentageWatched = form.watch("percentage");
+
+  useEffect(() => {
+    if (percentageWatched > 0) {
+      form.setValue("vat_supply_treatment", undefined);
+    }
+  }, [percentageWatched, form]);
 
   useEffect(() => {
     loadData();
@@ -122,12 +147,18 @@ export function TaxRatesForm() {
   const handleOpenDialog = (rate?: TaxRate) => {
     if (rate) {
       setEditingRate(rate);
+      const treatment =
+        rate.percentage === 0 &&
+        (rate.vat_supply_treatment === "zero_rated" || rate.vat_supply_treatment === "exempt")
+          ? rate.vat_supply_treatment
+          : undefined;
       form.reset({
         name: rate.name,
         percentage: rate.percentage,
         tax_type: rate.tax_type,
         output_vat_account_id: rate.output_vat_account_id,
         input_vat_account_id: rate.input_vat_account_id,
+        vat_supply_treatment: treatment,
       });
     } else {
       setEditingRate(null);
@@ -137,6 +168,7 @@ export function TaxRatesForm() {
         tax_type: "output",
         output_vat_account_id: null,
         input_vat_account_id: null,
+        vat_supply_treatment: undefined,
       });
     }
     setIsDialogOpen(true);
@@ -157,8 +189,13 @@ export function TaxRatesForm() {
   const handleSubmit = (values: TaxRateFormValues) => {
     startTransition(async () => {
       form.clearErrors();
+      const payload = {
+        ...values,
+        vat_supply_treatment:
+          values.percentage === 0 ? values.vat_supply_treatment : undefined,
+      };
       if (editingRate) {
-        const res = await updateTaxRateAction({ id: editingRate.id, ...values });
+        const res = await updateTaxRateAction({ id: editingRate.id, ...payload });
         if (res.success) {
           toast.success("Tax rate updated");
           handleCloseDialog();
@@ -168,7 +205,7 @@ export function TaxRatesForm() {
           toast.error(res.error);
         }
       } else {
-        const res = await createTaxRateAction(values);
+        const res = await createTaxRateAction(payload);
         if (res.success) {
           toast.success("Tax rate created");
           handleCloseDialog();
@@ -242,6 +279,7 @@ export function TaxRatesForm() {
                 <TableHead>Name</TableHead>
                 <TableHead>Percentage</TableHead>
                 <TableHead>Type</TableHead>
+                <TableHead>Supply treatment</TableHead>
                 <TableHead>Linked account</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
@@ -260,6 +298,9 @@ export function TaxRatesForm() {
                     <TableCell>{rate.percentage}%</TableCell>
                     <TableCell>
                       <span className="capitalize">{rate.tax_type}</span>
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {formatSupplyTreatmentLabel(rate)}
                     </TableCell>
                     <TableCell>
                       {account
@@ -326,7 +367,7 @@ export function TaxRatesForm() {
                   id="percentage"
                   type="number"
                   step="0.01"
-                  min="0.01"
+                  min="0"
                   max="100"
                   placeholder="5"
                   {...form.register("percentage", { valueAsNumber: true })}
@@ -334,6 +375,11 @@ export function TaxRatesForm() {
                 {form.formState.errors.percentage && (
                   <p className="text-xs text-destructive">
                     {form.formState.errors.percentage.message}
+                  </p>
+                )}
+                {percentageWatched === 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    0% tax is valid. Please select whether this is Zero rated or Exempt.
                   </p>
                 )}
               </div>
@@ -354,6 +400,35 @@ export function TaxRatesForm() {
                 </Select>
               </div>
             </div>
+
+            {percentageWatched === 0 && (
+              <div className="space-y-2">
+                <Label htmlFor="vat_supply_treatment">Tax treatment *</Label>
+                <Select
+                  value={form.watch("vat_supply_treatment") ?? "none"}
+                  onValueChange={(v) =>
+                    form.setValue(
+                      "vat_supply_treatment",
+                      v === "none" ? undefined : (v as "zero_rated" | "exempt")
+                    )
+                  }
+                >
+                  <SelectTrigger id="vat_supply_treatment">
+                    <SelectValue placeholder="Select Zero rated or Exempt" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Select…</SelectItem>
+                    <SelectItem value="zero_rated">Zero rated</SelectItem>
+                    <SelectItem value="exempt">Exempt</SelectItem>
+                  </SelectContent>
+                </Select>
+                {form.formState.errors.vat_supply_treatment && (
+                  <p className="text-xs text-destructive">
+                    {form.formState.errors.vat_supply_treatment.message}
+                  </p>
+                )}
+              </div>
+            )}
 
             <div className="space-y-2">
               <Label htmlFor={linkedAccountField}>{linkedLabel}</Label>

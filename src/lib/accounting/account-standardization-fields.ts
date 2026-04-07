@@ -1,4 +1,4 @@
-import { normalizeEntityName } from "@/lib/utils/entity-dedupe";
+import { normalizeAccountUniquenessKey } from "@/lib/utils/entity-dedupe";
 import type { AccountClassification } from "@/lib/accounting/account-classification";
 import {
   mapTypeAndCategoryToReportingClassification,
@@ -21,7 +21,7 @@ export function buildStandardizationFieldsForNewAccount(params: {
   is_system_standard: boolean;
 } {
   const standardized_name = params.name.trim();
-  const normalized_name = normalizeEntityName(standardized_name);
+  const normalized_name = normalizeAccountUniquenessKey(standardized_name);
   const account_classification = params.accountClassification;
 
   let reporting_classification: ReportingClassification | null = null;
