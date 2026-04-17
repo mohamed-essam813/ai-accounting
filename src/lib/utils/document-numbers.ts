@@ -8,8 +8,7 @@ export async function nextDocumentNumber(params: {
   date: string; // YYYY-MM-DD
 }): Promise<string> {
   const supabase = await createServerSupabaseClient();
-  const rpc = (supabase as unknown as { rpc: (fn: string, args: unknown) => Promise<{ data: unknown; error: unknown }> }).rpc;
-  const { data, error } = await rpc("next_document_number", {
+  const { data, error } = await (supabase as unknown as { rpc: (fn: string, args: unknown) => Promise<{ data: unknown; error: unknown }> }).rpc("next_document_number", {
     p_tenant_id: params.tenantId,
     p_document_type: params.documentType,
     p_date: params.date,
