@@ -357,7 +357,7 @@ export async function postJournalEntryAction(input: z.infer<typeof EntryIdSchema
   return { id: entryId, status: "posted" as const };
 }
 
-const UpdateJournalEntrySchema = CreateJournalEntrySchema.extend({
+const UpdateJournalEntrySchema = CreateJournalEntrySchema.safeExtend({
   entryId: z.string().uuid(),
 });
 

@@ -51,7 +51,7 @@ const CreateTaxRateSchema = z
     }
   });
 
-const UpdateTaxRateSchema = CreateTaxRateSchema.extend({
+const UpdateTaxRateSchema = CreateTaxRateSchema.safeExtend({
   id: z.string().uuid(),
   is_active: z.boolean().optional(),
 });
