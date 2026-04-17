@@ -1,9 +1,11 @@
 import { listAccounts } from "@/lib/data/accounts";
 import { listJournalEntries, getJournalTemplates } from "@/lib/data/journals";
 import { JournalEntryForm } from "@/components/journals/journal-entry-form";
+import { JournalAiAssistantSection } from "@/components/journals/journal-ai-assistant-section";
 import { JournalEntriesTable } from "@/components/journals/journal-entries-table";
 import { JournalFilters } from "@/components/journals/journal-filters";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { canApprove, type UserRole } from "@/lib/auth";
 
 export const revalidate = 60;
 
@@ -81,6 +83,14 @@ export default async function JournalsPage({
         initialStatus={params.status}
         accounts={accountOptions}
       />
+
+      {user?.id ? (
+        <JournalAiAssistantSection
+          userId={user.id}
+          userRole={(user.role as UserRole) ?? "member"}
+          canPostToLedger={canApprove((user.role as UserRole) ?? "member")}
+        />
+      ) : null}
 
       {editingEntry && editingEntry.status === "draft" ? (
         <Card>
