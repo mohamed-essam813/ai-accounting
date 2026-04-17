@@ -27,6 +27,8 @@ import { resolveInventorySaleCostsForDraft } from "@/lib/inventory/guided-invoic
 import { parseBillDocumentLines, parseInvoiceDocumentLines } from "@/lib/posting/multi-line-documents";
 import type { BillDocumentLine, InvoiceDocumentLine } from "@/lib/posting/multi-line-documents";
 import { assertInvoiceLinesValidForDraft } from "@/lib/drafts/multi-line-invoice-validation";
+import { listTaxRatesAction, type TaxRate } from "@/lib/actions/tax-rates";
+import { listAccountsForItemWizardAction } from "@/lib/actions/items-picker";
 
 function generateDraftOpReferenceId(): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -202,6 +204,30 @@ export async function listBankAccountsForPickerAction(): Promise<
     idKey: "id",
     entityLabel: "bank-accounts-picker",
   }) as { id: string; name: string; code: string }[];
+}
+
+/**
+ * One server-action round-trip for Record activity / guided workspace initial load.
+ * Avoids four separate client POSTs (contacts, banks, tax rates, chart for bill lines).
+ */
+export async function loadGuidedEventWorkspacePreflightAction(): Promise<{
+  contacts: Awaited<ReturnType<typeof listContactsForPickerAction>>;
+  banks: Awaited<ReturnType<typeof listBankAccountsForPickerAction>>;
+  taxRates: TaxRate[];
+  accounts: Awaited<ReturnType<typeof listAccountsForItemWizardAction>>;
+}> {
+  const [contacts, banks, taxRates] = await Promise.all([
+    listContactsForPickerAction(),
+    listBankAccountsForPickerAction(),
+    listTaxRatesAction(),
+  ]);
+  let accounts: Awaited<ReturnType<typeof listAccountsForItemWizardAction>> = [];
+  try {
+    accounts = await listAccountsForItemWizardAction();
+  } catch {
+    // Matches prior client behaviour — accounts optional until bill line needs expense/asset picker.
+  }
+  return { contacts, banks, taxRates, accounts };
 }
 
 export async function createContactFromPickerAction(
@@ -605,7 +631,25 @@ const MultiBillLineInSchema = z.object({
       category: z.string().min(1),
       asset_account_id: z.string().uuid(),
       useful_life_years: z.number().int().positive(),
-      depreciation_method: z.enum(["straight_line"]),
+      depreciation_method: z.enum(["straight_line", "reducing_balance", "units_of_production", "none"]),
+      residual_value: z.number().nonnegative().optional(),
+      start_depreciation_date: z.string().optional(),
+      serial_number: z.string().optional(),
+      location: z.string().optional(),
+      assigned_to: z.string().optional(),
+      quantity: z.number().int().positive().optional(),
+      depreciation_method_raw: z.string().optional(),
+      asset_drafts: z
+        .array(
+          z.object({
+            index: z.number().int().nonnegative(),
+            name: z.string().default(""),
+            serialNumber: z.string().default(""),
+            location: z.string().default(""),
+            costOverride: z.string().default(""),
+          }),
+        )
+        .optional(),
     })
     .optional(),
 });

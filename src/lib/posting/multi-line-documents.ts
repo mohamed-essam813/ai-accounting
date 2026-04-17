@@ -8,12 +8,29 @@ import { computeVatFromRate, round2 } from "@/lib/posting/posting-engine";
 import type { TaxTreatment } from "@/lib/posting/posting-engine";
 import type { DraftInventoryLine } from "@/lib/posting/materialize-amounts";
 
+const AssetLineDraftSchema = z.object({
+  index: z.number().int().nonnegative(),
+  name: z.string().default(""),
+  serialNumber: z.string().default(""),
+  location: z.string().default(""),
+  costOverride: z.string().default(""),
+});
+
 const AssetLineSchema = z.object({
   name: z.string().min(1),
   category: z.string().min(1),
   asset_account_id: z.string().uuid(),
   useful_life_years: z.number().int().positive(),
-  depreciation_method: z.enum(["straight_line"]),
+  depreciation_method: z.enum(["straight_line", "reducing_balance", "units_of_production", "none"]),
+  // Extended fields for fixed asset register
+  residual_value: z.number().nonnegative().optional(),
+  start_depreciation_date: z.string().optional(),
+  serial_number: z.string().optional(),
+  location: z.string().optional(),
+  assigned_to: z.string().optional(),
+  quantity: z.number().int().positive().optional(),
+  depreciation_method_raw: z.string().optional(),
+  asset_drafts: z.array(AssetLineDraftSchema).optional(),
 });
 
 export const BillDocumentLineSchema = z.object({

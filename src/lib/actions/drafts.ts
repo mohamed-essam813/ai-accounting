@@ -26,7 +26,10 @@ import {
 import { annotateDraftPostingLines } from "@/lib/posting/journal-line-provenance";
 import { buildTransactionAmounts, validateTransactionAmountsMatch } from "@/lib/posting/transaction-amounts";
 import { buildBillAccounts } from "@/lib/posting/bill-accounts";
-import { getAiSuggestedDebitFromDraftData } from "@/lib/drafts/bill-purchase-classification";
+import {
+  getAiSuggestedDebitFromDraftData,
+  inferBillPurchaseTypeFromHeuristics,
+} from "@/lib/drafts/bill-purchase-classification";
 import { resolveSingleLineBillDebitForJournal } from "@/lib/drafts/single-line-bill-debit";
 import {
   COUNTERPARTY_MISMATCH_CODE,
@@ -156,6 +159,7 @@ const SaveDraftSchema = DraftSchema.extend({
   itemSnapshot: ItemSnapshotSchema.optional().nullable(),
   guidedEventRequiresItem: z.boolean().optional(),
   inventoryLineItems: z.array(InventoryLineDraftSchema).optional(),
+  /** When set for create_bill, persisted as data_json.bill_purchase_type. If omitted, saveDraftAction infers from AI debit / document lines and logs a warning. */
   billPurchaseType: z.enum(["inventory", "expense", "asset"]).optional(),
   transactionAmounts: TransactionAmountsSchema.optional(),
   fixedAssetDraft: z
@@ -241,6 +245,24 @@ export async function saveDraftAction(input: z.infer<typeof SaveDraftSchema>) {
   const initialCounterparty =
     typeof entities.counterparty === "string" ? entities.counterparty.trim() : "";
 
+  let resolvedBillPurchaseForInsert: "inventory" | "expense" | "asset" | undefined = ext.billPurchaseType;
+  if (payload.intent === "create_bill" && !resolvedBillPurchaseForInsert) {
+    const coa = await listAccounts();
+    const draftLike: Record<string, unknown> = {
+      ...entities,
+      ai_selected_accounts: payload.accounts,
+      selected_item_id: ext.selectedItemId,
+      inventory_line_items: ext.inventoryLineItems,
+      fixed_asset_draft: ext.fixedAssetDraft,
+      document_line_items: ext.documentLineItems,
+      guided_event_requires_item: ext.guidedEventRequiresItem,
+    };
+    resolvedBillPurchaseForInsert = inferBillPurchaseTypeFromHeuristics(draftLike, coa);
+    console.warn("[saveDraftAction] create_bill missing billPurchaseType; inferred before persist", {
+      inferred: resolvedBillPurchaseForInsert,
+    });
+  }
+
   // Store original prompt and AI-selected accounts in data_json
   const dataJson = {
     ...entities,
@@ -254,8 +276,11 @@ export async function saveDraftAction(input: z.infer<typeof SaveDraftSchema>) {
     ...(ext.inventoryLineItems && ext.inventoryLineItems.length > 0
       ? { inventory_line_items: ext.inventoryLineItems }
       : {}),
-    ...(ext.billPurchaseType
-      ? { bill_purchase_type: ext.billPurchaseType, classification_type: ext.billPurchaseType.toUpperCase() }
+    ...(resolvedBillPurchaseForInsert
+      ? {
+          bill_purchase_type: resolvedBillPurchaseForInsert,
+          classification_type: resolvedBillPurchaseForInsert.toUpperCase(),
+        }
       : {}),
     ...(ext.transactionAmounts ? { transaction_amounts: ext.transactionAmounts } : {}),
     ...(ext.fixedAssetDraft ? { fixed_asset_draft: ext.fixedAssetDraft } : {}),
@@ -967,7 +992,15 @@ async function postDraftActionImpl(
       category: string;
       asset_account_id: string;
       useful_life_years: number;
-      depreciation_method: "straight_line";
+      depreciation_method: "straight_line" | "reducing_balance" | "units_of_production" | "none";
+      residual_value?: number;
+      start_depreciation_date?: string;
+      serial_number?: string;
+      location?: string;
+      assigned_to?: string;
+      quantity?: number;
+      depreciation_method_raw?: string;
+      asset_drafts?: Array<{ index: number; name: string; serialNumber: string; location: string; costOverride: string }>;
     };
   }> | null = null;
   let multiLineInvoiceInventoryForPosting: Array<DraftInventoryLine & { item_name: string }> | null = null;
@@ -1532,13 +1565,30 @@ async function postDraftActionImpl(
     const { createFixedAssetFromPostedBill } = await import("@/lib/posting/fixed-assets");
     const purchaseDate = (parsedDraft.entities.date as string) ?? new Date().toISOString().slice(0, 10);
     for (const row of multiLineBillAssetsForPosting) {
+      const depMethod = (row.asset.depreciation_method === "none" || row.asset.depreciation_method === "units_of_production")
+        ? "straight_line" as const
+        : row.asset.depreciation_method as "straight_line" | "reducing_balance";
       await createFixedAssetFromPostedBill(supabase, {
         tenantId: user.tenant.id,
         draftId: draft.id,
         journalEntryId: entry.id,
         purchaseDate,
         subtotalAmount: row.line_net,
-        asset: row.asset,
+        asset: {
+          name: row.asset.name,
+          category: row.asset.category,
+          asset_account_id: row.asset.asset_account_id,
+          useful_life_years: row.asset.useful_life_years,
+          depreciation_method: depMethod,
+          depreciation_method_raw: (row.asset.depreciation_method_raw ?? row.asset.depreciation_method) as import("@/components/prompt/bill-line-editor").DepreciationMethod,
+          residual_value: row.asset.residual_value,
+          start_depreciation_date: row.asset.start_depreciation_date,
+          serial_number: row.asset.serial_number,
+          location: row.asset.location,
+          assigned_to: row.asset.assigned_to,
+          quantity: row.asset.quantity,
+          asset_drafts: row.asset.asset_drafts,
+        },
       });
     }
   } else if (draft.intent === "create_bill" && draftDataRaw.bill_purchase_type === "asset") {

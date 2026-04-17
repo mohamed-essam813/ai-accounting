@@ -8,7 +8,7 @@
 
 import { parseAccountingPrompt } from "./index";
 import { autoCreateMissingAccounts } from "./account-creation";
-import type { DraftSchema } from "./schema";
+import { DraftSchema } from "./schema";
 import { z } from "zod";
 
 type PromptContext = {

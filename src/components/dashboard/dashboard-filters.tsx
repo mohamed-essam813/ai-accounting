@@ -30,6 +30,27 @@ export type PeriodMode =
 
 export type CompareMode = "NONE" | "PREVIOUS" | "SPLY" | "MULTI";
 
+/** Canonical query so ?a=1&b=2 equals ?b=2&a=1 — avoids redundant navigations. */
+function canonicalQueryString(qs: string) {
+  const raw = qs.startsWith("?") ? qs.slice(1) : qs;
+  if (!raw) return "";
+  const p = new URLSearchParams(raw);
+  const sorted = [...p.entries()].sort(([a], [b]) => a.localeCompare(b));
+  return new URLSearchParams(sorted).toString();
+}
+
+function isSameDashboardLocation(href: string) {
+  if (typeof window === "undefined") return false;
+  try {
+    const next = new URL(href, window.location.origin);
+    const curQ = canonicalQueryString(window.location.search);
+    const nextQ = canonicalQueryString(next.search);
+    return window.location.pathname === next.pathname && curQ === nextQ;
+  } catch {
+    return false;
+  }
+}
+
 type Props = {
   initialPeriodMode?: PeriodMode;
   initialStartDate?: string;
@@ -67,10 +88,13 @@ export function DashboardFilters({
   const isCustomRange = periodMode === "CUSTOM";
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
 
+  /** Stable string — avoids unstable `searchParams` object identity churn in useCallback/useEffect deps. */
+  const searchSnapshot = searchParams.toString();
+
   // Update URL params: preserve currency and any other existing params, only overwrite period/compare.
   const updateParams = useCallback(() => {
     startTransition(() => {
-      const params = new URLSearchParams(searchParams.toString());
+      const params = new URLSearchParams(searchSnapshot);
 
       // Period mode
       if (periodMode !== "THIS_MONTH") {
@@ -105,9 +129,23 @@ export function DashboardFilters({
       }
 
       const query = params.toString();
-      router.push(query ? `/dashboard?${query}` : "/dashboard");
+      const href = query ? `/dashboard?${query}` : "/dashboard";
+      if (isSameDashboardLocation(href)) {
+        return;
+      }
+      router.push(href);
     });
-  }, [periodMode, startDate, endDate, compareMode, multiN, multiUnit, isCustomRange, router, searchParams]);
+  }, [
+    periodMode,
+    startDate,
+    endDate,
+    compareMode,
+    multiN,
+    multiUnit,
+    isCustomRange,
+    router,
+    searchSnapshot,
+  ]);
 
   // Auto-update when filters change (with debounce)
   useEffect(() => {

@@ -23,7 +23,7 @@ import { ContactCombobox, type ContactOption } from "./contact-combobox";
 import { BankAccountCombobox, type BankOption } from "./bank-account-combobox";
 import {
   listContactsForPickerAction,
-  listBankAccountsForPickerAction,
+  loadGuidedEventWorkspacePreflightAction,
   createGuidedPaymentReceivedAction,
   createGuidedPaymentSentAction,
 } from "@/lib/actions/guided-drafts";
@@ -34,7 +34,7 @@ import {
   type OpenInvoiceRow,
 } from "@/lib/actions/open-documents";
 import { formatSettlementStatusLabel } from "@/lib/settlement/display-status";
-import { listTaxRatesAction, type TaxRate } from "@/lib/actions/tax-rates";
+import { type TaxRate } from "@/lib/actions/tax-rates";
 import { toast } from "sonner";
 import { getErrorMessage } from "@/lib/utils";
 import { FileText, Receipt, ArrowDownLeft, ArrowUpRight } from "lucide-react";
@@ -80,24 +80,22 @@ export function GuidedEventWorkspace({ onDraftCreated }: Props) {
 
   useEffect(() => {
     let cancelled = false;
-    (async () => {
-      const [c, b, t] = await Promise.all([
-        listContactsForPickerAction(),
-        listBankAccountsForPickerAction(),
-        listTaxRatesAction(),
-      ]);
-      if (!cancelled) {
+    loadGuidedEventWorkspacePreflightAction()
+      .then(({ contacts: c, banks: b, taxRates: t, accounts: accs }) => {
+        if (cancelled) return;
         setContacts(c);
         setBanks(b);
         setTaxRates(t);
-        try {
-          const accs = await listAccountsForItemWizardAction();
-          setAccounts(accs as AccountOption[]);
-        } catch {
-          // ignore (accounts will be required only for expense/asset bill)
+        setAccounts(accs as AccountOption[]);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setContacts([]);
+          setBanks([]);
+          setTaxRates([]);
+          setAccounts([]);
         }
-      }
-    })();
+      });
     return () => {
       cancelled = true;
     };

@@ -57,17 +57,3 @@ export function PricesIncludeVatToggle({
     </div>
   );
 }
-
-/** Optional hint from smart paste — returns null if no signal. */
-export function inferPricesIncludeVatFromText(text: string): TaxTreatment | null {
-  const t = text.toLowerCase();
-  if (
-    /\b(including\s+vat|inclusive\s+of\s+vat|vat\s+included|prices?\s+include\s+vat|gross\s+with\s+vat)\b/.test(t)
-  ) {
-    return "inclusive";
-  }
-  if (/\b(\+\s*vat|plus\s+vat|exclusive\s+of\s+vat|net\s+of\s+vat|excl\.?\s*vat|excluding\s+vat)\b/.test(t)) {
-    return "exclusive";
-  }
-  return null;
-}

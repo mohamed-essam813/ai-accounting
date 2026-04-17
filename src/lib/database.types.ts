@@ -277,6 +277,29 @@ export type Database = {
           },
         ]
       }
+      asset_code_sequences: {
+        Row: {
+          last_seq: number
+          tenant_id: string
+        }
+        Insert: {
+          last_seq?: number
+          tenant_id: string
+        }
+        Update: {
+          last_seq?: number
+          tenant_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "asset_code_sequences_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: true
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       attachments: {
         Row: {
           created_at: string
@@ -1066,6 +1089,8 @@ export type Database = {
       fixed_assets: {
         Row: {
           asset_account_id: string | null
+          asset_code: string | null
+          assigned_to: string | null
           category: string
           cost: number
           created_at: string
@@ -1076,9 +1101,12 @@ export type Database = {
           disposed_at: string | null
           id: string
           is_active: boolean
+          location: string | null
           name: string
           purchase_date: string
           residual_value: number
+          serial_number: string | null
+          source_bill_line_id: string | null
           source_draft_id: string | null
           source_journal_entry_id: string | null
           start_depreciation_date: string | null
@@ -1088,6 +1116,8 @@ export type Database = {
         }
         Insert: {
           asset_account_id?: string | null
+          asset_code?: string | null
+          assigned_to?: string | null
           category: string
           cost: number
           created_at?: string
@@ -1098,9 +1128,12 @@ export type Database = {
           disposed_at?: string | null
           id?: string
           is_active?: boolean
+          location?: string | null
           name: string
           purchase_date: string
           residual_value?: number
+          serial_number?: string | null
+          source_bill_line_id?: string | null
           source_draft_id?: string | null
           source_journal_entry_id?: string | null
           start_depreciation_date?: string | null
@@ -1110,6 +1143,8 @@ export type Database = {
         }
         Update: {
           asset_account_id?: string | null
+          asset_code?: string | null
+          assigned_to?: string | null
           category?: string
           cost?: number
           created_at?: string
@@ -1120,9 +1155,12 @@ export type Database = {
           disposed_at?: string | null
           id?: string
           is_active?: boolean
+          location?: string | null
           name?: string
           purchase_date?: string
           residual_value?: number
+          serial_number?: string | null
+          source_bill_line_id?: string | null
           source_draft_id?: string | null
           source_journal_entry_id?: string | null
           start_depreciation_date?: string | null
@@ -1956,6 +1994,56 @@ export type Database = {
           },
           {
             foreignKeyName: "journal_entries_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      journal_feedback: {
+        Row: {
+          ai_suggested_account_code: string
+          counterparty: string | null
+          created_at: string
+          description: string | null
+          id: string
+          journal_entry_id: string
+          line_id: string
+          tenant_id: string
+          transaction_type: string
+          user_chosen_account_code: string
+          user_id: string
+        }
+        Insert: {
+          ai_suggested_account_code: string
+          counterparty?: string | null
+          created_at?: string
+          description?: string | null
+          id?: string
+          journal_entry_id: string
+          line_id: string
+          tenant_id: string
+          transaction_type: string
+          user_chosen_account_code: string
+          user_id: string
+        }
+        Update: {
+          ai_suggested_account_code?: string
+          counterparty?: string | null
+          created_at?: string
+          description?: string | null
+          id?: string
+          journal_entry_id?: string
+          line_id?: string
+          tenant_id?: string
+          transaction_type?: string
+          user_chosen_account_code?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "journal_feedback_tenant_id_fkey"
             columns: ["tenant_id"]
             isOneToOne: false
             referencedRelation: "tenants"
@@ -3203,6 +3291,10 @@ export type Database = {
           metadata: Json
           similarity: number
         }[]
+      }
+      next_asset_code: {
+        Args: { p_tenant_id: string; p_year: number }
+        Returns: string
       }
       next_document_number: {
         Args: { p_date: string; p_document_type: string; p_tenant_id: string }

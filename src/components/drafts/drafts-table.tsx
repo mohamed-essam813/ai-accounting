@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useForm, useWatch } from "react-hook-form";
@@ -37,7 +37,10 @@ import {
 } from "@/components/ui/dialog";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { getErrorMessage } from "@/lib/utils";
-import { parseBillPurchaseType } from "@/lib/drafts/bill-purchase-classification";
+import {
+  inferBillPurchaseTypeFromHeuristics,
+  resolvePurchaseTypeForBillEditForm,
+} from "@/lib/drafts/bill-purchase-classification";
 import {
   approveDraftAction,
   postDraftAction,
@@ -99,6 +102,7 @@ type DraftTableItem = {
       depreciation_method?: "straight_line";
     };
     selected_item_id?: string | null;
+    document_line_items?: Array<{ classification?: string }>;
     ai_selected_accounts?: {
       debit_account?: { existing_account_id?: string };
     };
@@ -675,7 +679,11 @@ function findAccountOption(accounts: Account[], id: string | undefined): Account
   return a ? { id: a.id, name: a.name, code: a.code, type: a.type } : null;
 }
 
-function getDefaultValues(draft: DraftTableItem, accounts: Account[]): DraftEditFormValues {
+function getDefaultValues(
+  draft: DraftTableItem,
+  accounts: Account[],
+  purchaseTypeOverride?: "expense" | "inventory" | "asset",
+): DraftEditFormValues {
   // Ensure date is valid - use today if invalid
   let defaultDate = new Date().toISOString().slice(0, 10);
   if (typeof draft.entities.date === "string") {
@@ -693,7 +701,9 @@ function getDefaultValues(draft: DraftTableItem, accounts: Account[]): DraftEdit
   const tax = draft.entities.tax as { rate?: number; amount?: number; tax_rate_id?: string } | undefined;
   const draftWithTaxTreatment = draft as DraftTableItem & { tax_treatment?: "exclusive" | "inclusive" | null };
   const ent = draft.entities as DraftTableItem["entities"];
-  const bpt = parseBillPurchaseType(ent as Record<string, unknown>);
+  const bpt =
+    purchaseTypeOverride ??
+    resolvePurchaseTypeForBillEditForm(ent as Record<string, unknown>, accounts);
   const debitId = ent.ai_selected_accounts?.debit_account?.existing_account_id;
   const fa = ent.fixed_asset_draft;
   let expense_account_id = "";
@@ -754,6 +764,51 @@ function DraftEditorDialog({
     defaultValues,
   });
 
+  const aiDetectedPurchaseType = useMemo(() => {
+    if (!draft || draft.intent !== "create_bill") return null;
+    return inferBillPurchaseTypeFromHeuristics(draft.entities as Record<string, unknown>, accounts);
+  }, [draft, accounts]);
+
+  const syncBillPurchaseSideState = useCallback(
+    (bpt: "expense" | "inventory" | "asset") => {
+      if (!draft) return;
+      const ent = draft.entities as DraftTableItem["entities"];
+      const debitId = ent.ai_selected_accounts?.debit_account?.existing_account_id;
+      if (bpt === "expense") {
+        setExpenseAccount(findAccountOption(accounts, debitId));
+        setAssetAccount(null);
+        setLineItem(null);
+      } else if (bpt === "asset") {
+        const faId = ent.fixed_asset_draft?.asset_account_id ?? debitId;
+        setAssetAccount(findAccountOption(accounts, faId));
+        setExpenseAccount(null);
+        setLineItem(null);
+      } else {
+        setExpenseAccount(null);
+        setAssetAccount(null);
+        const sid = ent.selected_item_id;
+        if (sid && typeof sid === "string") {
+          getItemPickerByIdAction(sid)
+            .then((item) => {
+              if (item) setLineItem(item);
+              else setLineItem(null);
+            })
+            .catch(() => setLineItem(null));
+        } else {
+          setLineItem(null);
+        }
+      }
+    },
+    [draft, accounts],
+  );
+
+  const handleResetToAiDetectedPurchaseType = () => {
+    if (!draft || aiDetectedPurchaseType == null || readOnly) return;
+    const vals = getDefaultValues(draft, accounts, aiDetectedPurchaseType);
+    form.reset(vals);
+    syncBillPurchaseSideState(aiDetectedPurchaseType);
+  };
+
   const intentValue = useWatch({ control: form.control, name: "intent" });
   const amountValue = useWatch({ control: form.control, name: "amount" });
   const taxRateValue = useWatch({ control: form.control, name: "tax_rate" });
@@ -799,33 +854,16 @@ function DraftEditorDialog({
     if (draft) {
       const vals = getDefaultValues(draft, accounts);
       form.reset(vals);
-      const ent = draft.entities as DraftTableItem["entities"];
-      const bpt = parseBillPurchaseType(ent as Record<string, unknown>);
-      const debitId = ent.ai_selected_accounts?.debit_account?.existing_account_id;
-      if (bpt === "expense") {
-        setExpenseAccount(findAccountOption(accounts, debitId));
-        setAssetAccount(null);
-      } else if (bpt === "asset") {
-        const faId = ent.fixed_asset_draft?.asset_account_id ?? debitId;
-        setAssetAccount(findAccountOption(accounts, faId));
-        setExpenseAccount(null);
+      const bpt = vals.bill_purchase_type;
+      if (draft.intent === "create_bill" && bpt) {
+        syncBillPurchaseSideState(bpt);
       } else {
         setExpenseAccount(null);
         setAssetAccount(null);
-      }
-      const sid = ent.selected_item_id;
-      if (bpt === "inventory" && sid && typeof sid === "string") {
-        getItemPickerByIdAction(sid)
-          .then((item) => {
-            if (item) setLineItem(item);
-            else setLineItem(null);
-          })
-          .catch(() => setLineItem(null));
-      } else {
         setLineItem(null);
       }
     }
-  }, [draft, form, accounts]);
+  }, [draft, form, accounts, syncBillPurchaseSideState]);
 
   // Hydrate legacy drafts: tax.rate but no tax_rate_id → match by percentage and set selector
   useEffect(() => {
@@ -843,10 +881,14 @@ function DraftEditorDialog({
   }, [draft, taxRates, open, form]);
 
   useEffect(() => {
-    if (intentValue === "create_bill" && !form.getValues("bill_purchase_type")) {
-      form.setValue("bill_purchase_type", "expense");
+    if (intentValue === "create_bill" && draft && !form.getValues("bill_purchase_type")) {
+      const resolved = resolvePurchaseTypeForBillEditForm(
+        draft.entities as Record<string, unknown>,
+        accounts,
+      );
+      form.setValue("bill_purchase_type", resolved);
     }
-  }, [intentValue, form]);
+  }, [intentValue, form, draft, accounts]);
 
   useEffect(() => {
     if (expenseAccount) form.setValue("expense_account_id", expenseAccount.id);
@@ -992,7 +1034,29 @@ function DraftEditorDialog({
             {intentValue === "create_bill" ? (
               <div className="space-y-4 rounded-md border bg-muted/30 p-4">
                 <div className="space-y-2">
-                  <Label>What did you purchase?</Label>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Label>What did you purchase?</Label>
+                    {aiDetectedPurchaseType ? (
+                      <Badge variant="secondary" className="text-xs font-normal">
+                        Detected:{" "}
+                        {aiDetectedPurchaseType === "expense"
+                          ? "Expense"
+                          : aiDetectedPurchaseType === "inventory"
+                            ? "Inventory"
+                            : "Fixed asset"}
+                      </Badge>
+                    ) : null}
+                  </div>
+                  {aiDetectedPurchaseType && billPurchaseType !== aiDetectedPurchaseType ? (
+                    <button
+                      type="button"
+                      className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+                      onClick={handleResetToAiDetectedPurchaseType}
+                      disabled={readOnly}
+                    >
+                      Manually overridden — reset to AI suggestion
+                    </button>
+                  ) : null}
                   <div className="grid gap-2 sm:grid-cols-3">
                     {(["expense", "inventory", "asset"] as const).map((id) => (
                       <Button
