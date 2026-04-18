@@ -9,19 +9,22 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { inviteUserAction } from "@/lib/actions/users";
 import { toast } from "sonner";
+import { roleLabels, type AppRole } from "@/lib/auth";
 
 const schema = z.object({
   email: z.string().email(),
-  role: z.enum(["admin", "accountant", "business_user", "auditor"]),
+  role: z.enum(["bookkeeper", "accountant", "admin", "super_admin"]),
 });
 
 type FormValues = z.infer<typeof schema>;
+
+const roleOptions: AppRole[] = ["bookkeeper", "accountant", "admin", "super_admin"];
 
 export function UserInviteForm() {
   const [isPending, startTransition] = useTransition();
   const form = useForm<FormValues>({
     resolver: zodResolver(schema),
-    defaultValues: { email: "", role: "business_user" },
+    defaultValues: { email: "", role: "bookkeeper" },
   });
 
   const onSubmit = (values: FormValues) => {
@@ -58,10 +61,11 @@ export function UserInviteForm() {
             <SelectValue placeholder="Select role" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="admin">Admin</SelectItem>
-            <SelectItem value="accountant">Accountant</SelectItem>
-            <SelectItem value="business_user">Business User</SelectItem>
-            <SelectItem value="auditor">Auditor</SelectItem>
+            {roleOptions.map((r) => (
+              <SelectItem key={r} value={r}>
+                {roleLabels[r]}
+              </SelectItem>
+            ))}
           </SelectContent>
         </Select>
       </div>
@@ -73,4 +77,3 @@ export function UserInviteForm() {
     </form>
   );
 }
-

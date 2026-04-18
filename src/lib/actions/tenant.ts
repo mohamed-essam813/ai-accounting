@@ -51,6 +51,7 @@ export async function updateTenantProfileAction(input: z.infer<typeof TenantSche
   await auditTable.insert([auditData]);
 
   revalidatePath("/settings/tenant");
+  revalidatePath("/settings");
   revalidatePath("/dashboard");
 }
 
@@ -108,6 +109,7 @@ export async function updateTenantBaseCurrencyAction(
   await auditTable.insert([auditData]);
 
   revalidatePath("/settings/tenant");
+  revalidatePath("/settings");
   revalidatePath("/dashboard");
   revalidatePath("/reports");
   revalidatePath("/ledger");
@@ -161,6 +163,7 @@ export async function updateAccountingPeriodCloseAction(
   await auditTable.insert([auditData]);
 
   revalidatePath("/settings/tenant");
+  revalidatePath("/settings");
   revalidatePath("/timeline");
 }
 
@@ -216,5 +219,6 @@ export async function updateTenantCompanyDetailsAction(
   ]);
 
   revalidatePath("/settings/tenant");
+  revalidatePath("/settings");
 }
 

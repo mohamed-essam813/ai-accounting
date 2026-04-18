@@ -11,7 +11,7 @@ import { createContactFromPickerAction } from "@/lib/actions/guided-drafts";
 import { dedupeEntitiesForDisplay, normalizeEntityName } from "@/lib/utils/entity-dedupe";
 import { toast } from "sonner";
 
-export type ContactOption = { id: string; name: string; type: string };
+export type ContactOption = { id: string; name: string; is_customer: boolean; is_vendor: boolean };
 
 type Props = {
   id?: string;
@@ -45,8 +45,6 @@ export function ContactCombobox({
         contacts.map((c) => ({ ...c }) as unknown as Record<string, unknown>),
         {
           idKey: "id",
-          nameKey: "name",
-          scopeKey: "type",
           entityLabel: "contact-combobox",
         },
       ) as ContactOption[],
@@ -56,7 +54,7 @@ export function ContactCombobox({
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     const roleOk = (c: ContactOption) =>
-      kind === "customer" ? c.type === "customer" : c.type === "vendor";
+      kind === "customer" ? c.is_customer : c.is_vendor;
     if (!q) return contactsForUi.filter(roleOk);
     return contactsForUi.filter((c) => c.name.toLowerCase().includes(q) && roleOk(c));
   }, [contactsForUi, query, kind]);
@@ -78,7 +76,12 @@ export function ContactCombobox({
       const row = await createContactFromPickerAction(name, kind);
       toast.success(kind === "customer" ? "Customer added" : "Supplier added");
       await onContactsRefresh();
-      onChange({ id: row.id, name: row.name, type: row.type });
+      onChange({
+        id: row.id,
+        name: row.name,
+        is_customer: row.is_customer,
+        is_vendor: row.is_vendor,
+      });
       setOpen(false);
       setQuery("");
     } catch (e) {

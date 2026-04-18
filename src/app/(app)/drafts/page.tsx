@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { listDrafts } from "@/lib/data/drafts";
 import { listAccounts } from "@/lib/data/accounts";
 import { DraftsPageClient } from "@/components/drafts/drafts-page-client";
@@ -86,15 +87,17 @@ export default async function DraftsPage({
     : drafts;
 
   return (
-    <DraftsPageClient
-      key={displayCurrency}
-      drafts={convertedDrafts}
-      accounts={accounts as Account[]}
-      userRole={user?.role ?? null}
-      displayCurrency={displayCurrency}
-      baseCurrency={baseCurrency}
-      currencies={[]}
-    />
+    <Suspense fallback={<div className="p-6 text-sm text-muted-foreground">Loading drafts…</div>}>
+      <DraftsPageClient
+        key={displayCurrency}
+        drafts={convertedDrafts}
+        accounts={accounts as Account[]}
+        userRole={user?.role ?? null}
+        displayCurrency={displayCurrency}
+        baseCurrency={baseCurrency}
+        currencies={[]}
+      />
+    </Suspense>
   );
 }
 

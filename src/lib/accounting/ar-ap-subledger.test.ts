@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   accountIsArOrAp,
+  accountMatchesContactStatementRoles,
   accountMatchesContactStatementType,
   subledgerContactIdForLine,
 } from "./ar-ap-subledger";
@@ -21,6 +22,21 @@ describe("ar-ap-subledger", () => {
     ).toBe(false);
     expect(
       accountMatchesContactStatementType("customer", { prd_account_kind: null, code: "1100" }),
+    ).toBe(true);
+  });
+
+  it("matches multi-role contact to AR and AP separately", () => {
+    expect(
+      accountMatchesContactStatementRoles(
+        { is_customer: true, is_vendor: true },
+        { prd_account_kind: "accounts_receivable", code: "1100" },
+      ),
+    ).toBe(true);
+    expect(
+      accountMatchesContactStatementRoles(
+        { is_customer: true, is_vendor: true },
+        { prd_account_kind: "accounts_payable", code: "2000" },
+      ),
     ).toBe(true);
   });
 

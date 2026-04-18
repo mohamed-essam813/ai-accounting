@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useForm, useWatch } from "react-hook-form";
 import { z } from "zod";
@@ -42,15 +42,22 @@ import {
   resolvePurchaseTypeForBillEditForm,
 } from "@/lib/drafts/bill-purchase-classification";
 import {
+  pickBillDebitAccountIdFromPreview,
+  readAssetFieldsFromDocumentLines,
+  type PreviewJournalLine,
+} from "@/lib/drafts/draft-edit-defaults";
+import {
   approveDraftAction,
   postDraftAction,
   updateDraftAction,
   deleteDraftAction,
   convertPostedToDraftAction,
+  getDraftJournalPreview,
 } from "@/lib/actions/drafts";
 import { PromptIntentEnum } from "@/lib/ai/schema";
 import { toast } from "sonner";
 import { JournalPreview } from "./journal-preview";
+import { DraftEditStoreProvider } from "@/contexts/draft-edit-store";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { Database } from "@/lib/database.types";
 import { listTaxRatesAction, type TaxRate } from "@/lib/actions/tax-rates";
@@ -102,7 +109,8 @@ type DraftTableItem = {
       depreciation_method?: "straight_line";
     };
     selected_item_id?: string | null;
-    document_line_items?: Array<{ classification?: string }>;
+    document_line_items?: Array<{ classification?: string; asset?: { name?: string; category?: string; useful_life_years?: number } }>;
+    inventory_line_items?: Array<{ quantity?: number; unit_price?: number; rate?: number }>;
     ai_selected_accounts?: {
       debit_account?: { existing_account_id?: string };
     };
@@ -118,6 +126,7 @@ type DraftTableProps = {
 
 export function DraftsTable({ drafts, accounts = [], userRole, displayCurrency }: DraftTableProps) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const queryClient = useQueryClient();
   const [isPending, startTransition] = useTransition();
   const [postingDraftId, setPostingDraftId] = useState<string | null>(null);
@@ -132,6 +141,16 @@ export function DraftsTable({ drafts, accounts = [], userRole, displayCurrency }
   useEffect(() => {
     setLocalDrafts(drafts);
   }, [drafts]);
+
+  useEffect(() => {
+    const id = searchParams.get("openDraft");
+    if (!id) return;
+    const d = localDrafts.find((x) => x.id === id);
+    if (d) {
+      setEditorDraft(d);
+      setIsEditorOpen(true);
+    }
+  }, [searchParams, localDrafts]);
 
   const canDelete = (d: DraftTableItem) => d.status !== "posted" && canApprove(userRole as UserRole);
   const canConvertToDraft = (d: DraftTableItem) =>
@@ -683,6 +702,7 @@ function getDefaultValues(
   draft: DraftTableItem,
   accounts: Account[],
   purchaseTypeOverride?: "expense" | "inventory" | "asset",
+  journalPreview?: { journalLines: PreviewJournalLine[] } | null,
 ): DraftEditFormValues {
   // Ensure date is valid - use today if invalid
   let defaultDate = new Date().toISOString().slice(0, 10);
@@ -701,17 +721,42 @@ function getDefaultValues(
   const tax = draft.entities.tax as { rate?: number; amount?: number; tax_rate_id?: string } | undefined;
   const draftWithTaxTreatment = draft as DraftTableItem & { tax_treatment?: "exclusive" | "inclusive" | null };
   const ent = draft.entities as DraftTableItem["entities"];
+  const dataRaw = ent as Record<string, unknown>;
   const bpt =
     purchaseTypeOverride ??
-    resolvePurchaseTypeForBillEditForm(ent as Record<string, unknown>, accounts);
+    resolvePurchaseTypeForBillEditForm(dataRaw, accounts);
   const debitId = ent.ai_selected_accounts?.debit_account?.existing_account_id;
   const fa = ent.fixed_asset_draft;
+  const assetFromDoc = readAssetFieldsFromDocumentLines(dataRaw);
+  const previewDebitId =
+    draft.intent === "create_bill" && journalPreview?.journalLines?.length
+      ? pickBillDebitAccountIdFromPreview(bpt, journalPreview.journalLines, accounts)
+      : null;
   let expense_account_id = "";
   let asset_account_id = "";
-  if (bpt === "expense" && debitId) expense_account_id = debitId;
-  if (bpt === "asset") {
-    asset_account_id = fa?.asset_account_id ?? debitId ?? "";
+  if (bpt === "expense") {
+    expense_account_id = previewDebitId ?? (debitId ?? "");
   }
+  if (bpt === "asset") {
+    asset_account_id = previewDebitId ?? fa?.asset_account_id ?? debitId ?? "";
+  }
+  if (bpt === "inventory") {
+    /* Debit is inventory asset — expense selector unused */
+    expense_account_id = "";
+  }
+
+  const assetName =
+    fa?.name?.trim() ||
+    assetFromDoc?.name ||
+    (typeof ent.description === "string" ? ent.description : "") ||
+    "";
+  const assetCategory =
+    fa?.category?.trim() || assetFromDoc?.category || (bpt === "asset" ? "Equipment" : "");
+  const docAsset = dataRaw.document_line_items as
+    | Array<{ classification?: string; asset?: { useful_life_years?: number } }>
+    | undefined;
+  const assetLine = docAsset?.find((l) => l.classification === "asset" && l.asset);
+  const usefulFromDoc = assetLine?.asset?.useful_life_years;
 
   return {
     intent: (draft.intent as DraftEditFormValues["intent"]) ?? "create_invoice",
@@ -728,10 +773,10 @@ function getDefaultValues(
     tax_treatment: (draftWithTaxTreatment.tax_treatment as "exclusive" | "inclusive") ?? "exclusive",
     bill_purchase_type: draft.intent === "create_bill" ? bpt : undefined,
     expense_account_id: draft.intent === "create_bill" ? expense_account_id : undefined,
-    asset_name: fa?.name ?? "",
-    asset_category: fa?.category ?? "Equipment",
+    asset_name: assetName,
+    asset_category: assetCategory,
     asset_account_id: draft.intent === "create_bill" ? asset_account_id : undefined,
-    useful_life_years: fa?.useful_life_years ?? 3,
+    useful_life_years: fa?.useful_life_years ?? usefulFromDoc ?? 3,
     depreciation_method: "straight_line",
   };
 }
@@ -770,16 +815,22 @@ function DraftEditorDialog({
   }, [draft, accounts]);
 
   const syncBillPurchaseSideState = useCallback(
-    (bpt: "expense" | "inventory" | "asset") => {
+    (
+      bpt: "expense" | "inventory" | "asset",
+      overrides?: { expense_account_id?: string; asset_account_id?: string },
+    ) => {
       if (!draft) return;
       const ent = draft.entities as DraftTableItem["entities"];
       const debitId = ent.ai_selected_accounts?.debit_account?.existing_account_id;
       if (bpt === "expense") {
-        setExpenseAccount(findAccountOption(accounts, debitId));
+        setExpenseAccount(
+          findAccountOption(accounts, overrides?.expense_account_id ?? debitId),
+        );
         setAssetAccount(null);
         setLineItem(null);
       } else if (bpt === "asset") {
-        const faId = ent.fixed_asset_draft?.asset_account_id ?? debitId;
+        const faId =
+          overrides?.asset_account_id ?? ent.fixed_asset_draft?.asset_account_id ?? debitId;
         setAssetAccount(findAccountOption(accounts, faId));
         setExpenseAccount(null);
         setLineItem(null);
@@ -804,9 +855,23 @@ function DraftEditorDialog({
 
   const handleResetToAiDetectedPurchaseType = () => {
     if (!draft || aiDetectedPurchaseType == null || readOnly) return;
-    const vals = getDefaultValues(draft, accounts, aiDetectedPurchaseType);
-    form.reset(vals);
-    syncBillPurchaseSideState(aiDetectedPurchaseType);
+    getDraftJournalPreview(draft.id)
+      .then((preview) => {
+        const vals = getDefaultValues(draft, accounts, aiDetectedPurchaseType, preview);
+        form.reset(vals);
+        syncBillPurchaseSideState(aiDetectedPurchaseType, {
+          expense_account_id: vals.expense_account_id,
+          asset_account_id: vals.asset_account_id,
+        });
+      })
+      .catch(() => {
+        const vals = getDefaultValues(draft, accounts, aiDetectedPurchaseType);
+        form.reset(vals);
+        syncBillPurchaseSideState(aiDetectedPurchaseType, {
+          expense_account_id: vals.expense_account_id,
+          asset_account_id: vals.asset_account_id,
+        });
+      });
   };
 
   const intentValue = useWatch({ control: form.control, name: "intent" });
@@ -851,19 +916,48 @@ function DraftEditorDialog({
   }, [taxRateValue, amountValue, taxRates, taxTreatmentValue, form]);
 
   useEffect(() => {
-    if (draft) {
+    if (!draft || !open) return;
+
+    if (draft.intent !== "create_bill") {
       const vals = getDefaultValues(draft, accounts);
       form.reset(vals);
-      const bpt = vals.bill_purchase_type;
-      if (draft.intent === "create_bill" && bpt) {
-        syncBillPurchaseSideState(bpt);
-      } else {
-        setExpenseAccount(null);
-        setAssetAccount(null);
-        setLineItem(null);
-      }
+      setExpenseAccount(null);
+      setAssetAccount(null);
+      setLineItem(null);
+      return;
     }
-  }, [draft, form, accounts, syncBillPurchaseSideState]);
+
+    let cancelled = false;
+    getDraftJournalPreview(draft.id)
+      .then((preview) => {
+        if (cancelled) return;
+        const vals = getDefaultValues(draft, accounts, undefined, preview);
+        form.reset(vals);
+        const bpt = vals.bill_purchase_type;
+        if (bpt) {
+          syncBillPurchaseSideState(bpt, {
+            expense_account_id: vals.expense_account_id,
+            asset_account_id: vals.asset_account_id,
+          });
+        }
+      })
+      .catch(() => {
+        if (cancelled) return;
+        const vals = getDefaultValues(draft, accounts);
+        form.reset(vals);
+        const bpt = vals.bill_purchase_type;
+        if (bpt) {
+          syncBillPurchaseSideState(bpt, {
+            expense_account_id: vals.expense_account_id,
+            asset_account_id: vals.asset_account_id,
+          });
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [draft?.id, draft?.intent, open, accounts, form, syncBillPurchaseSideState]);
 
   // Hydrate legacy drafts: tax.rate but no tax_rate_id → match by percentage and set selector
   useEffect(() => {
@@ -986,6 +1080,7 @@ function DraftEditorDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[90vh] w-full min-w-0 max-w-[min(1100px,calc(100vw-2rem))] overflow-y-auto overflow-x-hidden sm:max-w-[min(1100px,calc(100vw-2rem))]">
+        <DraftEditStoreProvider draftId={draft?.id ?? null} open={open}>
         <DialogHeader>
           <DialogTitle>{readOnly ? "View Draft" : "Edit Draft"}</DialogTitle>
           <DialogDescription>
@@ -1070,6 +1165,26 @@ function DraftEditorDialog({
                           if (id !== "expense") setExpenseAccount(null);
                           if (id !== "asset") setAssetAccount(null);
                           if (id !== "inventory") setLineItem(null);
+                          if (!draft) return;
+                          getDraftJournalPreview(draft.id)
+                            .then((preview) => {
+                              const vals = getDefaultValues(draft, accounts, id, preview);
+                              if (id === "expense")
+                                form.setValue("expense_account_id", vals.expense_account_id ?? "");
+                              if (id === "asset") {
+                                form.setValue("asset_account_id", vals.asset_account_id ?? "");
+                                form.setValue("asset_name", vals.asset_name ?? "");
+                                form.setValue("asset_category", vals.asset_category ?? "");
+                                form.setValue("useful_life_years", vals.useful_life_years ?? 3);
+                              }
+                              syncBillPurchaseSideState(id, {
+                                expense_account_id: vals.expense_account_id,
+                                asset_account_id: vals.asset_account_id,
+                              });
+                            })
+                            .catch(() => {
+                              syncBillPurchaseSideState(id);
+                            });
                         }}
                       >
                         {id === "expense" ? "Expense" : id === "inventory" ? "Inventory" : "Asset"}
@@ -1099,6 +1214,7 @@ function DraftEditorDialog({
                 ) : null}
                 {billPurchaseType === "inventory" ? (
                   <SmartItemSelector
+                    pickerMode="inventory_stock"
                     taxRates={taxRates}
                     value={lineItem}
                     onChange={setLineItem}
@@ -1389,6 +1505,7 @@ function DraftEditorDialog({
             </TabsContent>
           </Tabs>
         ) : null}
+        </DraftEditStoreProvider>
       </DialogContent>
     </Dialog>
   );

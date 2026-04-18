@@ -180,18 +180,21 @@ const PaymentOutSchema = z.object({
 });
 
 export async function listContactsForPickerAction(): Promise<
-  { id: string; name: string; type: string }[]
+  { id: string; name: string; is_customer: boolean; is_vendor: boolean }[]
 > {
   const user = await getCurrentUser();
   if (!user?.tenant) return [];
   const contacts = await listContacts();
-  const mapped = contacts.map((c) => ({ id: c.id, name: c.name, type: c.type }));
+  const mapped = contacts.map((c) => ({
+    id: c.id,
+    name: c.name,
+    is_customer: c.is_customer,
+    is_vendor: c.is_vendor,
+  }));
   return dedupeEntitiesForDisplay(mapped as Record<string, unknown>[], {
     idKey: "id",
-    nameKey: "name",
-    scopeKey: "type",
     entityLabel: "contacts-picker",
-  }) as { id: string; name: string; type: string }[];
+  }) as { id: string; name: string; is_customer: boolean; is_vendor: boolean }[];
 }
 
 export async function listBankAccountsForPickerAction(): Promise<
@@ -240,7 +243,7 @@ export async function createContactFromPickerAction(
     name.trim(),
     kind === "customer" ? "customer" : "vendor",
   );
-  return { id: row.id, name: row.name, type: row.type };
+  return { id: row.id, name: row.name, is_customer: row.is_customer, is_vendor: row.is_vendor };
 }
 
 /** Unit cost for margin preview (balance average; actual COGS at post uses FIFO / weighted average). */

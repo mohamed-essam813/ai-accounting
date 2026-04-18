@@ -11,7 +11,11 @@ import { getJournalLedger } from "@/lib/data/reports";
 import { listAccounts } from "@/lib/data/accounts";
 import { CurrencyFilter } from "@/components/filters/currency-filter";
 import { ExportButtons } from "@/components/reports/export-buttons";
-import { LedgerTableClient } from "@/components/ledger/ledger-table-client";
+import {
+  LedgerTableClient,
+  type LedgerEntryAllAccounts,
+  type LedgerEntrySingle,
+} from "@/components/ledger/ledger-table-client";
 import { SearchableAccountSelector } from "@/components/ledger/searchable-account-selector";
 import { convertCurrency, getTenantBaseCurrency } from "@/lib/utils/currency-conversion";
 import { normaliseCurrencyCode } from "@/lib/currencies";
@@ -25,8 +29,23 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Info } from "lucide-react";
 
 export const revalidate = 60;
+
+/** Deterministic GL line order for running balance and exports. */
+function sortLedgerLines<T extends { date: string; entry_id?: string; line_id?: string }>(
+  entries: T[],
+): T[] {
+  return [...entries].sort((a, b) => {
+    const dateCmp = String(a.date).localeCompare(String(b.date));
+    if (dateCmp !== 0) return dateCmp;
+    const eCmp = String(a.entry_id ?? "").localeCompare(String(b.entry_id ?? ""));
+    if (eCmp !== 0) return eCmp;
+    return String(a.line_id ?? "").localeCompare(String(b.line_id ?? ""));
+  });
+}
 
 export default async function LedgerPage({
   searchParams,
@@ -60,10 +79,12 @@ export default async function LedgerPage({
     ? accounts.find((acc) => acc.code === params.accountCode)
     : null;
 
+  const sortedLedger = sortLedgerLines(filteredLedger);
+
   // Convert amounts if targetCurrency is provided
   const convertedLedger = targetCurrency && user?.tenant
     ? await Promise.all(
-        filteredLedger.map(async (entry) => {
+        sortedLedger.map(async (entry) => {
           const currencyInfo = (entry as { _currencyInfo?: { baseCurrency?: string; date?: string } })._currencyInfo;
           const baseCurrency = currencyInfo?.baseCurrency || await getTenantBaseCurrency(user.tenant!.id);
           const transactionDate = currencyInfo?.date || entry.date;
@@ -103,24 +124,64 @@ export default async function LedgerPage({
           }
         }),
       )
-    : filteredLedger;
+    : sortedLedger;
 
-  // Calculate running balance - use reduce to avoid reassignment in map
-  const ledgerWithBalance = convertedLedger.reduce((acc, entry, index) => {
-    const amount = Number(entry.debit ?? 0) - Number(entry.credit ?? 0);
-    const previousBalance = acc.length > 0 ? acc[acc.length - 1].runningBalance : 0;
-    const runningBalance = previousBalance + amount;
-    
-    acc.push({
-      ...entry,
-      amount,
-      runningBalance,
-      // Create unique key: use line_id if available, otherwise use composite key with index
-      uniqueKey: (entry as { line_id?: string }).line_id || `${entry.entry_id}-${entry.account_code}-${index}`,
-    });
-    
-    return acc;
-  }, [] as Array<typeof convertedLedger[0] & { amount: number; runningBalance: number; uniqueKey: string }>);
+  const orderedLedger = sortLedgerLines(convertedLedger);
+
+  const isSingleAccount = Boolean(params.accountCode);
+
+  // Per-account running balance (debit − credit), date ascending; meaningless across mixed accounts.
+  const ledgerWithBalance = isSingleAccount
+    ? orderedLedger.reduce(
+        (acc, entry, index) => {
+          const amount = Number(entry.debit ?? 0) - Number(entry.credit ?? 0);
+          const previousBalance = acc.length > 0 ? acc[acc.length - 1].runningBalance : 0;
+          const runningBalance = previousBalance + amount;
+          acc.push({
+            ...entry,
+            amount,
+            runningBalance,
+            uniqueKey:
+              (entry as { line_id?: string }).line_id ||
+              `${entry.entry_id}-${entry.account_code}-${index}`,
+          });
+          return acc;
+        },
+        [] as Array<
+          (typeof orderedLedger)[0] & {
+            amount: number;
+            runningBalance: number;
+            uniqueKey: string;
+          }
+        >,
+      )
+    : orderedLedger.reduce(
+        (acc, entry, index) => {
+          const d = Number(entry.debit ?? 0);
+          const c = Number(entry.credit ?? 0);
+          const prev = acc[acc.length - 1];
+          const debitRunningTotal = (prev?.debitRunningTotal ?? 0) + d;
+          const creditRunningTotal = (prev?.creditRunningTotal ?? 0) + c;
+          acc.push({
+            ...entry,
+            amount: d - c,
+            debitRunningTotal,
+            creditRunningTotal,
+            uniqueKey:
+              (entry as { line_id?: string }).line_id ||
+              `${entry.entry_id}-${entry.account_code}-${index}`,
+          });
+          return acc;
+        },
+        [] as Array<
+          (typeof orderedLedger)[0] & {
+            amount: number;
+            debitRunningTotal: number;
+            creditRunningTotal: number;
+            uniqueKey: string;
+          }
+        >,
+      );
 
   // Build breadcrumb based on context
   const breadcrumbItems = [
@@ -177,6 +238,17 @@ export default async function LedgerPage({
           <CurrencyFilter initialCurrency={currency} baseCurrency={baseCurrency} currencies={[]} />
         </div>
       </div>
+
+      {!account && (
+        <Alert>
+          <Info className="h-4 w-4" />
+          <AlertTitle>Running balance</AlertTitle>
+          <AlertDescription>
+            Select a specific account to see a running balance (cumulative debit minus credit for that
+            account only). All accounts view shows cumulative debit and credit totals instead.
+          </AlertDescription>
+        </Alert>
+      )}
       </div>
 
       {account && (
@@ -219,23 +291,66 @@ export default async function LedgerPage({
             <ExportButtons
               data={{
                 title: account ? `Ledger-${account.code}-${account.name.replace(/\s+/g, "-")}` : "General-Ledger",
-                headers: ["Date", "Description", "Account Code", "Account Name", "Debit", "Credit", "Balance", "Memo"],
-                rows: ledgerWithBalance.map((entry) => [
-                  entry.date,
-                  entry.description,
-                  entry.account_code,
-                  entry.account_name,
-                  Number(entry.debit ?? 0),
-                  Number(entry.credit ?? 0),
-                  entry.runningBalance,
-                  entry.memo ?? "",
-                ]),
+                headers: isSingleAccount
+                  ? ["Date", "Description", "Account Code", "Account Name", "Debit", "Credit", "Balance", "Memo"]
+                  : [
+                      "Date",
+                      "Description",
+                      "Account Code",
+                      "Account Name",
+                      "Debit",
+                      "Credit",
+                      "Debit total (cumulative)",
+                      "Credit total (cumulative)",
+                      "Memo",
+                    ],
+                rows: isSingleAccount
+                  ? (ledgerWithBalance as Array<{ runningBalance: number } & (typeof ledgerWithBalance)[0]>).map(
+                      (entry) => [
+                        entry.date,
+                        entry.description,
+                        entry.account_code,
+                        entry.account_name,
+                        Number(entry.debit ?? 0),
+                        Number(entry.credit ?? 0),
+                        entry.runningBalance,
+                        entry.memo ?? "",
+                      ],
+                    )
+                  : (
+                      ledgerWithBalance as Array<{
+                        debitRunningTotal: number;
+                        creditRunningTotal: number;
+                      } & (typeof ledgerWithBalance)[0]>
+                    ).map((entry) => [
+                      entry.date,
+                      entry.description,
+                      entry.account_code,
+                      entry.account_name,
+                      Number(entry.debit ?? 0),
+                      Number(entry.credit ?? 0),
+                      entry.debitRunningTotal,
+                      entry.creditRunningTotal,
+                      entry.memo ?? "",
+                    ]),
               }}
             />
           )}
         </CardHeader>
         <CardContent className="ledger-container flex min-h-0 flex-1 flex-col overflow-hidden px-0 pb-0 pt-0">
-          <LedgerTableClient entries={ledgerWithBalance} displayCurrency={targetCurrency ?? baseCurrency} />
+          {isSingleAccount ? (
+            <LedgerTableClient
+              variant="single-account"
+              entries={ledgerWithBalance as LedgerEntrySingle[]}
+              displayCurrency={targetCurrency ?? baseCurrency}
+            />
+          ) : (
+            <LedgerTableClient
+              variant="all-accounts"
+              entries={ledgerWithBalance as LedgerEntryAllAccounts[]}
+              displayCurrency={targetCurrency ?? baseCurrency}
+            />
+          )}
         </CardContent>
       </Card>
     </div>

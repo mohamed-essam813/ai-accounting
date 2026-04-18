@@ -35,6 +35,7 @@ function billTaxFromItemOrInherit(
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export function MultiLineSupplierBillForm({
+  capitalizationThresholdAed,
   contacts,
   onRefreshContacts,
   onRefreshAccounts,
@@ -44,6 +45,7 @@ export function MultiLineSupplierBillForm({
   startTransition,
   onDraftCreated,
 }: {
+  capitalizationThresholdAed: number;
   contacts: ContactOption[];
   onRefreshContacts: () => Promise<void>;
   onRefreshAccounts?: () => Promise<void>;
@@ -243,8 +245,9 @@ export function MultiLineSupplierBillForm({
     <div className="space-y-4 rounded-lg border bg-muted/20 p-4">
       <h3 className="text-sm font-medium">Supplier bill</h3>
       <p className="text-xs text-muted-foreground">
-        Add one or more lines — inventory, expense, or fixed asset — in one bill. Tax is chosen per line and new lines
-        inherit from the line above.
+        Add one or more lines — inventory, expense, or fixed asset — in one bill. Capital items at or above{" "}
+        {formatCurrency(capitalizationThresholdAed)} (your company capitalization threshold in Settings) are typically
+        classified as fixed assets. Tax is chosen per line and new lines inherit from the line above.
       </p>
 
       <div className="grid gap-4 sm:grid-cols-2">

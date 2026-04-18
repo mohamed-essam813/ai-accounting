@@ -35,7 +35,8 @@ import type { UserRole } from "@/lib/auth";
 
 export type AiJournalLine = {
   account_code: string;
-  account_name: string;
+  /** Model output only — never shown or persisted; CoA name wins after code resolution. */
+  account_name?: string;
   debit: number;
   credit: number;
   memo?: string;
@@ -155,7 +156,7 @@ function initLines(aiLines: AiJournalLine[], byCode: Map<string, CoAAccount>): E
       id: uid(),
       ai_account_code: l.account_code,
       ai_account_id: account?.id ?? null,
-      ai_account_name: l.account_name,
+      ai_account_name: account?.name ?? null,
       ai_debit: l.debit,
       ai_credit: l.credit,
       ai_memo: l.memo ?? "",
@@ -497,7 +498,7 @@ export function JournalEntryEditor({
     (): JournalLine[] =>
       lines.map((l) => ({
         account_code: l.account?.code ?? "",
-        account_name: l.account?.name ?? l.ai_account_name ?? "",
+        account_name: l.account?.name ?? "",
         debit: parseAmt(l.debit),
         credit: parseAmt(l.credit),
         memo: l.memo,

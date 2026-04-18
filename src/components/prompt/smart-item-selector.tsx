@@ -48,6 +48,8 @@ type Props = {
   /** Shown below the label when `uxMode` is `expense_line` and the picker is visible */
   expenseLineHelperText?: string;
   uxMode?: SmartItemSelectorUxMode;
+  /** Stock purchase / product invoice lines: only inventory-tracked products (no services). */
+  pickerMode?: "all" | "inventory_stock";
   taxRates: TaxRate[];
   value: BusinessItem | null;
   onChange: (item: BusinessItem | null) => void;
@@ -61,6 +63,7 @@ export function SmartItemSelector({
   label,
   expenseLineHelperText = DEFAULT_EXPENSE_HELPER,
   uxMode = "default",
+  pickerMode = "all",
   taxRates,
   value,
   onChange,
@@ -76,17 +79,22 @@ export function SmartItemSelector({
   const [results, setResults] = useState<BusinessItem[]>([]);
   const [createKind, setCreateKind] = useState<"product" | "service" | null>(null);
 
-  const runSearch = useCallback(async (q: string) => {
-    setLoading(true);
-    try {
-      const list = await searchItemsPickerAction(q);
-      setResults(list);
-    } catch (e) {
-      toast.error(getErrorMessage(e, "Could not search items."));
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const runSearch = useCallback(
+    async (q: string) => {
+      setLoading(true);
+      try {
+        const list = await searchItemsPickerAction(q, {
+          inventoryStockProductsOnly: pickerMode === "inventory_stock",
+        });
+        setResults(list);
+      } catch (e) {
+        toast.error(getErrorMessage(e, "Could not search items."));
+      } finally {
+        setLoading(false);
+      }
+    },
+    [pickerMode],
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -196,19 +204,21 @@ export function SmartItemSelector({
                 <Package className="h-4 w-4" />
                 Create new product
               </Button>
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                className="w-full justify-start gap-2"
-                onClick={() => {
-                  setCreateKind("service");
-                  setOpen(false);
-                }}
-              >
-                <Sparkles className="h-4 w-4" />
-                Create new service
-              </Button>
+              {pickerMode !== "inventory_stock" ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  className="w-full justify-start gap-2"
+                  onClick={() => {
+                    setCreateKind("service");
+                    setOpen(false);
+                  }}
+                >
+                  <Sparkles className="h-4 w-4" />
+                  Create new service
+                </Button>
+              ) : null}
             </div>
           </PopoverContent>
         </Popover>

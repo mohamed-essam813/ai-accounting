@@ -22,6 +22,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { formatDate, formatCurrency } from "@/lib/format";
+import { formatCoaAccountLabel } from "@/lib/drafts/account-display";
 import type { JournalEntryWithLines } from "@/lib/data/journals";
 import { approveJournalEntryAction, postJournalEntryAction, deleteJournalEntryAction } from "@/lib/actions/journals";
 import { canApprove, type UserRole } from "@/lib/auth";
@@ -175,7 +176,7 @@ export function JournalEntriesTable({
                         {entry.journal_lines.map((line, idx) => {
                           const account = accounts.find((a) => a.id === line.account_id);
                           const accountLabel = account
-                            ? `${account.code} ${account.name}`
+                            ? formatCoaAccountLabel(account.code, account.name)
                             : "Unknown Account";
                           return (
                             <div key={idx} className="text-xs text-muted-foreground">

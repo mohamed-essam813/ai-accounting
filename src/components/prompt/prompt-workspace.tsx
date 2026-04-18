@@ -36,7 +36,12 @@ type DraftResponse = {
   };
 };
 
-export function PromptWorkspace() {
+type PromptWorkspaceProps = {
+  /** AED — from company settings; used for fixed-asset hints and classification. */
+  capitalizationThresholdAed: number;
+};
+
+export function PromptWorkspace({ capitalizationThresholdAed }: PromptWorkspaceProps) {
   const [draftId, setDraftId] = useState<string | null>(null);
   const [draftData, setDraftData] = useState<DraftResponse | null>(null);
   const [isLoadingDraft, setIsLoadingDraft] = useState(false);
@@ -80,7 +85,10 @@ export function PromptWorkspace() {
   if (draftId && draftData && !isLoadingDraft) {
     return (
       <div className="grid gap-6 lg:grid-cols-2">
-        <GuidedEventWorkspace onDraftCreated={handleDraftCreated} />
+        <GuidedEventWorkspace
+          capitalizationThresholdAed={capitalizationThresholdAed}
+          onDraftCreated={handleDraftCreated}
+        />
         <div className="min-w-0">
           <InlineDraftReviewPanel
             draftId={draftId}
@@ -101,7 +109,10 @@ export function PromptWorkspace() {
   if (draftId && isLoadingDraft) {
     return (
       <div>
-        <GuidedEventWorkspace onDraftCreated={handleDraftCreated} />
+        <GuidedEventWorkspace
+          capitalizationThresholdAed={capitalizationThresholdAed}
+          onDraftCreated={handleDraftCreated}
+        />
         <div className="mt-4 p-4 border rounded-md bg-muted/50">
           <p className="text-sm text-muted-foreground">Loading draft preview...</p>
         </div>
@@ -109,6 +120,11 @@ export function PromptWorkspace() {
     );
   }
 
-  return <GuidedEventWorkspace onDraftCreated={handleDraftCreated} />;
+  return (
+    <GuidedEventWorkspace
+      capitalizationThresholdAed={capitalizationThresholdAed}
+      onDraftCreated={handleDraftCreated}
+    />
+  );
 }
 

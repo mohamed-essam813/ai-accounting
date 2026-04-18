@@ -7,8 +7,9 @@ import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { usePagination } from "@/hooks/use-pagination";
 import { DataTablePagination } from "@/components/ui/data-table-pagination";
+import { formatCoaAccountLabel } from "@/lib/drafts/account-display";
 
-type LedgerEntry = {
+export type LedgerEntrySingle = {
   uniqueKey: string;
   entry_id: string;
   date: string;
@@ -21,12 +22,19 @@ type LedgerEntry = {
   memo: string | null;
 };
 
-type Props = {
-  entries: LedgerEntry[];
-  displayCurrency?: string; // Currency to display amounts in
+export type LedgerEntryAllAccounts = Omit<LedgerEntrySingle, "runningBalance"> & {
+  debitRunningTotal: number;
+  creditRunningTotal: number;
 };
 
-export function LedgerTableClient({ entries, displayCurrency }: Props) {
+export type LedgerTableRow = LedgerEntrySingle | LedgerEntryAllAccounts;
+
+type Props =
+  | { variant: "single-account"; entries: LedgerEntrySingle[]; displayCurrency?: string }
+  | { variant: "all-accounts"; entries: LedgerEntryAllAccounts[]; displayCurrency?: string };
+
+export function LedgerTableClient(props: Props) {
+  const { variant, displayCurrency, entries } = props;
   const {
     currentItems: paginatedEntries,
     currentPage,
@@ -34,7 +42,7 @@ export function LedgerTableClient({ entries, displayCurrency }: Props) {
     goToPage,
     itemsPerPage,
     setItemsPerPage,
-  } = usePagination({ data: entries, itemsPerPage: 50 });
+  } = usePagination<LedgerTableRow>({ data: entries, itemsPerPage: 50 });
 
   if (entries.length === 0) {
     return (
@@ -57,52 +65,103 @@ export function LedgerTableClient({ entries, displayCurrency }: Props) {
               <TableHead className="bg-card">Account</TableHead>
               <TableHead className="text-right bg-card">Debit</TableHead>
               <TableHead className="text-right bg-card">Credit</TableHead>
-              <TableHead className="text-right bg-card">Balance</TableHead>
+              {variant === "single-account" ? (
+                <TableHead className="text-right bg-card">Balance</TableHead>
+              ) : (
+                <>
+                  <TableHead className="text-right bg-card">Debit total</TableHead>
+                  <TableHead className="text-right bg-card">Credit total</TableHead>
+                </>
+              )}
               <TableHead className="bg-card">Memo</TableHead>
               <TableHead className="w-[100px] bg-card">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {paginatedEntries.map((entry) => (
-              <TableRow key={entry.uniqueKey}>
-                <TableCell className="font-mono text-sm">
-                  {formatDate(entry.date)}
-                </TableCell>
-                <TableCell>{entry.description}</TableCell>
-                <TableCell>
-                  <div>
-                    <div className="font-medium">{entry.account_name}</div>
-                    <div className="text-xs text-muted-foreground font-mono">
-                      {entry.account_code}
-                    </div>
-                  </div>
-                </TableCell>
-                <TableCell className="text-right font-mono">
-                  {Number(entry.debit) > 0 
-                    ? formatCurrency(Number(entry.debit), displayCurrency)
-                    : "-"}
-                </TableCell>
-                <TableCell className="text-right font-mono">
-                  {Number(entry.credit) > 0 
-                    ? formatCurrency(Number(entry.credit), displayCurrency)
-                    : "-"}
-                </TableCell>
-                <TableCell className="text-right font-mono font-medium">
-                  {formatCurrency(entry.runningBalance, displayCurrency)}
-                </TableCell>
-                <TableCell className="text-sm text-muted-foreground">
-                  {entry.memo || "-"}
-                </TableCell>
-                <TableCell>
-                  <Link href={`/journals?entryId=${entry.entry_id}`}>
-                    <Button variant="ghost" size="sm" className="h-8">
-                      View
-                      <ArrowRight className="ml-1 h-3 w-3" />
-                    </Button>
-                  </Link>
-                </TableCell>
-              </TableRow>
-            ))}
+            {variant === "single-account"
+              ? paginatedEntries.map((entry) => {
+                  const row = entry as LedgerEntrySingle;
+                  return (
+                  <TableRow key={row.uniqueKey}>
+                    <TableCell className="font-mono text-sm">
+                      {formatDate(row.date)}
+                    </TableCell>
+                    <TableCell>{row.description}</TableCell>
+                    <TableCell>
+                      <div className="text-sm">
+                        {formatCoaAccountLabel(row.account_code, row.account_name)}
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-right font-mono">
+                      {Number(row.debit) > 0
+                        ? formatCurrency(Number(row.debit), displayCurrency)
+                        : "-"}
+                    </TableCell>
+                    <TableCell className="text-right font-mono">
+                      {Number(row.credit) > 0
+                        ? formatCurrency(Number(row.credit), displayCurrency)
+                        : "-"}
+                    </TableCell>
+                    <TableCell className="text-right font-mono font-medium">
+                      {formatCurrency(row.runningBalance, displayCurrency)}
+                    </TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
+                      {row.memo || "-"}
+                    </TableCell>
+                    <TableCell>
+                      <Link href={`/journals?entryId=${row.entry_id}`}>
+                        <Button variant="ghost" size="sm" className="h-8">
+                          View
+                          <ArrowRight className="ml-1 h-3 w-3" />
+                        </Button>
+                      </Link>
+                    </TableCell>
+                  </TableRow>
+                  );
+                })
+              : paginatedEntries.map((entry) => {
+                  const row = entry as LedgerEntryAllAccounts;
+                  return (
+                  <TableRow key={row.uniqueKey}>
+                    <TableCell className="font-mono text-sm">
+                      {formatDate(row.date)}
+                    </TableCell>
+                    <TableCell>{row.description}</TableCell>
+                    <TableCell>
+                      <div className="text-sm">
+                        {formatCoaAccountLabel(row.account_code, row.account_name)}
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-right font-mono">
+                      {Number(row.debit) > 0
+                        ? formatCurrency(Number(row.debit), displayCurrency)
+                        : "-"}
+                    </TableCell>
+                    <TableCell className="text-right font-mono">
+                      {Number(row.credit) > 0
+                        ? formatCurrency(Number(row.credit), displayCurrency)
+                        : "-"}
+                    </TableCell>
+                    <TableCell className="text-right font-mono font-medium">
+                      {formatCurrency(row.debitRunningTotal, displayCurrency)}
+                    </TableCell>
+                    <TableCell className="text-right font-mono font-medium">
+                      {formatCurrency(row.creditRunningTotal, displayCurrency)}
+                    </TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
+                      {row.memo || "-"}
+                    </TableCell>
+                    <TableCell>
+                      <Link href={`/journals?entryId=${row.entry_id}`}>
+                        <Button variant="ghost" size="sm" className="h-8">
+                          View
+                          <ArrowRight className="ml-1 h-3 w-3" />
+                        </Button>
+                      </Link>
+                    </TableCell>
+                  </TableRow>
+                  );
+                })}
           </TableBody>
         </Table>
       </div>

@@ -25,6 +25,8 @@ import { formatCurrency, formatDate } from "@/lib/format";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
 import type { Database } from "@/lib/database.types";
+import { formatCoaAccountLabel } from "@/lib/drafts/account-display";
+import { useDraftEditStore } from "@/contexts/draft-edit-store";
 
 type Account = Database["public"]["Tables"]["chart_of_accounts"]["Row"];
 
@@ -44,6 +46,11 @@ type JournalLine = {
 };
 
 export function JournalPreview({ draftId, editable = true, accounts: initialAccounts }: Props) {
+  const draftEditStore = useDraftEditStore();
+  const previewFromStore =
+    draftEditStore?.draftId === draftId ? draftEditStore.journalPreview : null;
+  const storeErr = draftEditStore?.draftId === draftId ? draftEditStore.previewError : null;
+
   const [preview, setPreview] = useState<Awaited<ReturnType<typeof getDraftJournalPreview>> | null>(null);
   const [accounts, setAccounts] = useState<Account[]>(initialAccounts ?? []);
   const [editingLines, setEditingLines] = useState<JournalLine[]>([]);
@@ -53,10 +60,36 @@ export function JournalPreview({ draftId, editable = true, accounts: initialAcco
   const [error, setError] = useState<string | null>(null);
   const [isSaving, startTransition] = useTransition();
 
+  const applyPreviewPayload = (
+    data: Awaited<ReturnType<typeof getDraftJournalPreview>>,
+    accs: Account[],
+  ) => {
+    setPreview(data);
+    setAccounts(accs);
+    setEditingLines(
+      data.journalLines.map((line) => ({
+        account_id: line.account_id,
+        account_code: line.account_code,
+        account_name: line.account_name,
+        debit: line.debit,
+        credit: line.credit,
+        memo: line.memo ?? "",
+      })),
+    );
+    setEditingDescription(data.description);
+  };
+
   useEffect(() => {
+    if (previewFromStore) {
+      applyPreviewPayload(previewFromStore, initialAccounts ?? []);
+      setError(storeErr);
+      setLoading(false);
+      return;
+    }
+
     let cancelled = false;
     setLoading(true);
-    setError(null);
+    setError(storeErr ?? null);
 
     Promise.all([
       getDraftJournalPreview(draftId),
@@ -64,19 +97,7 @@ export function JournalPreview({ draftId, editable = true, accounts: initialAcco
     ])
       .then(([data, accs]) => {
         if (!cancelled) {
-          setPreview(data);
-          setAccounts(accs);
-          setEditingLines(
-            data.journalLines.map((line) => ({
-              account_id: line.account_id,
-              account_code: line.account_code,
-              account_name: line.account_name,
-              debit: line.debit,
-              credit: line.credit,
-              memo: line.memo ?? "",
-            }))
-          );
-          setEditingDescription(data.description);
+          applyPreviewPayload(data, accs);
           setLoading(false);
         }
       })
@@ -90,7 +111,7 @@ export function JournalPreview({ draftId, editable = true, accounts: initialAcco
     return () => {
       cancelled = true;
     };
-  }, [draftId, initialAccounts]);
+  }, [draftId, initialAccounts, previewFromStore, storeErr]);
 
   const handleSave = () => {
     if (!preview) return;
@@ -121,18 +142,8 @@ export function JournalPreview({ draftId, editable = true, accounts: initialAcco
         setIsEditing(false);
         // Reload preview
         const data = await getDraftJournalPreview(draftId);
-        setPreview(data);
-        setEditingLines(
-          data.journalLines.map((line) => ({
-            account_id: line.account_id,
-            account_code: line.account_code,
-            account_name: line.account_name,
-            debit: line.debit,
-            credit: line.credit,
-            memo: line.memo ?? "",
-          }))
-        );
-        setEditingDescription(data.description);
+        applyPreviewPayload(data, accounts);
+        await draftEditStore?.refreshJournalPreview();
       } catch (error) {
         console.error(error);
         toast.error("Failed to update journal preview", {
@@ -220,7 +231,7 @@ export function JournalPreview({ draftId, editable = true, accounts: initialAcco
 
   const accountOptions = accounts.map((acc) => ({
     id: acc.id,
-    label: `${acc.code} · ${acc.name}`,
+    label: formatCoaAccountLabel(acc.code, acc.name),
   }));
 
   return (
@@ -318,16 +329,11 @@ export function JournalPreview({ draftId, editable = true, accounts: initialAcco
                           </SelectContent>
                         </Select>
                       ) : (
-                        <div className="min-w-0">
-                          <div className="truncate font-mono text-xs" title={line.account_code}>
-                            {line.account_code}
-                          </div>
-                          <div
-                            className="truncate text-xs text-muted-foreground"
-                            title={line.account_name}
-                          >
-                            {line.account_name}
-                          </div>
+                        <div
+                          className="min-w-0 truncate text-sm"
+                          title={formatCoaAccountLabel(line.account_code, account?.name ?? line.account_name)}
+                        >
+                          {formatCoaAccountLabel(line.account_code, account?.name ?? line.account_name)}
                         </div>
                       )}
                     </TableCell>

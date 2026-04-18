@@ -4,6 +4,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useTransition } from "react";
 import { Loader2 } from "lucide-react";
+import {
+  REPORT_DATE_STORAGE_KEY,
+  defaultDateRangeForTab,
+  type ReportTabId,
+  type StoredReportDateRanges,
+} from "@/lib/reports/report-date-defaults";
 
 type ReportsTabsProps = {
   defaultTab: string;
@@ -20,12 +26,26 @@ export function ReportsTabs({ defaultTab, children }: ReportsTabsProps) {
 
   const handleTabChange = (value: string) => {
     startTransition(() => {
+      const nextTab = value as ReportTabId;
       const params = new URLSearchParams(searchParams.toString());
       if (value !== "pnl") {
         params.set("tab", value);
       } else {
         params.delete("tab");
       }
+
+      let stored: StoredReportDateRanges = {};
+      try {
+        const raw = localStorage.getItem(REPORT_DATE_STORAGE_KEY);
+        if (raw) stored = JSON.parse(raw) as StoredReportDateRanges;
+      } catch {
+        /* ignore */
+      }
+      const saved = stored[nextTab];
+      const range = saved?.startDate && saved?.endDate ? saved : defaultDateRangeForTab(nextTab);
+      params.set("startDate", range.startDate);
+      params.set("endDate", range.endDate);
+
       router.push(`/reports/pnl?${params.toString()}`);
     });
   };

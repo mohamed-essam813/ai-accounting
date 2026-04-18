@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/database.types";
 import { round2 } from "@/lib/posting/posting-engine";
+import { computeDefaultDepreciationStart } from "@/lib/fixed-assets/useful-life";
 import type { AssetDraft } from "@/components/fixed-asset-review-panel";
 import type { DepreciationMethod } from "@/components/prompt/bill-line-editor";
 
@@ -92,6 +93,9 @@ export async function createFixedAssetFromPostedBill(
 
     const assetCode = await reserveAssetCode(supabase, tenantId, year);
 
+    const startDep = asset.start_depreciation_date
+      ? asset.start_depreciation_date
+      : computeDefaultDepreciationStart(purchaseDate);
     const insert: Database["public"]["Tables"]["fixed_assets"]["Insert"] = {
       tenant_id: tenantId,
       name: assetName,
@@ -101,10 +105,11 @@ export async function createFixedAssetFromPostedBill(
       residual_value: residualValue,
       depreciation_method: asset.depreciation_method,
       purchase_date: purchaseDate,
-      start_depreciation_date: asset.start_depreciation_date ?? purchaseDate,
+      start_depreciation_date: startDep,
       is_active: true,
       description: null,
       asset_account_id: asset.asset_account_id,
+      source_type: "vendor_bill",
       source_journal_entry_id: journalEntryId,
       source_draft_id: draftId,
       // New fields (may not be typed in generated types yet — cast via unknown)

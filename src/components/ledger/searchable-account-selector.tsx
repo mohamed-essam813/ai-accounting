@@ -146,8 +146,8 @@ export function SearchableAccountSelector({ accounts, selectedAccountCode }: Pro
           </div>
           <p className="text-xs text-muted-foreground">
             {selectedAccountCode
-              ? "Showing transactions for the selected account with running balance."
-              : "Select an account to view its general ledger with running balance, or view all accounts."}
+              ? "Showing transactions for the selected account with running balance (debit − credit, oldest first)."
+              : "All accounts: each row shows that line’s debit and credit; cumulative debit/credit totals apply across the whole register. Pick one account for a true running balance."}
           </p>
         </div>
       </CardContent>

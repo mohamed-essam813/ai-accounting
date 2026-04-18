@@ -1,5 +1,4 @@
 import type { DraftPayload } from "@/lib/ai/schema";
-import { listAccounts } from "@/lib/data/accounts";
 import { getBusinessItemById } from "@/lib/data/inventory";
 import {
   getAiSuggestedDebitFromDraftData,
@@ -57,11 +56,11 @@ export async function resolveSingleLineBillDebitForJournal(
     return { purchaseType, debitAccountId: inv, aiSuggestedDebitId };
   }
 
-  const coa = await listAccounts();
-  const fallback5000 = coa.find((a) => a.code === "5000")?.id ?? null;
-  const debitAccountId = aiSuggestedDebitId ?? fallback5000;
+  const debitAccountId = aiSuggestedDebitId;
   if (!debitAccountId) {
-    throw new Error("Choose an expense category for this supplier bill.");
+    throw new Error(
+      "Choose an expense category for this supplier bill (no AI debit account was resolved). Open the draft and pick an expense account.",
+    );
   }
   return { purchaseType, debitAccountId, aiSuggestedDebitId };
 }

@@ -1,25 +1,54 @@
-export type UserRole = "admin" | "accountant" | "business_user" | "auditor";
+import {
+  can as canPermission,
+  normalizeAppRole,
+  type AppRole,
+  type CanContext,
+  type PermissionAction,
+} from "@/lib/auth/permissions";
 
-export const roleLabels: Record<UserRole, string> = {
-  admin: "Admin",
+export type { AppRole, PermissionAction, CanContext };
+
+/** @deprecated Prefer AppRole — kept for gradual migration of components. */
+export type UserRole = AppRole;
+
+export const roleLabels: Record<AppRole, string> = {
+  bookkeeper: "Bookkeeper",
   accountant: "Accountant",
-  business_user: "Business User",
-  auditor: "Auditor",
+  admin: "Admin",
+  super_admin: "Super Admin",
 };
 
-export function canApprove(role: UserRole) {
-  return role === "admin" || role === "accountant";
+/** Central permission check — use from server actions and API routes. */
+export function can(role: string | null | undefined, action: PermissionAction, ctx?: CanContext): boolean {
+  return canPermission(role, action, ctx);
 }
 
-export function canPost(role: UserRole) {
-  return role === "admin" || role === "accountant";
+export function normalizeRole(raw: string | null | undefined): AppRole {
+  return normalizeAppRole(raw);
 }
 
-export function canManageAccounts(role: UserRole) {
-  return role === "admin";
+export function isTenantAdminRole(role: string | null | undefined): boolean {
+  const r = normalizeAppRole(role);
+  return r === "admin" || r === "super_admin";
 }
 
-export function canEditPosted(role: UserRole) {
-  return role === "admin" || role === "auditor";
+/** Legacy: approver for journals/drafts (admin, accountant, super_admin). */
+export function canApprove(role: string | null | undefined): boolean {
+  return can(role, "approve_entry");
 }
 
+/** Legacy: post to ledger. */
+export function canPost(role: string | null | undefined): boolean {
+  return can(role, "post_entry");
+}
+
+/** Company / tenant administration (settings, subscriptions, invites in legacy sense). */
+export function canManageAccounts(role: string | null | undefined): boolean {
+  return can(role, "manage_company_settings");
+}
+
+/** Posted draft convert / reverse-edit style operations (legacy naming). */
+export function canEditPosted(role: string | null | undefined): boolean {
+  const r = normalizeAppRole(role);
+  return r === "admin" || r === "super_admin" || r === "accountant";
+}

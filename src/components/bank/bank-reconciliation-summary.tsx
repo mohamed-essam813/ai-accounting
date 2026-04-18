@@ -9,6 +9,8 @@ import { Badge } from "@/components/ui/badge";
 import { formatCurrency } from "@/lib/format";
 import type { BankReconciliationSummaryData } from "@/lib/data/bank-reconciliation-summary";
 import { BankStatementBalanceParams } from "./bank-statement-balance-params";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Info } from "lucide-react";
 
 type Props = {
   summary: BankReconciliationSummaryData;
@@ -74,7 +76,7 @@ export function BankReconciliationSummary({
           <div>
             <CardTitle className="text-base">Reconciliation summary</CardTitle>
             <CardDescription>
-              Compare your bank statement to the book balance in RevenuesFlow for the same period.
+              Compare your bank statement to the book balance in this app for the same period.
             </CardDescription>
           </div>
           <Badge variant={status.variant}>{status.label}</Badge>
@@ -109,13 +111,31 @@ export function BankReconciliationSummary({
             </p>
           </div>
           <div>
-            <p className="text-xs text-muted-foreground">Book balance in RevenuesFlow</p>
-            <p className="font-medium tabular-nums">
+            <p className="text-xs text-muted-foreground">Book balance in app (GL)</p>
+            <p
+              className="font-medium tabular-nums"
+              title={`Debits ${formatCurrency(summary.bookTotalDebitAsOfPeriodEnd, currency)}, credits ${formatCurrency(summary.bookTotalCreditAsOfPeriodEnd, currency)} through ${summary.periodEnd ?? "today"} — net = debits − credits.`}
+            >
               {formatCurrency(summary.bookBalanceAsOfPeriodEnd, currency)}
             </p>
             <p className="text-[11px] text-muted-foreground mt-0.5">
-              GL balance as of {summary.periodEnd ?? "—"} (posted journals)
+              Net of posted journals to this bank account through {summary.periodEnd ?? "—"} (debits − credits). Hover for
+              components.
             </p>
+            <details className="mt-2 rounded border bg-muted/20 px-2 py-1.5 text-[11px] text-muted-foreground">
+              <summary className="cursor-pointer select-none font-medium text-foreground">Book balance reconciliation</summary>
+              <div className="mt-2 grid gap-1 tabular-nums">
+                <span>
+                  Cumulative debits: {formatCurrency(summary.bookTotalDebitAsOfPeriodEnd, currency)}
+                </span>
+                <span>
+                  Cumulative credits: {formatCurrency(summary.bookTotalCreditAsOfPeriodEnd, currency)}
+                </span>
+                <span>
+                  Net (dr − cr): {formatCurrency(summary.bookBalanceAsOfPeriodEnd, currency)} as of {summary.periodEnd ?? "—"}
+                </span>
+              </div>
+            </details>
           </div>
           {summary.bookBalanceBeforePeriod !== null ? (
             <div>
@@ -145,6 +165,17 @@ export function BankReconciliationSummary({
             </p>
           </div>
         </div>
+
+        {summary.bookBalanceAsOfPeriodEnd < -10 && (
+          <Alert variant="destructive">
+            <Info className="h-4 w-4" />
+            <AlertTitle>Negative bank balance</AlertTitle>
+            <AlertDescription>
+              The GL balance for this bank account is below −{formatCurrency(10, currency)}. This is unusual — check for
+              unreconciled bank charges, duplicate payments, or missing deposits before accepting the figure as correct.
+            </AlertDescription>
+          </Alert>
+        )}
 
         <div className="rounded-md border bg-muted/30 px-3 py-2 text-sm">
           <p className="text-xs font-medium text-muted-foreground mb-2">Import activity</p>

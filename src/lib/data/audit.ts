@@ -10,6 +10,8 @@ export type AuditEvent = AuditLogsRow & {
   actor_email?: string | null;
   document_number?: string | null;
   changesSummary?: string | null;
+  entity_display_label?: string | null;
+  entity_href?: string | null;
 };
 
 type SearchParams = {
@@ -211,11 +213,59 @@ export async function getRecentAuditEvents(limit = 100, searchParams?: SearchPar
     });
   }
 
+  const coaIds = [...new Set(data.map((e) => (e.entity === "chart_of_accounts" && e.entity_id ? e.entity_id : null)).filter(Boolean))] as string[];
+  const jeIds = [...new Set(data.map((e) => (e.entity === "journal_entries" && e.entity_id ? e.entity_id : null)).filter(Boolean))] as string[];
+
+  let coaMap = new Map<string, { code: string; name: string }>();
+  if (coaIds.length > 0) {
+    const { data: coaRows } = await supabase.from("chart_of_accounts").select("id, code, name").eq("tenant_id", user.tenant.id).in("id", coaIds);
+    (coaRows ?? []).forEach((r) => coaMap.set(r.id, { code: r.code, name: r.name }));
+  }
+
+  let jeMap = new Map<string, { description: string; date: string }>();
+  if (jeIds.length > 0) {
+    const { data: jeRows } = await supabase
+      .from("journal_entries")
+      .select("id, description, date")
+      .eq("tenant_id", user.tenant.id)
+      .in("id", jeIds);
+    (jeRows ?? []).forEach((r) => jeMap.set(r.id, { description: r.description, date: String(r.date).slice(0, 10) }));
+  }
+
+  function entityLabelAndHref(entry: (typeof data)[0]): { label: string; href: string | null } {
+    const id = entry.entity_id;
+    if (entry.entity === "drafts" && id) {
+      const d = draftsMap.get(id);
+      const inv = d?.invoice_number;
+      const bill = d?.bill_number;
+      const cp = d?.counterparty?.trim();
+      const amt = d?.amount;
+      const amtStr = typeof amt === "number" ? `AED ${amt.toLocaleString("en-AE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "";
+      if (inv) return { label: `Invoice draft — ${inv}${cp ? ` (${cp})` : ""}`, href: "/drafts" };
+      if (bill) return { label: `Bill draft — ${bill}${cp ? ` (${cp})` : ""}`, href: "/drafts" };
+      const tail = [cp, amtStr].filter(Boolean).join(", ");
+      return { label: tail ? `Draft — ${tail}` : "Draft", href: "/drafts" };
+    }
+    if (entry.entity === "chart_of_accounts" && id) {
+      const c = coaMap.get(id);
+      if (c) return { label: `Account ${c.code} — ${c.name}`, href: `/ledger?accountCode=${encodeURIComponent(c.code)}` };
+      return { label: "Chart of Accounts", href: "/accounts" };
+    }
+    if (entry.entity === "journal_entries" && id) {
+      const j = jeMap.get(id);
+      if (j) return { label: `Journal — ${j.date}: ${j.description.slice(0, 80)}`, href: `/journals?entryId=${id}` };
+      return { label: "Journal entry", href: "/journals" };
+    }
+    const pretty = entry.entity.replace(/_/g, " ");
+    return { label: `${pretty}${id ? ` (${id.slice(0, 8)}…)` : ""}`, href: null };
+  }
+
   return data.map((entry) => {
     const actor = entry.actor_id ? usersMap.get(entry.actor_id) : null;
     const documentNumber = entry.entity === "drafts" && entry.entity_id 
       ? draftsMap.get(entry.entity_id)?.invoice_number ?? draftsMap.get(entry.entity_id)?.bill_number ?? null
       : null;
+    const { label: entity_display_label, href: entity_href } = entityLabelAndHref(entry);
     
     return {
       ...entry,
@@ -223,6 +273,8 @@ export async function getRecentAuditEvents(limit = 100, searchParams?: SearchPar
       actor_email: actor?.email ?? null,
       document_number: documentNumber ?? null,
       changesSummary: entry.changes ? JSON.stringify(entry.changes) : null,
+      entity_display_label,
+      entity_href,
     } as AuditEvent;
   });
 }

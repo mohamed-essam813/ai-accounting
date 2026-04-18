@@ -11,9 +11,15 @@ import { listUnitsOfMeasure } from "@/lib/data/units-of-measure";
 import type { Account } from "@/lib/accounting";
 import type { BusinessItem } from "@/lib/data/inventory";
 
-export async function searchItemsPickerAction(query: string): Promise<BusinessItem[]> {
-  const rows = await searchBusinessItems(query, 40);
-  return dedupeEntitiesForDisplay(rows as unknown as Record<string, unknown>[], {
+export async function searchItemsPickerAction(
+  query: string,
+  options?: { inventoryStockProductsOnly?: boolean },
+): Promise<BusinessItem[]> {
+  const rows = await searchBusinessItems(query, 80);
+  const scoped = options?.inventoryStockProductsOnly
+    ? rows.filter((r) => r.item_type === "product" && r.inventory_tracked === true)
+    : rows;
+  return dedupeEntitiesForDisplay(scoped as unknown as Record<string, unknown>[], {
     idKey: "id",
     entityLabel: "items-search",
   }) as unknown as BusinessItem[];

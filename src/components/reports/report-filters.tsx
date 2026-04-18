@@ -3,23 +3,55 @@
 import { useRouter, useSearchParams } from "next/navigation";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { useState, useTransition } from "react";
+import { useState, useTransition, useEffect } from "react";
+import {
+  REPORT_DATE_STORAGE_KEY,
+  defaultDateRangeForTab,
+  isThisMonthHighlighted,
+  lastMonthPreset,
+  lastQuarterPreset,
+  thisMonthPreset,
+  thisQuarterPreset,
+  thisYearPreset,
+  yearToDatePreset,
+  type ReportTabId,
+  type StoredReportDateRanges,
+} from "@/lib/reports/report-date-defaults";
 
 type Props = {
   initialStartDate?: string;
   initialEndDate?: string;
+  reportTab: ReportTabId;
 };
 
-export function ReportFilters({ initialStartDate, initialEndDate }: Props) {
+function saveRangeForTab(tab: ReportTabId, start: string, end: string) {
+  try {
+    const raw = localStorage.getItem(REPORT_DATE_STORAGE_KEY);
+    const parsed: StoredReportDateRanges = raw ? (JSON.parse(raw) as StoredReportDateRanges) : {};
+    parsed[tab] = { startDate: start, endDate: end };
+    localStorage.setItem(REPORT_DATE_STORAGE_KEY, JSON.stringify(parsed));
+  } catch {
+    /* ignore */
+  }
+}
+
+export function ReportFilters({ initialStartDate, initialEndDate, reportTab }: Props) {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const tab = (searchParams.get("tab") || reportTab || "pnl") as ReportTabId;
   const [startDate, setStartDate] = useState(initialStartDate ?? "");
   const [endDate, setEndDate] = useState(initialEndDate ?? "");
   const [isPending, startTransition] = useTransition();
 
-  const applyDateRange = (start: string, end: string) => {
+  useEffect(() => {
+    setStartDate(initialStartDate ?? "");
+    setEndDate(initialEndDate ?? "");
+  }, [initialStartDate, initialEndDate]);
+
+  const pushRange = (start: string, end: string) => {
     setStartDate(start);
     setEndDate(end);
+    saveRangeForTab(tab, start, end);
     startTransition(() => {
       const params = new URLSearchParams(searchParams.toString());
       params.set("startDate", start);
@@ -28,55 +60,29 @@ export function ReportFilters({ initialStartDate, initialEndDate }: Props) {
     });
   };
 
+  const applyDateRange = (start: string, end: string) => {
+    pushRange(start, end);
+  };
+
   const handleApply = () => {
-    startTransition(() => {
-      const params = new URLSearchParams(searchParams.toString());
-      if (startDate) {
-        params.set("startDate", startDate);
-      } else {
-        params.delete("startDate");
-      }
-      if (endDate) {
-        params.set("endDate", endDate);
-      } else {
-        params.delete("endDate");
-      }
-      router.push(`?${params.toString()}`);
-    });
+    if (!startDate || !endDate) return;
+    pushRange(startDate, endDate);
   };
 
   const handleClear = () => {
-    setStartDate("");
-    setEndDate("");
-    startTransition(() => {
-      router.push("?");
-    });
+    const defaults = defaultDateRangeForTab(tab);
+    pushRange(defaults.startDate, defaults.endDate);
   };
 
-  // Preset date ranges
-  const getPresetDates = (preset: "monthly" | "quarterly" | "yearly") => {
-    const today = new Date();
-    let start: Date;
-    let end = new Date(today);
+  const thisMonth = thisMonthPreset();
+  const thisQuarter = thisQuarterPreset();
+  const thisYear = thisYearPreset();
+  const lastMonth = lastMonthPreset();
+  const lastQ = lastQuarterPreset();
+  const ytd = yearToDatePreset();
 
-    switch (preset) {
-      case "monthly":
-        start = new Date(today.getFullYear(), today.getMonth(), 1);
-        break;
-      case "quarterly":
-        const quarter = Math.floor(today.getMonth() / 3);
-        start = new Date(today.getFullYear(), quarter * 3, 1);
-        break;
-      case "yearly":
-        start = new Date(today.getFullYear(), 0, 1);
-        break;
-    }
-
-    return {
-      start: start.toISOString().split("T")[0],
-      end: end.toISOString().split("T")[0],
-    };
-  };
+  const presetVariant = (start: string, end: string) =>
+    startDate === start && endDate === end ? "default" : "outline";
 
   return (
     <div className="space-y-3 rounded-lg border bg-card p-4">
@@ -99,46 +105,59 @@ export function ReportFilters({ initialStartDate, initialEndDate }: Props) {
             className="w-40"
           />
         </div>
-        <Button onClick={handleApply} disabled={isPending} size="sm">
+        <Button onClick={handleApply} disabled={isPending || !startDate || !endDate} size="sm">
           Apply Filters
         </Button>
-        {(startDate || endDate) && (
-          <Button onClick={handleClear} variant="outline" size="sm" disabled={isPending}>
-            Clear
-          </Button>
-        )}
+        <Button onClick={handleClear} variant="outline" size="sm" disabled={isPending}>
+          Reset to tab default
+        </Button>
       </div>
       <div className="flex flex-wrap items-center gap-2 border-t pt-3">
         <span className="text-xs text-muted-foreground">Presets:</span>
         <Button
-          variant="outline"
+          variant={isThisMonthHighlighted(startDate, endDate) ? "default" : "outline"}
           size="sm"
-          onClick={() => {
-            const dates = getPresetDates("monthly");
-            applyDateRange(dates.start, dates.end);
-          }}
+          onClick={() => applyDateRange(thisMonth.startDate, thisMonth.endDate)}
           disabled={isPending}
         >
           This Month
         </Button>
         <Button
-          variant="outline"
+          variant={presetVariant(lastMonth.startDate, lastMonth.endDate)}
           size="sm"
-          onClick={() => {
-            const dates = getPresetDates("quarterly");
-            applyDateRange(dates.start, dates.end);
-          }}
+          onClick={() => applyDateRange(lastMonth.startDate, lastMonth.endDate)}
+          disabled={isPending}
+        >
+          Last Month
+        </Button>
+        <Button
+          variant={presetVariant(thisQuarter.startDate, thisQuarter.endDate)}
+          size="sm"
+          onClick={() => applyDateRange(thisQuarter.startDate, thisQuarter.endDate)}
           disabled={isPending}
         >
           This Quarter
         </Button>
         <Button
-          variant="outline"
+          variant={presetVariant(lastQ.startDate, lastQ.endDate)}
           size="sm"
-          onClick={() => {
-            const dates = getPresetDates("yearly");
-            applyDateRange(dates.start, dates.end);
-          }}
+          onClick={() => applyDateRange(lastQ.startDate, lastQ.endDate)}
+          disabled={isPending}
+        >
+          Last Quarter
+        </Button>
+        <Button
+          variant={presetVariant(ytd.startDate, ytd.endDate)}
+          size="sm"
+          onClick={() => applyDateRange(ytd.startDate, ytd.endDate)}
+          disabled={isPending}
+        >
+          Year to Date
+        </Button>
+        <Button
+          variant={presetVariant(thisYear.startDate, thisYear.endDate)}
+          size="sm"
+          onClick={() => applyDateRange(thisYear.startDate, thisYear.endDate)}
           disabled={isPending}
         >
           This Year
@@ -147,4 +166,3 @@ export function ReportFilters({ initialStartDate, initialEndDate }: Props) {
     </div>
   );
 }
-

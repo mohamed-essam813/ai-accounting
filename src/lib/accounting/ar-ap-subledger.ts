@@ -10,7 +10,20 @@ export function accountIsArOrAp(a: { prd_account_kind?: string | null; code?: st
   return c === "1100" || c === "2000";
 }
 
-/** Whether this AR/AP account is the one used for the contact type's open-item subledger. */
+/** Whether this AR/AP account applies to the contact's roles (multi-role supported). */
+export function accountMatchesContactStatementRoles(
+  contact: { is_customer: boolean; is_vendor: boolean },
+  a: { prd_account_kind?: string | null; code?: string },
+): boolean {
+  if (!accountIsArOrAp(a)) return false;
+  const isAr = a.prd_account_kind === "accounts_receivable" || a.code === "1100";
+  const isAp = a.prd_account_kind === "accounts_payable" || a.code === "2000";
+  if (contact.is_customer && isAr) return true;
+  if (contact.is_vendor && isAp) return true;
+  return false;
+}
+
+/** @deprecated Use accountMatchesContactStatementRoles with role flags */
 export function accountMatchesContactStatementType(
   contactType: "customer" | "vendor" | "other",
   a: { prd_account_kind?: string | null; code?: string },

@@ -66,6 +66,10 @@ export function InventoryTable({ items, summary, onEdit }: Props) {
         <TableBody>
           {paginatedItems.map((item) => {
             const itemSummary = summaryMap.get(item.id);
+            const qty = itemSummary?.quantity ?? 0;
+            const totalVal = itemSummary?.total_value ?? 0;
+            const displayUnitCost =
+              qty > 0.00001 ? Math.round((totalVal / qty) * 100) / 100 : null;
             const hasAgeing = itemSummary && (
               itemSummary.quantity_31_60 > 0 ||
               itemSummary.quantity_61_90 > 0 ||
@@ -87,9 +91,7 @@ export function InventoryTable({ items, summary, onEdit }: Props) {
                   {itemSummary ? itemSummary.quantity.toFixed(2) : "0.00"} {item.unit}
                 </TableCell>
                 <TableCell className="text-right">
-                  {itemSummary?.average_cost
-                    ? formatCurrency(itemSummary.average_cost)
-                    : "-"}
+                  {displayUnitCost != null ? formatCurrency(displayUnitCost) : "-"}
                 </TableCell>
                 <TableCell className="text-right font-medium">
                   {itemSummary ? formatCurrency(itemSummary.total_value) : formatCurrency(0)}

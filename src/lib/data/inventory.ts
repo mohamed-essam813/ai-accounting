@@ -126,38 +126,33 @@ export interface InventorySummary {
   quantity_90_plus: number;
 }
 
+export type GetInventoryItemsOptions = {
+  /** Only products with stock tracking — excludes services and non-tracked catalog rows from the stock UI. */
+  stockTrackedProductsOnly?: boolean;
+};
+
 /**
- * Get all inventory items for the current tenant
+ * Get inventory items for the current tenant
  */
-export async function getInventoryItems(): Promise<InventoryItem[]> {
+export async function getInventoryItems(options?: GetInventoryItemsOptions): Promise<InventoryItem[]> {
   const user = await getCurrentUser();
   if (!user?.tenant) {
     return [];
   }
 
   const supabase = await createServerSupabaseClient();
-  const table = supabase.from("inventory_items") as unknown as {
-    select: (columns: string) => {
-      eq: (column: string, value: string) => {
-        order: (column: string) => Promise<{
-          data: InventoryItemRow[] | null;
-          error: unknown;
-        }>;
-      };
-    };
-  };
-
-  const { data, error } = await table
-    .select("*")
-    .eq("tenant_id", user.tenant.id)
-    .order("name");
+  let q = supabase.from("inventory_items").select("*").eq("tenant_id", user.tenant.id);
+  if (options?.stockTrackedProductsOnly) {
+    q = q.eq("item_type", "product").eq("inventory_tracked", true);
+  }
+  const { data, error } = await q.order("name");
 
   if (error) {
     console.error("Failed to fetch inventory items:", error);
     return [];
   }
 
-  return (data || []).map((row) => rowToInventoryItem(row));
+  return (data || []).map((row) => rowToInventoryItem(row as InventoryItemRow));
 }
 
 /** Prevent duplicate product/service rows that differ only by spacing or case. */
@@ -280,6 +275,15 @@ export async function getInventorySummary(): Promise<InventorySummary[]> {
     };
   };
 
+  const { data: allowedRows } = await supabase
+    .from("inventory_items")
+    .select("id")
+    .eq("tenant_id", user.tenant.id)
+    .eq("item_type", "product")
+    .eq("inventory_tracked", true);
+
+  const allowedIds = new Set((allowedRows ?? []).map((r) => r.id));
+
   const { data, error } = await view
     .select("*")
     .eq("tenant_id", user.tenant.id)
@@ -290,7 +294,9 @@ export async function getInventorySummary(): Promise<InventorySummary[]> {
     return [];
   }
 
-  return (data || []).map((row) => ({
+  const rows = (data || []).filter((row) => row.item_id && allowedIds.has(row.item_id as string));
+
+  return rows.map((row) => ({
     item_id: row.item_id,
     item_name: row.item_name,
     sku: row.sku,

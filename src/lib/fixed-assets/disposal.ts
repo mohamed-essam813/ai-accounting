@@ -1,35 +1,75 @@
 /**
- * Asset Disposal & Gain/Loss Logic
- * MVP Feedback Section 9: Asset Disposal & Gain / Loss
- * 
- * Gain/Loss = Proceeds - Net Book Value
- * Gain/loss must appear before Net Profit in P&L
+ * Asset Disposal & Gain/Loss
+ * Proceeds vs NBV: gain/loss; default other income 7100 / other expense 7200.
  */
 
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { getCurrentUser } from "@/lib/data/users";
 import { createJournalEntryAction } from "@/lib/actions/journals";
 import { getAccountByCode } from "@/lib/data/accounts";
+import { round2 } from "@/lib/posting/posting-engine";
+import type { Database } from "@/lib/database.types";
 
-/**
- * Dispose of a fixed asset
- * MVP Feedback: At disposal, remove asset cost, remove accumulated depreciation,
- * record proceeds, recognize gain or loss
- */
-export async function disposeAsset(
-  assetId: string,
+export type DisposalMethod = "sold" | "scrapped" | "donated" | "lost" | "written_off";
+
+export type DisposeAssetInput = {
+  assetId: string;
+  disposalDate: string;
+  proceeds: number;
+  method: DisposalMethod;
+  reason: string;
+  notes?: string | null;
+  recipientOrBuyer?: string | null;
+};
+
+export class MissingGainLossAccountsError extends Error {
+  constructor(readonly missing: ("gain" | "loss" | "cash" | "accum" | "ppe")[]) {
+    super(
+      `Add required chart accounts: ${missing.join(
+        ", ",
+      )} — 7100 Gain on Disposal, 7200 Loss on Disposal, 1000 Bank/Cash, 1600 Accumulated Depreciation, and the asset (PPE) line.`,
+    );
+  }
+}
+
+/** Latest depreciation row on or before the accrual month of disposal (YYYY-MM comparison). */
+function resolveNbvAtDisposal(
+  cost: number,
+  residual: number,
+  schedules: { period_start: string; accumulated_depreciation: number; net_book_value: number }[],
   disposalDate: string,
-  proceeds: number,
-  description?: string,
-): Promise<{ journalEntryId: string; gainLoss: number }> {
+) {
+  const limitYm = disposalDate.slice(0, 7);
+  const eligible = (schedules ?? [])
+    .filter((r) => r.period_start.slice(0, 7) <= limitYm)
+    .sort((a, b) => a.period_start.localeCompare(b.period_start));
+  const best = eligible.length ? eligible[eligible.length - 1] : null;
+  if (best) {
+    return {
+      netBookValue: round2(
+        Math.max(0, Math.min(Number(best.net_book_value), round2(cost) - round2(residual) + 1e-6)),
+      ),
+      accumulated: round2(Number(best.accumulated_depreciation)),
+    };
+  }
+  return { netBookValue: round2(cost), accumulated: 0 };
+}
+
+export async function disposeAsset(input: DisposeAssetInput): Promise<{
+  journalEntryId: string;
+  gainLoss: number;
+}> {
   const user = await getCurrentUser();
   if (!user?.tenant) {
     throw new Error("User tenant not resolved");
   }
 
-  const supabase = await createServerSupabaseClient();
+  const { assetId, disposalDate, proceeds, method, reason, notes, recipientOrBuyer } = input;
+  if (!reason.trim()) {
+    throw new Error("Disposal reason is required.");
+  }
 
-  // Get asset details
+  const supabase = await createServerSupabaseClient();
   const { data: asset, error: assetError } = await supabase
     .from("fixed_assets")
     .select("*")
@@ -40,152 +80,102 @@ export async function disposeAsset(
   if (assetError || !asset) {
     throw new Error("Asset not found");
   }
-
   if (asset.disposed_at) {
     throw new Error("Asset already disposed");
   }
 
-  // Get latest depreciation to get current NBV
-  const { data: latestDepreciation } = await supabase
+  const { data: allSched, error: schErr } = await supabase
     .from("depreciation_schedules")
-    .select("net_book_value, accumulated_depreciation")
+    .select("period_start, accumulated_depreciation, net_book_value")
     .eq("asset_id", assetId)
-    .order("period_start", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .order("period_start", { ascending: true });
+  if (schErr) throw schErr;
 
-  const netBookValue = latestDepreciation
-    ? Number(latestDepreciation.net_book_value)
-    : Number(asset.cost);
-  const accumulatedDepreciation = latestDepreciation
-    ? Number(latestDepreciation.accumulated_depreciation)
-    : 0;
+  const { netBookValue, accumulated: accumulatedDepreciation } = resolveNbvAtDisposal(
+    Number(asset.cost),
+    Number(asset.residual_value),
+    (allSched ?? []) as { period_start: string; accumulated_depreciation: number; net_book_value: number }[],
+    disposalDate,
+  );
+  const cost = round2(asset.cost);
+  const gainLoss = round2(proceeds - netBookValue);
 
-  // Calculate gain/loss
-  // MVP Feedback: Gain/Loss = Proceeds - Net Book Value
-  const gainLoss = proceeds - netBookValue;
+  const ppeId = asset.asset_account_id as string | null;
+  const ppeAccount = ppeId
+    ? (await supabase.from("chart_of_accounts").select("id, code, name").eq("id", ppeId).maybeSingle()).data
+    : (await getAccountByCode("1500"));
 
-  const assetRow = asset as {
-    cost: number;
-    name: string;
-    asset_account_id?: string | null;
-  };
+  const accumulatedDepreciationAccount = await getAccountByCode("1600");
+  const cashOrBank = await getAccountByCode("1000");
+  const gainAccount = await getAccountByCode("7100");
+  const lossAccount = await getAccountByCode("7200");
 
-  const ppeAccount =
-    assetRow.asset_account_id != null
-      ? (
-          await supabase.from("chart_of_accounts").select("id, code, name").eq("id", assetRow.asset_account_id).maybeSingle()
-        ).data
-      : null;
-  const ppeResolved = ppeAccount ?? (await getAccountByCode("1500")); // Property, Plant & Equipment
-
-  if (!ppeResolved) {
-    throw new Error("Set an asset account on the fixed asset, or ensure account 1500 (PPE) exists.");
+  const missing: ("gain" | "loss" | "cash" | "accum" | "ppe")[] = [];
+  if (!accumulatedDepreciationAccount) missing.push("accum");
+  if (proceeds > 0.005 && !cashOrBank) missing.push("cash");
+  if (gainLoss > 0.005 && !gainAccount) missing.push("gain");
+  if (gainLoss < -0.005 && !lossAccount) missing.push("loss");
+  if (!ppeAccount) missing.push("ppe");
+  if (missing.length) {
+    throw new MissingGainLossAccountsError(missing);
   }
-
-  const accumulatedDepreciationAccount = await getAccountByCode("1600"); // Accumulated Depreciation
-  const cashAccount = await getAccountByCode("1000"); // Cash (or bank account)
-  const gainLossAccount = await getAccountByCode("4200"); // Gain on Asset Disposal (Other Income)
-
-  if (!accumulatedDepreciationAccount || !cashAccount || !gainLossAccount) {
-    throw new Error(
-      "Required accounts not found. Please ensure accounts 1600 (Accumulated Depreciation), 1000 (Cash), and 4200 (Gain on Asset Disposal) exist.",
-    );
+  if (!ppeAccount) {
+    throw new Error("PPE account is required for disposal.");
   }
+  const ppeResolved = ppeAccount;
 
-  // Create journal entry for disposal
-  // MVP Feedback posting logic:
-  // - Remove asset cost (Cr PPE)
-  // - Remove accumulated depreciation (Dr Accumulated Depreciation)
-  // - Record proceeds (Dr Cash)
-  // - Recognize gain or loss (Cr Gain if gain, Dr Loss if loss)
-  const journalLines: Array<{
-    account_id: string;
-    debit: number;
-    credit: number;
-    memo: string;
-  }> = [
-    // Remove accumulated depreciation
+  const lineMemo = (tag: string) => `Disposal — ${asset.name} — ${method} — ${disposalDate}. ${tag}`;
+
+  const lines: { account_id: string; debit: number; credit: number; memo: string }[] = [
     {
-      account_id: accumulatedDepreciationAccount.id,
+      account_id: accumulatedDepreciationAccount!.id,
       debit: accumulatedDepreciation,
       credit: 0,
-      memo: `Remove accumulated depreciation for ${asset.name}`,
+      memo: lineMemo("Remove accumulated depreciation (1600)"),
     },
-    // Remove asset cost (at gross cost)
-    {
-      account_id: ppeResolved.id,
-      debit: 0,
-      credit: Number(assetRow.cost),
-      memo: `Remove asset cost for ${asset.name}`,
-    },
-    // Record proceeds
-    {
-      account_id: cashAccount.id,
-      debit: proceeds,
-      credit: 0,
-      memo: `Proceeds from disposal of ${asset.name}`,
-    },
+    { account_id: ppeResolved.id, debit: 0, credit: cost, memo: lineMemo("Remove asset cost from PPE") },
   ];
 
-  // Add gain or loss
-  if (gainLoss > 0) {
-    // Gain: Credit to Other Income
-    journalLines.push({
-      account_id: gainLossAccount.id,
-      debit: 0,
-      credit: gainLoss,
-      memo: `Gain on disposal of ${asset.name}`,
+  if (proceeds > 0.005) {
+    lines.push({
+      account_id: cashOrBank!.id,
+      debit: proceeds,
+      credit: 0,
+      memo: lineMemo("Proceeds (bank/cash 1000 — adjust in journal if a different account applies)"),
     });
-  } else if (gainLoss < 0) {
-    // Loss: Debit to Other Expense (or Loss account)
-    // For now, we'll use a loss account - you may want to create account 5700 for Loss on Asset Disposal
-    const lossAccount = await getAccountByCode("5700"); // Loss on Asset Disposal
-    if (lossAccount) {
-      journalLines.push({
-        account_id: lossAccount.id,
-        debit: Math.abs(gainLoss),
-        credit: 0,
-        memo: `Loss on disposal of ${asset.name}`,
-      });
-    } else {
-      // Fallback: use expense account
-      const expenseAccount = await getAccountByCode("5000"); // General Expense
-      if (expenseAccount) {
-        journalLines.push({
-          account_id: expenseAccount.id,
-          debit: Math.abs(gainLoss),
-          credit: 0,
-          memo: `Loss on disposal of ${asset.name}`,
-        });
-      }
-    }
+  }
+  if (gainLoss > 0.005) {
+    lines.push({ account_id: gainAccount!.id, debit: 0, credit: gainLoss, memo: lineMemo("Gain on disposal (7100)") });
+  } else if (gainLoss < -0.005) {
+    lines.push({
+      account_id: lossAccount!.id,
+      debit: Math.abs(gainLoss),
+      credit: 0,
+      memo: lineMemo("Loss on disposal (7200)"),
+    });
   }
 
-  const journalDescription =
-    description || `Disposal of ${asset.name} - Proceeds: ${proceeds}, NBV: ${netBookValue}`;
+  const extra = [recipientOrBuyer, notes].filter(Boolean).join(" — ");
+  const desc = `Disposal of ${asset.name} on ${disposalDate} — ${method}${extra ? ` — ${extra}` : ""}`;
 
   const journalEntryId = await createJournalEntryAction(
-    {
-      date: disposalDate,
-      description: journalDescription,
-      lines: journalLines,
-    },
+    { date: disposalDate, description: desc, lines },
     { postImmediately: true, sourceModule: "system_disposal" },
   );
 
-  // Update asset record
-  await supabase
-    .from("fixed_assets")
-    .update({
-      is_active: false,
-      disposed_at: disposalDate,
-      disposal_proceeds: proceeds,
-      disposal_gain_loss: gainLoss,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", assetId);
+  const upd: Database["public"]["Tables"]["fixed_assets"]["Update"] = {
+    is_active: false,
+    disposed_at: disposalDate,
+    disposal_proceeds: proceeds,
+    disposal_gain_loss: gainLoss,
+    disposal_method: method,
+    disposal_reason: reason,
+    disposal_notes: notes ?? null,
+    disposal_recipient: recipientOrBuyer ?? null,
+    disposal_journal_entry_id: journalEntryId,
+    updated_at: new Date().toISOString(),
+  };
+  await supabase.from("fixed_assets").update(upd).eq("id", assetId).eq("tenant_id", user.tenant.id);
 
   return { journalEntryId, gainLoss };
 }
-

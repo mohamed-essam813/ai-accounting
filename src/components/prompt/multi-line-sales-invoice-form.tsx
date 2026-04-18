@@ -234,6 +234,7 @@ export function MultiLineSalesInvoiceForm({
               </div>
             </div>
             <SmartItemSelector
+              pickerMode={L.line_type === "product" ? "inventory_stock" : "all"}
               taxRates={outputTax}
               value={L.item}
               onChange={(item) => {

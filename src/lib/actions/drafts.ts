@@ -46,6 +46,13 @@ import { validateDraftPostingJournalLines } from "@/lib/posting/draft-posting-va
 
 export type { PostDraftResult, PostDraftSuccessData } from "@/lib/posting/post-draft-errors";
 
+/** Remove "(preview)" from memos before persisting posted journal lines. */
+function stripPreviewMemo(m: string | null | undefined): string | null {
+  if (m == null || m === "") return m ?? null;
+  const t = m.replace(/\s*\(preview\)\s*/gi, " ").replace(/\s{2,}/g, " ").trim();
+  return t.length ? t : null;
+}
+
 type DraftsInsert = Database["public"]["Tables"]["drafts"]["Insert"];
 type DraftsRow = Database["public"]["Tables"]["drafts"]["Row"];
 type DraftsUpdate = Database["public"]["Tables"]["drafts"]["Update"];
@@ -245,9 +252,20 @@ export async function saveDraftAction(input: z.infer<typeof SaveDraftSchema>) {
   const initialCounterparty =
     typeof entities.counterparty === "string" ? entities.counterparty.trim() : "";
 
+  const tenantCoa = await listAccounts();
+  const coaCodes = new Set(tenantCoa.map((a) => a.code));
+  if (payload.journal_lines && payload.journal_lines.length > 0) {
+    for (const jl of payload.journal_lines) {
+      if (!coaCodes.has(jl.account_code)) {
+        throw new Error(
+          `Draft rejected: account code "${jl.account_code}" is not on your chart of accounts.`,
+        );
+      }
+    }
+  }
+
   let resolvedBillPurchaseForInsert: "inventory" | "expense" | "asset" | undefined = ext.billPurchaseType;
   if (payload.intent === "create_bill" && !resolvedBillPurchaseForInsert) {
-    const coa = await listAccounts();
     const draftLike: Record<string, unknown> = {
       ...entities,
       ai_selected_accounts: payload.accounts,
@@ -257,7 +275,7 @@ export async function saveDraftAction(input: z.infer<typeof SaveDraftSchema>) {
       document_line_items: ext.documentLineItems,
       guided_event_requires_item: ext.guidedEventRequiresItem,
     };
-    resolvedBillPurchaseForInsert = inferBillPurchaseTypeFromHeuristics(draftLike, coa);
+    resolvedBillPurchaseForInsert = inferBillPurchaseTypeFromHeuristics(draftLike, tenantCoa);
     console.warn("[saveDraftAction] create_bill missing billPurchaseType; inferred before persist", {
       inferred: resolvedBillPurchaseForInsert,
     });
@@ -293,6 +311,17 @@ export async function saveDraftAction(input: z.infer<typeof SaveDraftSchema>) {
       : {}),
     ...(ext.documentLineItems && ext.documentLineItems.length > 0
       ? { document_line_items: ext.documentLineItems }
+      : {}),
+    ...(payload.journal_lines && payload.journal_lines.length > 0
+      ? {
+          journal_lines: payload.journal_lines.map((l) => ({
+            account_code: l.account_code,
+            debit: l.debit,
+            credit: l.credit,
+            memo: l.memo,
+            ...(l.role ? { role: l.role } : {}),
+          })),
+        }
       : {}),
   };
 
@@ -1136,6 +1165,28 @@ async function postDraftActionImpl(
     multiLineBillInventoryForPosting != null || multiLineInvoiceInventoryForPosting != null,
   );
 
+  // Drop AI/user COGS + inventory relief lines that match engine accounts so costing (FIFO/WAC) is sole source of amounts.
+  if (
+    draft.intent === "create_invoice" &&
+    editedLines &&
+    editedLines.length > 0 &&
+    inventoryLineItems &&
+    inventoryLineItems.length > 0
+  ) {
+    const { getInventoryItem } = await import("@/lib/data/inventory");
+    const { stripInvoiceCogsLinesForEngineRecompute } = await import("@/lib/posting/strip-invoice-cogs-for-engine");
+    const cogsIds = new Set<string>();
+    const invIds = new Set<string>();
+    for (const li of inventoryLineItems) {
+      const inv = await getInventoryItem(li.item_id);
+      const c = (inv as { cogs_account_id?: string | null })?.cogs_account_id;
+      const i = (inv as { inventory_account_id?: string | null })?.inventory_account_id;
+      if (c) cogsIds.add(c);
+      if (i) invIds.add(i);
+    }
+    lines = stripInvoiceCogsLinesForEngineRecompute(lines, cogsIds, invIds);
+  }
+
   // Process inventory items for invoices (sales) and bills (purchases)
   const inventoryTransactionIds: string[] = [];
   
@@ -1186,6 +1237,12 @@ async function postDraftActionImpl(
             user.tenant.id,
             lineItem.item_id,
             lineItem.quantity
+          );
+        }
+
+        if (!Number.isFinite(cogsAmount) || cogsAmount <= 0) {
+          throw new Error(
+            `Product "${inventoryItem.name}" has no cost basis. Receive inventory before selling.`,
           );
         }
 
@@ -1448,11 +1505,34 @@ async function postDraftActionImpl(
   const postingDate =
     (parsedDraft.entities.date as string) ?? new Date().toISOString().slice(0, 10);
 
+  let saleInventoryAccountIds: string[] | undefined;
+  if (draft.intent === "create_invoice" && inventoryLineItems && inventoryLineItems.length > 0) {
+    const { getInventoryItem } = await import("@/lib/data/inventory");
+    const ids: string[] = [];
+    const seen = new Set<string>();
+    for (const li of inventoryLineItems) {
+      const inv = await getInventoryItem(li.item_id);
+      const iid = (inv as { inventory_account_id?: string | null })?.inventory_account_id;
+      if (iid && !seen.has(iid)) {
+        seen.add(iid);
+        ids.push(iid);
+      }
+    }
+    if (ids.length > 0) saleInventoryAccountIds = ids;
+  }
+
+  const taxRatesForValidation = await listTaxRates();
+  const outputVatAccountIds = new Set(
+    taxRatesForValidation.map((r) => r.output_vat_account_id).filter((x): x is string => Boolean(x)),
+  );
+
   validateDraftPostingJournalLines({
     intent: draft.intent,
     lines,
     accounts: allAccounts as Account[],
     postingDate,
+    saleInventoryAccountIds,
+    outputVatAccountIds,
   });
 
   const usedEditedLinesForProvenance = Boolean(editedLines && editedLines.length > 0);
@@ -1633,7 +1713,7 @@ async function postDraftActionImpl(
       return {
         entry_id: entry?.id ?? "",
         account_id: line.account_id,
-        memo: line.memo ?? null,
+        memo: stripPreviewMemo(line.memo ?? null),
         debit: Number(line.debit),
         credit: Number(line.credit),
         contact_id: contactForLine,
@@ -1671,6 +1751,21 @@ async function postDraftActionImpl(
       entities: parsedDraft.entities as Record<string, unknown>,
       draftData: draftDataRaw as Record<string, unknown>,
     });
+    if (draft.intent === "create_bill" && entry?.id) {
+      const { data: matBill } = await supabase
+        .from("bills")
+        .select("id")
+        .eq("journal_entry_id", entry.id)
+        .eq("tenant_id", user.tenant.id)
+        .maybeSingle();
+      if (matBill?.id) {
+        await supabase
+          .from("fixed_assets")
+          .update({ source_bill_id: matBill.id, source_type: "vendor_bill" })
+          .eq("tenant_id", user.tenant.id)
+          .eq("source_journal_entry_id", entry.id);
+      }
+    }
     await materializePaymentFromPostedDraft(supabase, {
       tenantId: user.tenant.id,
       draft,

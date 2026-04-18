@@ -41,7 +41,10 @@ export async function createInventoryItemAction(
     .eq("tenant_id", user.tenant.id)
     .maybeSingle();
 
-  const valuationMethod = ((policy as any)?.inventory_valuation_method || "fifo") as "fifo" | "weighted_average";
+  const valuationMethod = ((policy as any)?.inventory_valuation_method || "fifo") as
+    | "fifo"
+    | "weighted_average"
+    | "specific_identification";
 
   // Get default inventory and COGS accounts
   const { getAccountByCode } = await import("@/lib/data/accounts");
@@ -86,6 +89,8 @@ export async function createInventoryItemAction(
       name: payload.name,
       sku: payload.sku || null,
       description: payload.description || null,
+      item_type: "product",
+      inventory_tracked: true,
       // Try uom_id first, fallback to unit if column doesn't exist yet
       uom_id: payload.uom_id,
       // Keep unit as fallback for backward compatibility (migration will handle it)

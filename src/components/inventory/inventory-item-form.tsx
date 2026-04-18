@@ -141,7 +141,7 @@ export function InventoryItemForm({ valuationMethod, item, onSuccess }: Props) {
             className="h-6 text-xs"
             onClick={() => {
               // Navigate to settings page with UOM form open
-              window.location.href = "/settings/tenant#units-of-measure";
+              window.location.href = "/settings#accounting-preferences";
             }}
           >
             <Plus className="h-3 w-3 mr-1" />

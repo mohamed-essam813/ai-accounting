@@ -174,6 +174,7 @@ export function BillLineEditor({
         <>
           <SmartItemSelector
             uxMode="default"
+            pickerMode="inventory_stock"
             taxRates={inputTax}
             value={L.item}
             onChange={(item) => set({ item, description: item?.name ?? L.description })}

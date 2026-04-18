@@ -53,10 +53,11 @@ const EVENTS: { id: GuidedEventId; label: string; icon: typeof FileText }[] = [
 ];
 
 type Props = {
+  capitalizationThresholdAed: number;
   onDraftCreated?: (draftId: string) => void;
 };
 
-export function GuidedEventWorkspace({ onDraftCreated }: Props) {
+export function GuidedEventWorkspace({ capitalizationThresholdAed, onDraftCreated }: Props) {
   const [selected, setSelected] = useState<GuidedEventId | null>(null);
   const [contacts, setContacts] = useState<ContactOption[]>([]);
   const [banks, setBanks] = useState<BankOption[]>([]);
@@ -145,6 +146,7 @@ export function GuidedEventWorkspace({ onDraftCreated }: Props) {
         ) : null}
         {selected === "bill" ? (
           <MultiLineSupplierBillForm
+            capitalizationThresholdAed={capitalizationThresholdAed}
             contacts={contacts}
             onRefreshContacts={refreshContacts}
             onRefreshAccounts={refreshAccounts}

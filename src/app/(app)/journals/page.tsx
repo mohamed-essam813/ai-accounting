@@ -87,8 +87,8 @@ export default async function JournalsPage({
       {user?.id ? (
         <JournalAiAssistantSection
           userId={user.id}
-          userRole={(user.role as UserRole) ?? "member"}
-          canPostToLedger={canApprove((user.role as UserRole) ?? "member")}
+          userRole={(user.role as UserRole) ?? "bookkeeper"}
+          canPostToLedger={canApprove((user.role as UserRole) ?? "bookkeeper")}
         />
       ) : null}
 

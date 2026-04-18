@@ -111,7 +111,7 @@ export const mainNavigation: NavItem[] = [
   },
   {
     title: "Reports",
-    href: "/reports/pnl",
+    href: "/reports",
     icon: FileText,
     description: "Profit & Loss and Balance Sheet analytics.",
   },
@@ -128,10 +128,10 @@ export const mainNavigation: NavItem[] = [
     description: "Trace every action for compliance.",
   },
   {
-    title: "Tenant Settings",
-    href: "/settings/tenant",
+    title: "Settings",
+    href: "/settings",
     icon: Settings,
-    description: "Manage tenant profile and user roles.",
+    description: "Company profile, tax, accounting, and reporting preferences.",
   },
 ];
 

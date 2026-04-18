@@ -3,7 +3,10 @@ import type { BusinessItem } from "@/lib/data/inventory";
 export type BillLineKind = "inventory" | "expense" | "fixed_asset";
 export type InvoiceLineKind = "product" | "service";
 
-/** AED capitalization threshold: items at or above this cost are treated as fixed assets. */
+/**
+ * Default AED capitalization threshold when company settings are unavailable.
+ * Prefer `getCapitalizationThresholdAed()` / Settings → Accounting → Capitalization threshold.
+ */
 export const CAPITALIZATION_THRESHOLD_AED = 1_000;
 
 export function suggestBillLineClassification(item: BusinessItem | null): {

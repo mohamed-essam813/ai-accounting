@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { ChevronsUpDown, Check, Plus, Clock } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import type { UserRole } from "@/lib/auth";
+import { can, type UserRole } from "@/lib/auth";
 
 export type CoAAccount = {
   id: string;
@@ -177,7 +177,7 @@ export function AccountPicker({
     setQuery("");
   };
 
-  const canCreateAccount = userRole === "admin" || userRole === "accountant";
+  const canCreateAccount = can(userRole, "manage_chart_of_accounts");
 
   const handleCreate = async () => {
     if (!newName.trim()) return;

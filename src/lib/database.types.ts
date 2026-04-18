@@ -360,7 +360,12 @@ export type Database = {
           entity: string
           entity_id: string | null
           id: string
+          ip_address: string | null
+          metadata: Json | null
+          resource_label: string | null
+          resource_type: string | null
           tenant_id: string
+          user_agent: string | null
         }
         Insert: {
           action: string
@@ -370,7 +375,12 @@ export type Database = {
           entity: string
           entity_id?: string | null
           id?: string
+          ip_address?: string | null
+          metadata?: Json | null
+          resource_label?: string | null
+          resource_type?: string | null
           tenant_id: string
+          user_agent?: string | null
         }
         Update: {
           action?: string
@@ -380,7 +390,12 @@ export type Database = {
           entity?: string
           entity_id?: string | null
           id?: string
+          ip_address?: string | null
+          metadata?: Json | null
+          resource_label?: string | null
+          resource_type?: string | null
           tenant_id?: string
+          user_agent?: string | null
         }
         Relationships: [
           {
@@ -547,6 +562,7 @@ export type Database = {
           id: string
           journal_entry_id: string
           outstanding_amount: number
+          reversed_by_entry_id: string | null
           settlement_status: string
           status: string
           subtotal: number
@@ -554,6 +570,10 @@ export type Database = {
           tax_amount: number
           tenant_id: string
           total_amount: number
+          void_reason_category: string | null
+          void_reason_notes: string | null
+          voided_at: string | null
+          voided_by: string | null
         }
         Insert: {
           amount_paid?: number
@@ -566,6 +586,7 @@ export type Database = {
           id?: string
           journal_entry_id: string
           outstanding_amount?: number
+          reversed_by_entry_id?: string | null
           settlement_status?: string
           status?: string
           subtotal?: number
@@ -573,6 +594,10 @@ export type Database = {
           tax_amount?: number
           tenant_id: string
           total_amount?: number
+          void_reason_category?: string | null
+          void_reason_notes?: string | null
+          voided_at?: string | null
+          voided_by?: string | null
         }
         Update: {
           amount_paid?: number
@@ -585,6 +610,7 @@ export type Database = {
           id?: string
           journal_entry_id?: string
           outstanding_amount?: number
+          reversed_by_entry_id?: string | null
           settlement_status?: string
           status?: string
           subtotal?: number
@@ -592,6 +618,10 @@ export type Database = {
           tax_amount?: number
           tenant_id?: string
           total_amount?: number
+          void_reason_category?: string | null
+          void_reason_notes?: string | null
+          voided_at?: string | null
+          voided_by?: string | null
         }
         Relationships: [
           {
@@ -616,6 +646,20 @@ export type Database = {
             referencedColumns: ["entry_id"]
           },
           {
+            foreignKeyName: "bills_reversed_by_entry_id_fkey"
+            columns: ["reversed_by_entry_id"]
+            isOneToOne: false
+            referencedRelation: "journal_entries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bills_reversed_by_entry_id_fkey"
+            columns: ["reversed_by_entry_id"]
+            isOneToOne: false
+            referencedRelation: "v_journal_ledger"
+            referencedColumns: ["entry_id"]
+          },
+          {
             foreignKeyName: "bills_supplier_id_fkey"
             columns: ["supplier_id"]
             isOneToOne: false
@@ -629,6 +673,13 @@ export type Database = {
             referencedRelation: "tenants"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "bills_voided_by_fkey"
+            columns: ["voided_by"]
+            isOneToOne: false
+            referencedRelation: "app_users"
+            referencedColumns: ["id"]
+          },
         ]
       }
       chart_of_accounts: {
@@ -637,17 +688,21 @@ export type Database = {
           allow_reconciliation: boolean
           balance_sheet_role: string | null
           category: string | null
+          coa_display_order: number
           code: string
           created_at: string
           detail_type: string | null
           id: string
           is_active: boolean
+          is_cogs: boolean
           is_custom: boolean
           is_system_standard: boolean
           name: string
           normalized_name: string | null
           parent_standard_account_id: string | null
+          pl_subcategory: string | null
           prd_account_kind: string | null
+          reporting_category_type: string | null
           reporting_classification: string | null
           reporting_group: string | null
           reporting_subgroup: string | null
@@ -660,17 +715,21 @@ export type Database = {
           allow_reconciliation?: boolean
           balance_sheet_role?: string | null
           category?: string | null
+          coa_display_order?: number
           code: string
           created_at?: string
           detail_type?: string | null
           id?: string
           is_active?: boolean
+          is_cogs?: boolean
           is_custom?: boolean
           is_system_standard?: boolean
           name: string
           normalized_name?: string | null
           parent_standard_account_id?: string | null
+          pl_subcategory?: string | null
           prd_account_kind?: string | null
+          reporting_category_type?: string | null
           reporting_classification?: string | null
           reporting_group?: string | null
           reporting_subgroup?: string | null
@@ -683,17 +742,21 @@ export type Database = {
           allow_reconciliation?: boolean
           balance_sheet_role?: string | null
           category?: string | null
+          coa_display_order?: number
           code?: string
           created_at?: string
           detail_type?: string | null
           id?: string
           is_active?: boolean
+          is_cogs?: boolean
           is_custom?: boolean
           is_system_standard?: boolean
           name?: string
           normalized_name?: string | null
           parent_standard_account_id?: string | null
+          pl_subcategory?: string | null
           prd_account_kind?: string | null
+          reporting_category_type?: string | null
           reporting_classification?: string | null
           reporting_group?: string | null
           reporting_subgroup?: string | null
@@ -725,50 +788,293 @@ export type Database = {
           },
         ]
       }
+      company_settings: {
+        Row: {
+          allow_admin_reverse_and_edit: boolean
+          allow_negative_stock: boolean
+          approval_amount_threshold: number | null
+          auto_notify_drafter_on_approval: boolean
+          auto_run_month_end_recognition: boolean
+          base_currency: string
+          capitalization_threshold: number
+          company_name: string
+          country: string
+          created_at: string
+          currency_decimal_separator: string
+          currency_symbol_position: string
+          currency_thousand_separator: string
+          default_comparison_period: string
+          default_date_range: string
+          default_depreciation_method: string
+          default_pl_revenue_view: string
+          default_warehouse_id: string | null
+          deferred_revenue_account_code: string
+          email: string | null
+          exempt_categories: Json
+          first_vat_period_start: string | null
+          fiscal_year_start_month: number
+          hide_rows_under_amount: number
+          home_emirate: string | null
+          industry: string | null
+          inventory_valuation_method: string
+          logo_url: string | null
+          material_change_absolute: number
+          material_change_percentage: number
+          minimum_approvers: number
+          month_end_recognition_day: string
+          phone: string | null
+          rbac_enforcement_enabled: boolean
+          registered_address: string | null
+          require_approval_before_posting: boolean
+          reverse_charge_enabled: boolean
+          show_gross_margin_percent: boolean
+          show_net_margin_percent: boolean
+          standard_vat_rate: number
+          tenant_id: string
+          trade_license_number: string | null
+          trn: string | null
+          updated_at: string
+          vat_effective_date: string | null
+          vat_filing_frequency: string
+          vat_registered: boolean
+          website: string | null
+          zero_rated_categories: Json
+        }
+        Insert: {
+          allow_admin_reverse_and_edit?: boolean
+          allow_negative_stock?: boolean
+          approval_amount_threshold?: number | null
+          auto_notify_drafter_on_approval?: boolean
+          auto_run_month_end_recognition?: boolean
+          base_currency?: string
+          capitalization_threshold?: number
+          company_name?: string
+          country?: string
+          created_at?: string
+          currency_decimal_separator?: string
+          currency_symbol_position?: string
+          currency_thousand_separator?: string
+          default_comparison_period?: string
+          default_date_range?: string
+          default_depreciation_method?: string
+          default_pl_revenue_view?: string
+          default_warehouse_id?: string | null
+          deferred_revenue_account_code?: string
+          email?: string | null
+          exempt_categories?: Json
+          first_vat_period_start?: string | null
+          fiscal_year_start_month?: number
+          hide_rows_under_amount?: number
+          home_emirate?: string | null
+          industry?: string | null
+          inventory_valuation_method?: string
+          logo_url?: string | null
+          material_change_absolute?: number
+          material_change_percentage?: number
+          minimum_approvers?: number
+          month_end_recognition_day?: string
+          phone?: string | null
+          rbac_enforcement_enabled?: boolean
+          registered_address?: string | null
+          require_approval_before_posting?: boolean
+          reverse_charge_enabled?: boolean
+          show_gross_margin_percent?: boolean
+          show_net_margin_percent?: boolean
+          standard_vat_rate?: number
+          tenant_id: string
+          trade_license_number?: string | null
+          trn?: string | null
+          updated_at?: string
+          vat_effective_date?: string | null
+          vat_filing_frequency?: string
+          vat_registered?: boolean
+          website?: string | null
+          zero_rated_categories?: Json
+        }
+        Update: {
+          allow_admin_reverse_and_edit?: boolean
+          allow_negative_stock?: boolean
+          approval_amount_threshold?: number | null
+          auto_notify_drafter_on_approval?: boolean
+          auto_run_month_end_recognition?: boolean
+          base_currency?: string
+          capitalization_threshold?: number
+          company_name?: string
+          country?: string
+          created_at?: string
+          currency_decimal_separator?: string
+          currency_symbol_position?: string
+          currency_thousand_separator?: string
+          default_comparison_period?: string
+          default_date_range?: string
+          default_depreciation_method?: string
+          default_pl_revenue_view?: string
+          default_warehouse_id?: string | null
+          deferred_revenue_account_code?: string
+          email?: string | null
+          exempt_categories?: Json
+          first_vat_period_start?: string | null
+          fiscal_year_start_month?: number
+          hide_rows_under_amount?: number
+          home_emirate?: string | null
+          industry?: string | null
+          inventory_valuation_method?: string
+          logo_url?: string | null
+          material_change_absolute?: number
+          material_change_percentage?: number
+          minimum_approvers?: number
+          month_end_recognition_day?: string
+          phone?: string | null
+          rbac_enforcement_enabled?: boolean
+          registered_address?: string | null
+          require_approval_before_posting?: boolean
+          reverse_charge_enabled?: boolean
+          show_gross_margin_percent?: boolean
+          show_net_margin_percent?: boolean
+          standard_vat_rate?: number
+          tenant_id?: string
+          trade_license_number?: string | null
+          trn?: string | null
+          updated_at?: string
+          vat_effective_date?: string | null
+          vat_filing_frequency?: string
+          vat_registered?: boolean
+          website?: string | null
+          zero_rated_categories?: Json
+        }
+        Relationships: [
+          {
+            foreignKeyName: "company_settings_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: true
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       contacts: {
         Row: {
           address: string | null
+          bank_account_name: string | null
+          bank_account_number: string | null
+          bank_name: string | null
+          city: string | null
           code: string
           created_at: string
+          credit_limit: number | null
+          deactivated_at: string | null
+          deactivated_by: string | null
+          deactivation_override_reason: string | null
+          deactivation_reason: string | null
+          default_expense_account: string | null
+          default_revenue_account: string | null
+          duplicate_warning_acknowledged: boolean
           email: string | null
+          emirate: string | null
+          iban: string | null
           id: string
           is_active: boolean
+          is_customer: boolean
+          is_employee: boolean
+          is_vat_registered: boolean
+          is_vendor: boolean
           name: string
+          notes: string | null
+          payable_terms_days: number | null
+          payment_terms_days: number | null
           phone: string | null
-          tax_id: string | null
+          postal_code: string | null
+          swift_code: string | null
+          tags: string[]
+          tax_registration_country: string
           tenant_id: string
-          type: string
+          trn: string | null
           updated_at: string
         }
         Insert: {
           address?: string | null
+          bank_account_name?: string | null
+          bank_account_number?: string | null
+          bank_name?: string | null
+          city?: string | null
           code: string
           created_at?: string
+          credit_limit?: number | null
+          deactivated_at?: string | null
+          deactivated_by?: string | null
+          deactivation_override_reason?: string | null
+          deactivation_reason?: string | null
+          default_expense_account?: string | null
+          default_revenue_account?: string | null
+          duplicate_warning_acknowledged?: boolean
           email?: string | null
+          emirate?: string | null
+          iban?: string | null
           id?: string
           is_active?: boolean
+          is_customer?: boolean
+          is_employee?: boolean
+          is_vat_registered?: boolean
+          is_vendor?: boolean
           name: string
+          notes?: string | null
+          payable_terms_days?: number | null
+          payment_terms_days?: number | null
           phone?: string | null
-          tax_id?: string | null
+          postal_code?: string | null
+          swift_code?: string | null
+          tags?: string[]
+          tax_registration_country?: string
           tenant_id: string
-          type: string
+          trn?: string | null
           updated_at?: string
         }
         Update: {
           address?: string | null
+          bank_account_name?: string | null
+          bank_account_number?: string | null
+          bank_name?: string | null
+          city?: string | null
           code?: string
           created_at?: string
+          credit_limit?: number | null
+          deactivated_at?: string | null
+          deactivated_by?: string | null
+          deactivation_override_reason?: string | null
+          deactivation_reason?: string | null
+          default_expense_account?: string | null
+          default_revenue_account?: string | null
+          duplicate_warning_acknowledged?: boolean
           email?: string | null
+          emirate?: string | null
+          iban?: string | null
           id?: string
           is_active?: boolean
+          is_customer?: boolean
+          is_employee?: boolean
+          is_vat_registered?: boolean
+          is_vendor?: boolean
           name?: string
+          notes?: string | null
+          payable_terms_days?: number | null
+          payment_terms_days?: number | null
           phone?: string | null
-          tax_id?: string | null
+          postal_code?: string | null
+          swift_code?: string | null
+          tags?: string[]
+          tax_registration_country?: string
           tenant_id?: string
-          type?: string
+          trn?: string | null
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "contacts_deactivated_by_fkey"
+            columns: ["deactivated_by"]
+            isOneToOne: false
+            referencedRelation: "app_users"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "contacts_tenant_id_fkey"
             columns: ["tenant_id"]
@@ -900,6 +1206,10 @@ export type Database = {
           status: string
           tax_treatment: string | null
           tenant_id: string
+          void_reason_category: string | null
+          void_reason_notes: string | null
+          voided_at: string | null
+          voided_by: string | null
         }
         Insert: {
           approved_at?: string | null
@@ -915,6 +1225,10 @@ export type Database = {
           status: string
           tax_treatment?: string | null
           tenant_id: string
+          void_reason_category?: string | null
+          void_reason_notes?: string | null
+          voided_at?: string | null
+          voided_by?: string | null
         }
         Update: {
           approved_at?: string | null
@@ -930,6 +1244,10 @@ export type Database = {
           status?: string
           tax_treatment?: string | null
           tenant_id?: string
+          void_reason_category?: string | null
+          void_reason_notes?: string | null
+          voided_at?: string | null
+          voided_by?: string | null
         }
         Relationships: [
           {
@@ -972,6 +1290,13 @@ export type Database = {
             columns: ["tenant_id"]
             isOneToOne: false
             referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "drafts_voided_by_fkey"
+            columns: ["voided_by"]
+            isOneToOne: false
+            referencedRelation: "app_users"
             referencedColumns: ["id"]
           },
         ]
@@ -1086,6 +1411,80 @@ export type Database = {
           },
         ]
       }
+      fixed_asset_transfers: {
+        Row: {
+          asset_id: string
+          created_at: string
+          created_by: string | null
+          from_assigned_to: string | null
+          from_location: string | null
+          id: string
+          notes: string | null
+          reason: string | null
+          tenant_id: string
+          to_assigned_to: string | null
+          to_location: string | null
+          transfer_date: string
+        }
+        Insert: {
+          asset_id: string
+          created_at?: string
+          created_by?: string | null
+          from_assigned_to?: string | null
+          from_location?: string | null
+          id?: string
+          notes?: string | null
+          reason?: string | null
+          tenant_id: string
+          to_assigned_to?: string | null
+          to_location?: string | null
+          transfer_date: string
+        }
+        Update: {
+          asset_id?: string
+          created_at?: string
+          created_by?: string | null
+          from_assigned_to?: string | null
+          from_location?: string | null
+          id?: string
+          notes?: string | null
+          reason?: string | null
+          tenant_id?: string
+          to_assigned_to?: string | null
+          to_location?: string | null
+          transfer_date?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "fixed_asset_transfers_asset_id_fkey"
+            columns: ["asset_id"]
+            isOneToOne: false
+            referencedRelation: "fixed_assets"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "fixed_asset_transfers_asset_id_fkey"
+            columns: ["asset_id"]
+            isOneToOne: false
+            referencedRelation: "v_fixed_assets_summary"
+            referencedColumns: ["asset_id"]
+          },
+          {
+            foreignKeyName: "fixed_asset_transfers_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "app_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "fixed_asset_transfers_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       fixed_assets: {
         Row: {
           asset_account_id: string | null
@@ -1097,7 +1496,12 @@ export type Database = {
           depreciation_method: string
           description: string | null
           disposal_gain_loss: number | null
+          disposal_journal_entry_id: string | null
+          disposal_method: string | null
+          disposal_notes: string | null
           disposal_proceeds: number | null
+          disposal_reason: string | null
+          disposal_recipient: string | null
           disposed_at: string | null
           id: string
           is_active: boolean
@@ -1106,9 +1510,11 @@ export type Database = {
           purchase_date: string
           residual_value: number
           serial_number: string | null
+          source_bill_id: string | null
           source_bill_line_id: string | null
           source_draft_id: string | null
           source_journal_entry_id: string | null
+          source_type: string
           start_depreciation_date: string | null
           tenant_id: string
           updated_at: string
@@ -1124,7 +1530,12 @@ export type Database = {
           depreciation_method: string
           description?: string | null
           disposal_gain_loss?: number | null
+          disposal_journal_entry_id?: string | null
+          disposal_method?: string | null
+          disposal_notes?: string | null
           disposal_proceeds?: number | null
+          disposal_reason?: string | null
+          disposal_recipient?: string | null
           disposed_at?: string | null
           id?: string
           is_active?: boolean
@@ -1133,9 +1544,11 @@ export type Database = {
           purchase_date: string
           residual_value?: number
           serial_number?: string | null
+          source_bill_id?: string | null
           source_bill_line_id?: string | null
           source_draft_id?: string | null
           source_journal_entry_id?: string | null
+          source_type?: string
           start_depreciation_date?: string | null
           tenant_id: string
           updated_at?: string
@@ -1151,7 +1564,12 @@ export type Database = {
           depreciation_method?: string
           description?: string | null
           disposal_gain_loss?: number | null
+          disposal_journal_entry_id?: string | null
+          disposal_method?: string | null
+          disposal_notes?: string | null
           disposal_proceeds?: number | null
+          disposal_reason?: string | null
+          disposal_recipient?: string | null
           disposed_at?: string | null
           id?: string
           is_active?: boolean
@@ -1160,9 +1578,11 @@ export type Database = {
           purchase_date?: string
           residual_value?: number
           serial_number?: string | null
+          source_bill_id?: string | null
           source_bill_line_id?: string | null
           source_draft_id?: string | null
           source_journal_entry_id?: string | null
+          source_type?: string
           start_depreciation_date?: string | null
           tenant_id?: string
           updated_at?: string
@@ -1182,6 +1602,27 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "v_trial_balance"
             referencedColumns: ["account_id"]
+          },
+          {
+            foreignKeyName: "fixed_assets_disposal_journal_entry_id_fkey"
+            columns: ["disposal_journal_entry_id"]
+            isOneToOne: false
+            referencedRelation: "journal_entries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "fixed_assets_disposal_journal_entry_id_fkey"
+            columns: ["disposal_journal_entry_id"]
+            isOneToOne: false
+            referencedRelation: "v_journal_ledger"
+            referencedColumns: ["entry_id"]
+          },
+          {
+            foreignKeyName: "fixed_assets_source_bill_id_fkey"
+            columns: ["source_bill_id"]
+            isOneToOne: false
+            referencedRelation: "bills"
+            referencedColumns: ["id"]
           },
           {
             foreignKeyName: "fixed_assets_source_draft_id_fkey"
@@ -1832,12 +2273,17 @@ export type Database = {
           invoice_number: string | null
           journal_entry_id: string
           outstanding_amount: number
+          reversed_by_entry_id: string | null
           settlement_status: string
           status: string
           subtotal: number
           tax_amount: number
           tenant_id: string
           total_amount: number
+          void_reason_category: string | null
+          void_reason_notes: string | null
+          voided_at: string | null
+          voided_by: string | null
         }
         Insert: {
           amount_received?: number
@@ -1851,12 +2297,17 @@ export type Database = {
           invoice_number?: string | null
           journal_entry_id: string
           outstanding_amount?: number
+          reversed_by_entry_id?: string | null
           settlement_status?: string
           status?: string
           subtotal?: number
           tax_amount?: number
           tenant_id: string
           total_amount?: number
+          void_reason_category?: string | null
+          void_reason_notes?: string | null
+          voided_at?: string | null
+          voided_by?: string | null
         }
         Update: {
           amount_received?: number
@@ -1870,12 +2321,17 @@ export type Database = {
           invoice_number?: string | null
           journal_entry_id?: string
           outstanding_amount?: number
+          reversed_by_entry_id?: string | null
           settlement_status?: string
           status?: string
           subtotal?: number
           tax_amount?: number
           tenant_id?: string
           total_amount?: number
+          void_reason_category?: string | null
+          void_reason_notes?: string | null
+          voided_at?: string | null
+          voided_by?: string | null
         }
         Relationships: [
           {
@@ -1907,10 +2363,31 @@ export type Database = {
             referencedColumns: ["entry_id"]
           },
           {
+            foreignKeyName: "invoices_reversed_by_entry_id_fkey"
+            columns: ["reversed_by_entry_id"]
+            isOneToOne: false
+            referencedRelation: "journal_entries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "invoices_reversed_by_entry_id_fkey"
+            columns: ["reversed_by_entry_id"]
+            isOneToOne: false
+            referencedRelation: "v_journal_ledger"
+            referencedColumns: ["entry_id"]
+          },
+          {
             foreignKeyName: "invoices_tenant_id_fkey"
             columns: ["tenant_id"]
             isOneToOne: false
             referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "invoices_voided_by_fkey"
+            columns: ["voided_by"]
+            isOneToOne: false
+            referencedRelation: "app_users"
             referencedColumns: ["id"]
           },
         ]
@@ -1929,10 +2406,18 @@ export type Database = {
           fx_rate: number | null
           id: string
           posted_at: string | null
+          posted_by: string | null
+          reversed_by_entry_id: string | null
+          reverses_entry_id: string | null
           source_module: string | null
+          source_type: string | null
           status: string
           tenant_id: string
           transaction_currency: string | null
+          void_reason_category: string | null
+          void_reason_notes: string | null
+          voided_at: string | null
+          voided_by: string | null
         }
         Insert: {
           amount_in_base_currency?: number | null
@@ -1947,10 +2432,18 @@ export type Database = {
           fx_rate?: number | null
           id?: string
           posted_at?: string | null
+          posted_by?: string | null
+          reversed_by_entry_id?: string | null
+          reverses_entry_id?: string | null
           source_module?: string | null
+          source_type?: string | null
           status: string
           tenant_id: string
           transaction_currency?: string | null
+          void_reason_category?: string | null
+          void_reason_notes?: string | null
+          voided_at?: string | null
+          voided_by?: string | null
         }
         Update: {
           amount_in_base_currency?: number | null
@@ -1965,10 +2458,18 @@ export type Database = {
           fx_rate?: number | null
           id?: string
           posted_at?: string | null
+          posted_by?: string | null
+          reversed_by_entry_id?: string | null
+          reverses_entry_id?: string | null
           source_module?: string | null
+          source_type?: string | null
           status?: string
           tenant_id?: string
           transaction_currency?: string | null
+          void_reason_category?: string | null
+          void_reason_notes?: string | null
+          voided_at?: string | null
+          voided_by?: string | null
         }
         Relationships: [
           {
@@ -1993,10 +2494,52 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "journal_entries_posted_by_fkey"
+            columns: ["posted_by"]
+            isOneToOne: false
+            referencedRelation: "app_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "journal_entries_reversed_by_entry_id_fkey"
+            columns: ["reversed_by_entry_id"]
+            isOneToOne: false
+            referencedRelation: "journal_entries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "journal_entries_reversed_by_entry_id_fkey"
+            columns: ["reversed_by_entry_id"]
+            isOneToOne: false
+            referencedRelation: "v_journal_ledger"
+            referencedColumns: ["entry_id"]
+          },
+          {
+            foreignKeyName: "journal_entries_reverses_entry_id_fkey"
+            columns: ["reverses_entry_id"]
+            isOneToOne: false
+            referencedRelation: "journal_entries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "journal_entries_reverses_entry_id_fkey"
+            columns: ["reverses_entry_id"]
+            isOneToOne: false
+            referencedRelation: "v_journal_ledger"
+            referencedColumns: ["entry_id"]
+          },
+          {
             foreignKeyName: "journal_entries_tenant_id_fkey"
             columns: ["tenant_id"]
             isOneToOne: false
             referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "journal_entries_voided_by_fkey"
+            columns: ["voided_by"]
+            isOneToOne: false
+            referencedRelation: "app_users"
             referencedColumns: ["id"]
           },
         ]
@@ -2242,7 +2785,12 @@ export type Database = {
           payment_date: string
           payment_type: string
           reference: string | null
+          reversed_by_entry_id: string | null
           tenant_id: string
+          void_reason_category: string | null
+          void_reason_notes: string | null
+          voided_at: string | null
+          voided_by: string | null
           voucher_number: string | null
         }
         Insert: {
@@ -2257,7 +2805,12 @@ export type Database = {
           payment_date: string
           payment_type: string
           reference?: string | null
+          reversed_by_entry_id?: string | null
           tenant_id: string
+          void_reason_category?: string | null
+          void_reason_notes?: string | null
+          voided_at?: string | null
+          voided_by?: string | null
           voucher_number?: string | null
         }
         Update: {
@@ -2272,7 +2825,12 @@ export type Database = {
           payment_date?: string
           payment_type?: string
           reference?: string | null
+          reversed_by_entry_id?: string | null
           tenant_id?: string
+          void_reason_category?: string | null
+          void_reason_notes?: string | null
+          voided_at?: string | null
+          voided_by?: string | null
           voucher_number?: string | null
         }
         Relationships: [
@@ -2319,10 +2877,31 @@ export type Database = {
             referencedColumns: ["entry_id"]
           },
           {
+            foreignKeyName: "payments_reversed_by_entry_id_fkey"
+            columns: ["reversed_by_entry_id"]
+            isOneToOne: false
+            referencedRelation: "journal_entries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payments_reversed_by_entry_id_fkey"
+            columns: ["reversed_by_entry_id"]
+            isOneToOne: false
+            referencedRelation: "v_journal_ledger"
+            referencedColumns: ["entry_id"]
+          },
+          {
             foreignKeyName: "payments_tenant_id_fkey"
             columns: ["tenant_id"]
             isOneToOne: false
             referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payments_voided_by_fkey"
+            columns: ["voided_by"]
+            isOneToOne: false
+            referencedRelation: "app_users"
             referencedColumns: ["id"]
           },
         ]
@@ -2913,6 +3492,35 @@ export type Database = {
           },
         ]
       }
+      useful_life_defaults: {
+        Row: {
+          category: string
+          id: string
+          life_years: number
+          tenant_id: string
+        }
+        Insert: {
+          category: string
+          id?: string
+          life_years: number
+          tenant_id: string
+        }
+        Update: {
+          category?: string
+          id?: string
+          life_years?: number
+          tenant_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "useful_life_defaults_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       v_ap_ageing: {
@@ -3038,24 +3646,61 @@ export type Database = {
       v_fixed_assets_summary: {
         Row: {
           accumulated_depreciation: number | null
+          asset_code: string | null
           asset_id: string | null
+          assigned_to: string | null
           category: string | null
           cost: number | null
           depreciation_method: string | null
+          description: string | null
           disposal_gain_loss: number | null
           disposal_proceeds: number | null
           disposed_at: string | null
           is_active: boolean | null
+          location: string | null
           months_depreciated: number | null
           name: string | null
           net_book_value: number | null
           purchase_date: string | null
           residual_value: number | null
+          source_bill_id: string | null
+          source_bill_line_id: string | null
+          source_draft_id: string | null
+          source_journal_entry_id: string | null
+          source_type: string | null
           start_depreciation_date: string | null
           tenant_id: string | null
           useful_life_months: number | null
         }
         Relationships: [
+          {
+            foreignKeyName: "fixed_assets_source_bill_id_fkey"
+            columns: ["source_bill_id"]
+            isOneToOne: false
+            referencedRelation: "bills"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "fixed_assets_source_draft_id_fkey"
+            columns: ["source_draft_id"]
+            isOneToOne: false
+            referencedRelation: "drafts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "fixed_assets_source_journal_entry_id_fkey"
+            columns: ["source_journal_entry_id"]
+            isOneToOne: false
+            referencedRelation: "journal_entries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "fixed_assets_source_journal_entry_id_fkey"
+            columns: ["source_journal_entry_id"]
+            isOneToOne: false
+            referencedRelation: "v_journal_ledger"
+            referencedColumns: ["entry_id"]
+          },
           {
             foreignKeyName: "fixed_assets_tenant_id_fkey"
             columns: ["tenant_id"]
@@ -3292,6 +3937,15 @@ export type Database = {
           similarity: number
         }[]
       }
+      merge_contacts_into: {
+        Args: {
+          p_keep_id: string
+          p_merge_id: string
+          p_note: string
+          p_tenant_id: string
+        }
+        Returns: undefined
+      }
       next_asset_code: {
         Args: { p_tenant_id: string; p_year: number }
         Returns: string
@@ -3309,10 +3963,20 @@ export type Database = {
         Args: { p_invoice_id: string }
         Returns: undefined
       }
+      report_account_activity_sums: {
+        Args: { p_end: string; p_start: string; p_tenant_id: string }
+        Returns: {
+          account_id: string
+          sum_credit: number
+          sum_debit: number
+        }[]
+      }
       seed_journal_templates_for_tenant: {
         Args: { p_tenant_id: string }
         Returns: undefined
       }
+      show_limit: { Args: never; Returns: number }
+      show_trgm: { Args: { "": string }; Returns: string[] }
       tax_rate_used_in_posted_drafts: {
         Args: { p_rate_id: string; p_tenant_id: string }
         Returns: boolean

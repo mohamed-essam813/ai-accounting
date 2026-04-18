@@ -90,7 +90,7 @@ export function Topbar({ user, sidebarWidth = 256 }: TopbarProps) {
             </p>
           </DropdownMenuLabel>
           <DropdownMenuSeparator />
-          <DropdownMenuItem onSelect={() => router.push("/settings/tenant")}>
+          <DropdownMenuItem onSelect={() => router.push("/settings")}>
             <Settings className="mr-2 h-4 w-4" />
             Account settings
           </DropdownMenuItem>

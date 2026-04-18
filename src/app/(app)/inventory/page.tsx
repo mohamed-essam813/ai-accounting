@@ -17,7 +17,7 @@ export const revalidate = 0;
 
 export default async function InventoryPage() {
   const [items, summary, policy] = await Promise.all([
-    getInventoryItems(),
+    getInventoryItems({ stockTrackedProductsOnly: true }),
     getInventorySummary(),
     getAccountingPolicy(),
   ]);

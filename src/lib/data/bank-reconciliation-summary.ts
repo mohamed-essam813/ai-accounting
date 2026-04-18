@@ -8,21 +8,29 @@ function addDaysIso(isoDate: string, delta: number): string {
   return d.toISOString().slice(0, 10);
 }
 
+export type BankLedgerTotalsAsOf = {
+  net: number;
+  totalDebit: number;
+  totalCredit: number;
+};
+
 /**
- * Posted GL balance for a bank (asset) account: sum(debit − credit) through `asOfDate` inclusive.
+ * Posted GL debits, credits, and net for a bank account through `asOfDate` inclusive.
  */
-export async function getBankAccountLedgerBalanceAsOf(
+export async function getBankAccountLedgerTotalsAsOf(
   tenantId: string,
   bankAccountId: string,
   asOfDate: string,
-): Promise<number> {
+): Promise<BankLedgerTotalsAsOf> {
   const supabase = await createServerSupabaseClient();
   const { data: lines, error: lErr } = await supabase
     .from("journal_lines")
     .select("debit, credit, entry_id")
     .eq("account_id", bankAccountId);
   if (lErr) throw lErr;
-  if (!lines?.length) return 0;
+  if (!lines?.length) {
+    return { net: 0, totalDebit: 0, totalCredit: 0 };
+  }
 
   const entryIds = [...new Set(lines.map((l) => l.entry_id))];
   const { data: entries, error: eErr } = await supabase
@@ -35,12 +43,29 @@ export async function getBankAccountLedgerBalanceAsOf(
   if (eErr) throw eErr;
   const allowed = new Set((entries ?? []).map((e) => e.id));
 
-  let sum = 0;
+  let totalDebit = 0;
+  let totalCredit = 0;
   for (const l of lines) {
     if (!allowed.has(l.entry_id)) continue;
-    sum += Number(l.debit ?? 0) - Number(l.credit ?? 0);
+    totalDebit += Number(l.debit ?? 0);
+    totalCredit += Number(l.credit ?? 0);
   }
-  return Math.round(sum * 100) / 100;
+  const net = Math.round((totalDebit - totalCredit) * 100) / 100;
+  const td = Math.round(totalDebit * 100) / 100;
+  const tc = Math.round(totalCredit * 100) / 100;
+  return { net, totalDebit: td, totalCredit: tc };
+}
+
+/**
+ * Posted GL balance for a bank (asset) account: sum(debit − credit) through `asOfDate` inclusive.
+ */
+export async function getBankAccountLedgerBalanceAsOf(
+  tenantId: string,
+  bankAccountId: string,
+  asOfDate: string,
+): Promise<number> {
+  const t = await getBankAccountLedgerTotalsAsOf(tenantId, bankAccountId, asOfDate);
+  return t.net;
 }
 
 export type BankReconciliationSummaryData = {
@@ -58,6 +83,10 @@ export type BankReconciliationSummaryData = {
   unmatchedNetAmount: number;
   /** Book balance (GL) at end of statement period (last imported line date), inclusive. */
   bookBalanceAsOfPeriodEnd: number;
+  /** Cumulative posted debits to the bank account through period end (for disclosure). */
+  bookTotalDebitAsOfPeriodEnd: number;
+  /** Cumulative posted credits to the bank account through period end (for disclosure). */
+  bookTotalCreditAsOfPeriodEnd: number;
   /** Book balance the day before first imported line in range (for context). */
   bookBalanceBeforePeriod: number | null;
 };
@@ -84,7 +113,7 @@ export async function getBankReconciliationSummary(
   const rows = txns ?? [];
   if (rows.length === 0) {
     const today = new Date().toISOString().slice(0, 10);
-    const book = await getBankAccountLedgerBalanceAsOf(tenantId, bankAccountId, today);
+    const totals = await getBankAccountLedgerTotalsAsOf(tenantId, bankAccountId, today);
     return {
       bankAccountId,
       currencyCode: baseCurrency,
@@ -97,7 +126,9 @@ export async function getBankReconciliationSummary(
       unmatchedCount: 0,
       importedNetAmount: 0,
       unmatchedNetAmount: 0,
-      bookBalanceAsOfPeriodEnd: book,
+      bookBalanceAsOfPeriodEnd: totals.net,
+      bookTotalDebitAsOfPeriodEnd: totals.totalDebit,
+      bookTotalCreditAsOfPeriodEnd: totals.totalCredit,
       bookBalanceBeforePeriod: null,
     };
   }
@@ -128,11 +159,8 @@ export async function getBankReconciliationSummary(
 
   const resolvedCount = matchedCount + excludedCount;
 
-  const bookBalanceAsOfPeriodEnd = await getBankAccountLedgerBalanceAsOf(
-    tenantId,
-    bankAccountId,
-    periodEnd,
-  );
+  const bookTotalsEnd = await getBankAccountLedgerTotalsAsOf(tenantId, bankAccountId, periodEnd);
+  const bookBalanceAsOfPeriodEnd = bookTotalsEnd.net;
   const dayBefore = addDaysIso(periodStart, -1);
   const bookBalanceBeforePeriod = await getBankAccountLedgerBalanceAsOf(
     tenantId,
@@ -153,6 +181,8 @@ export async function getBankReconciliationSummary(
     importedNetAmount: Math.round(importedNetAmount * 100) / 100,
     unmatchedNetAmount: Math.round(unmatchedNetAmount * 100) / 100,
     bookBalanceAsOfPeriodEnd,
+    bookTotalDebitAsOfPeriodEnd: bookTotalsEnd.totalDebit,
+    bookTotalCreditAsOfPeriodEnd: bookTotalsEnd.totalCredit,
     bookBalanceBeforePeriod,
   };
 }

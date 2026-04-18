@@ -4,6 +4,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { formatDate } from "@/lib/format";
 import { usePagination } from "@/hooks/use-pagination";
 import { DataTablePagination } from "@/components/ui/data-table-pagination";
+import Link from "next/link";
 
 type AuditEntry = {
   id: string;
@@ -14,6 +15,8 @@ type AuditEntry = {
   entity_id?: string | null;
   document_number?: string | null;
   changesSummary?: string | null;
+  entity_display_label?: string | null;
+  entity_href?: string | null;
 };
 
 type Props = {
@@ -64,8 +67,15 @@ export function AuditTableClient({ entries }: Props) {
                     {entry.action.replace(/\./g, " ")}
                   </TableCell>
                   <TableCell>
-                    {entry.entity}
-                    {entry.entity_id ? ` (${entry.entity_id.slice(0, 8)}…)` : ""}
+                    <span className="text-sm" title={entry.entity_id ? `Entity id: ${entry.entity_id}` : undefined}>
+                      {entry.entity_href ? (
+                        <Link href={entry.entity_href} className="text-primary hover:underline decoration-dotted">
+                          {entry.entity_display_label ?? entry.entity}
+                        </Link>
+                      ) : (
+                        <span>{entry.entity_display_label ?? entry.entity}</span>
+                      )}
+                    </span>
                   </TableCell>
                   <TableCell className="font-mono text-xs">
                     {entry.document_number ?? "—"}

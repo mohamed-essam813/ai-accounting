@@ -12,7 +12,7 @@ type AuditLogsInsert = Database["public"]["Tables"]["audit_logs"]["Insert"];
 
 const InviteSchema = z.object({
   email: z.string().email(),
-  role: z.enum(["admin", "accountant", "business_user", "auditor"]),
+  role: z.enum(["bookkeeper", "accountant", "admin", "super_admin"]),
 });
 
 export async function inviteUserAction(input: z.infer<typeof InviteSchema>) {
