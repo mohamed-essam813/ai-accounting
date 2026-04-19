@@ -70,7 +70,7 @@ const ContactCreateSchema = z
     }
   });
 
-const ContactUpdateSchema = ContactCreateSchema.extend({
+const ContactUpdateSchema = ContactCreateSchema.safeExtend({
   contactId: z.string().uuid(),
 });
 

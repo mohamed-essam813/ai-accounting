@@ -101,9 +101,17 @@ export async function listUsefulLifeDefaults(): Promise<UsefulLifeDefaultRow[]> 
   return data ?? [];
 }
 
+const DEFAULT_CAPITALIZATION_THRESHOLD_AED = 1000;
+
 /** Used by prompts / classification — numeric AED threshold from company settings. */
 export async function getCapitalizationThresholdAed(): Promise<number> {
-  const row = await getCompanySettings();
-  if (!row) return 1000;
-  return Number(row.capitalization_threshold);
+  try {
+    const row = await getCompanySettings();
+    if (!row) return DEFAULT_CAPITALIZATION_THRESHOLD_AED;
+    const n = Number(row.capitalization_threshold);
+    return Number.isFinite(n) && n > 0 ? n : DEFAULT_CAPITALIZATION_THRESHOLD_AED;
+  } catch (e) {
+    console.error("[getCapitalizationThresholdAed] falling back to default", e);
+    return DEFAULT_CAPITALIZATION_THRESHOLD_AED;
+  }
 }

@@ -156,7 +156,7 @@ const TransactionAmountsSchema = z.object({
   total_amount: z.number(),
 });
 
-const SaveDraftSchema = DraftSchema.extend({
+const SaveDraftSchema = DraftSchema.safeExtend({
   rawPrompt: z.string().optional(),
   contactId: z.string().uuid().optional().nullable(),
   /** Persisted as data_json.tax for posting (tax line FK). */
@@ -382,7 +382,7 @@ const FixedAssetDraftUpdateSchema = z.object({
   depreciation_method: z.enum(["straight_line"]),
 });
 
-const UpdateDraftSchema = DraftSchema.extend({
+const UpdateDraftSchema = DraftSchema.safeExtend({
   draftId: z.string().uuid(),
   tax_treatment: z.enum(["exclusive", "inclusive"]).optional(),
   billPurchaseType: z.enum(["inventory", "expense", "asset"]).optional(),

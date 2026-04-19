@@ -212,6 +212,7 @@ export async function listBankAccountsForPickerAction(): Promise<
 /**
  * One server-action round-trip for Record activity / guided workspace initial load.
  * Avoids four separate client POSTs (contacts, banks, tax rates, chart for bill lines).
+ * Uses allSettled so one failing query does not 500 the whole action (Next.js surfaces thrown errors as 500).
  */
 export async function loadGuidedEventWorkspacePreflightAction(): Promise<{
   contacts: Awaited<ReturnType<typeof listContactsForPickerAction>>;
@@ -219,16 +220,29 @@ export async function loadGuidedEventWorkspacePreflightAction(): Promise<{
   taxRates: TaxRate[];
   accounts: Awaited<ReturnType<typeof listAccountsForItemWizardAction>>;
 }> {
-  const [contacts, banks, taxRates] = await Promise.all([
+  const settled = await Promise.allSettled([
     listContactsForPickerAction(),
     listBankAccountsForPickerAction(),
     listTaxRatesAction(),
   ]);
+  const contacts =
+    settled[0].status === "fulfilled" ? settled[0].value : [];
+  const banks =
+    settled[1].status === "fulfilled" ? settled[1].value : [];
+  const taxRates =
+    settled[2].status === "fulfilled" ? settled[2].value : [];
+  const preflightLabels = ["contacts", "banks", "taxRates"] as const;
+  settled.forEach((r, i) => {
+    if (r.status === "rejected") {
+      console.error(`[loadGuidedEventWorkspacePreflightAction] ${preflightLabels[i]}`, r.reason);
+    }
+  });
+
   let accounts: Awaited<ReturnType<typeof listAccountsForItemWizardAction>> = [];
   try {
     accounts = await listAccountsForItemWizardAction();
-  } catch {
-    // Matches prior client behaviour — accounts optional until bill line needs expense/asset picker.
+  } catch (e) {
+    console.error("[loadGuidedEventWorkspacePreflightAction] accounts", e);
   }
   return { contacts, banks, taxRates, accounts };
 }
@@ -475,7 +489,7 @@ export async function createGuidedBillAction(input: z.infer<typeof BillGuidedSch
   const accounts = await listAccounts();
 
   // Resolve tax (input)
-  let effectiveTaxId = parsed.taxRateId ?? null;
+  const effectiveTaxId = parsed.taxRateId ?? null;
   let tax: { rate: number; amount: null } | null = null;
   let taxRateLink: { tax_rate_id: string } | undefined;
   let taxPct = 0;
